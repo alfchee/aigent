@@ -22,6 +22,7 @@
    - [ ] Chat Interface for user interaction (context, file provision)
 
 3. **Backend (FastAPI + Python)**
+   - [x] **ReAct Loop (Reason + Act)** - Autonomous multi-turn execution with observation & reflection
    - [ ] **Strict Function Calling** Architecture (Google Gen AI SDK)
    - [ ] Interaction Channels (Telegram, Slack, Discord, WhatsApp)
    - [ ] Persistence (SQLite/JSON)

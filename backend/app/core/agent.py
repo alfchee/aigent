@@ -63,3 +63,42 @@ class NaviBot:
         
         response = await self._chat_session.send_message(message)
         return response.text
+
+    async def send_message_with_react(
+        self, 
+        message: str,
+        max_iterations: int = 10,
+        timeout_seconds: int = 300,
+        event_callback: Optional[Callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute message with ReAct (Reason + Act) loop.
+        
+        The agent will iteratively reason, act, observe, and reflect
+        until the task is complete or limits are reached.
+        
+        Args:
+            message: The task/question for the agent
+            max_iterations: Maximum reasoning cycles (default: 10)
+            timeout_seconds: Maximum execution time (default: 300s)
+            event_callback: Optional async callback for streaming events
+            
+        Returns:
+            Dict containing:
+                - response: Final agent response
+                - iterations: Number of iterations executed
+                - tool_calls: List of all tool calls made
+                - reasoning_trace: List of reasoning steps
+                - termination_reason: Why the loop ended
+                - execution_time_seconds: Total execution time
+        """
+        from app.core.react_engine import ReActLoop
+        
+        react_loop = ReActLoop(
+            agent=self,
+            max_iterations=max_iterations,
+            timeout_seconds=timeout_seconds,
+            event_callback=event_callback
+        )
+        
+        return await react_loop.execute(message)
