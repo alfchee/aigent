@@ -1,10 +1,29 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.core.agent import NaviBot
 from app.skills.scheduler import start_scheduler
 import asyncio
+import os
 
 app = FastAPI(title="NaviBot API", version="0.1.0")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+# Ensure user_data directory exists
+USER_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_data")
+os.makedirs(USER_DATA_DIR, exist_ok=True)
+
+# Mount static files for user artifacts
+app.mount("/files", StaticFiles(directory=USER_DATA_DIR), name="files")
 
 # Initialize Agent
 bot = NaviBot()

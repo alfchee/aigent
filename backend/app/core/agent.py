@@ -40,15 +40,20 @@ class NaviBot:
     async def start_chat(self, history: List[Dict[str, Any]] = None):
         """Starts a new chat session with the configured tools."""
         
-        # Tools config
-        tool_config = None
+        # Prepare config arguments
+        config_args = {
+            "system_instruction": self._load_system_instruction()
+        }
+
+        # Add tools if available
         if self.tools:
-             tool_config = types.GenerateContentConfig(
-                tools=self.tools,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                    disable=False
-                )
+             config_args["tools"] = self.tools
+             config_args["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(
+                disable=False
              )
+        
+        # Create configuration object
+        tool_config = types.GenerateContentConfig(**config_args)
 
         # Create async chat session
         self._chat_session = self.client.aio.chats.create(
@@ -57,12 +62,35 @@ class NaviBot:
             history=history
         )
 
-    async def send_message(self, message: str) -> str:
+    def _load_system_instruction(self) -> str:
+        """Loads the system instruction/SOPs."""
+        try:
+            # Try to load from prompts.py (which we created as a text file essentially)
+            # In a real app, this might be a python string constant, but we saved it as a file content.
+            # Let's read it if it exists, or define it here.
+            
+            # Since we saved prompts.py as a text file with markdown content in the previous step (Write tool),
+            # we should read it. However, the user might expect it to be a python module.
+            # Let's check if we wrote it as valid python or just text. 
+            # We wrote raw markdown to a .py file which is invalid python but readable as text.
+            # Ideally we should have saved it as .md or a python string. 
+            # Let's fix this by reading it as a file.
+            
+            sop_path = os.path.join(os.path.dirname(__file__), "prompts.py")
+            if os.path.exists(sop_path):
+                with open(sop_path, "r") as f:
+                    return f.read()
+            return "You are a helpful AI assistant with browser capabilities."
+        except Exception as e:
+            print(f"Error loading system prompt: {e}")
+            return "You are a helpful AI assistant."
+
+    async def send_message(self, message: str) -> Any:
         if not self._chat_session:
             await self.start_chat()
         
         response = await self._chat_session.send_message(message)
-        return response.text
+        return response
 
     async def send_message_with_react(
         self, 

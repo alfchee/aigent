@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import { useChatStore } from '../../stores/chat';
-import { Terminal, ChevronDown, ChevronRight, Info, Brain, Wrench, CheckCircle, AlertCircle, Clock } from 'lucide-vue-next';
+import { Terminal, ChevronDown, ChevronRight, Info, Brain, Wrench, CheckCircle, AlertCircle } from 'lucide-vue-next';
 
 const store = useChatStore();
 
