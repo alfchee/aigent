@@ -35,6 +35,7 @@ async def startup_event():
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default"
     use_react_loop: bool = False  # Default to simple mode for API backward compatibility
     max_iterations: int = 10
     include_trace: bool = False  # Return reasoning trace in response
@@ -58,6 +59,7 @@ async def chat(request: ChatRequest):
             # Use ReAct loop for autonomous multi-turn execution
             result = await bot.send_message_with_react(
                 request.message,
+                session_id=request.session_id,
                 max_iterations=request.max_iterations
             )
             
@@ -71,7 +73,7 @@ async def chat(request: ChatRequest):
             )
         else:
             # Simple single-turn execution (backward compatibility)
-            response_text = await bot.send_message(request.message)
+            response_text = await bot.send_message(request.message, session_id=request.session_id)
             return ChatResponse(response=response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -106,12 +108,13 @@ async def chat_stream(request: ChatRequest):
                 if request.use_react_loop:
                     final_result = await bot.send_message_with_react(
                         request.message,
+                        session_id=request.session_id,
                         max_iterations=request.max_iterations,
                         event_callback=event_callback
                     )
                 else:
                     # For simple mode, just send the message
-                    response_text = await bot.send_message(request.message)
+                    response_text = await bot.send_message(request.message, session_id=request.session_id)
                     final_result = {"response": response_text}
             except Exception as e:
                 task_error = e

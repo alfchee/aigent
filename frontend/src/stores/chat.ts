@@ -33,6 +33,15 @@ export const useChatStore = defineStore('chat', () => {
   const hasLogs = computed(() => logs.value.length > 0);
 
   // Actions
+  function getSessionId(): string {
+    let id = localStorage.getItem('chat_session_id');
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem('chat_session_id', id);
+    }
+    return id;
+  }
+
   function addLog(type: LogEntry['type'], title: string, details?: any) {
     logs.value.push({
       id: crypto.randomUUID(),
@@ -112,6 +121,7 @@ export const useChatStore = defineStore('chat', () => {
         },
         body: JSON.stringify({
           message: content,
+          session_id: getSessionId(),
           use_react_loop: true
         }),
         signal: abortController.value.signal,

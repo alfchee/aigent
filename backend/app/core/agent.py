@@ -3,8 +3,14 @@ from google import genai
 from google.genai import types
 from typing import List, Callable, Any, Dict, Optional
 from dotenv import load_dotenv
+from app.core.db import SessionLocal, engine, Base
+from app.core.models import ChatSession, ChatMessage
+from app.core.serialization import content_to_dict, dict_to_content
 
 load_dotenv()
+
+# Create tables if they don't exist
+Base.metadata.create_all(bind=engine)
 
 class NaviBot:
     def __init__(self, model_name: str = "gemini-2.0-flash"):
@@ -19,7 +25,7 @@ class NaviBot:
         self.tools: List[Callable] = []
         self.model_name = model_name
         self._chat_session = None
-
+        # self.sessions = {} # Removed in-memory store in favor of DB
 
         # Register default skills
         from app.skills import system, scheduler, browser, workspace
@@ -37,8 +43,81 @@ class NaviBot:
         """Registers a tool (function) to be used by the agent."""
         self.tools.append(tool)
 
-    async def start_chat(self, history: List[Dict[str, Any]] = None):
-        """Starts a new chat session with the configured tools."""
+    def _prune_history(self, history, max_turns=20):
+        """Keeps only the last N turns to avoid context saturation."""
+        if len(history) > max_turns * 2:
+            return history[-max_turns*2:]
+        return history
+
+    def _get_history_from_db(self, session_id: str) -> List[Any]:
+        """Retrieves chat history from the database."""
+        db = SessionLocal()
+        try:
+            # Check if session exists
+            db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if not db_session:
+                return []
+            
+            # Get messages
+            messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
+            
+            # Convert back to SDK Content objects
+            return [dict_to_content(msg.content) for msg in messages]
+        except Exception as e:
+            print(f"Error retrieving history: {e}")
+            return []
+        finally:
+            db.close()
+
+    def _save_history_to_db(self, session_id: str, history: List[Any]):
+        """Saves the latest chat history to the database."""
+        db = SessionLocal()
+        try:
+            # Ensure session exists
+            db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if not db_session:
+                db_session = ChatSession(id=session_id)
+                db.add(db_session)
+                db.commit()
+            
+            # Simple approach: Wipe existing messages for this session and rewrite (inefficient but safe for syncing)
+            # A better approach would be to append only new messages, but we need to track what's new.
+            # Given the request for "persistence" and "context", syncing the state is reliable.
+            # However, for performance, we should ideally check IDs. 
+            # But the SDK history is a list without IDs.
+            
+            # Let's delete old messages and re-insert. 
+            # In a high-traffic production app, we would use a more incremental approach.
+            db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
+            
+            new_messages = []
+            for msg in history:
+                # Serialize content
+                msg_dict = content_to_dict(msg)
+                new_messages.append(ChatMessage(
+                    session_id=session_id,
+                    role=msg_dict["role"],
+                    content=msg_dict
+                ))
+            
+            db.add_all(new_messages)
+            db.commit()
+            
+        except Exception as e:
+            print(f"Error saving history: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+    async def start_chat(self, session_id: str = "default", history: List[Dict[str, Any]] = None):
+        """Starts a new chat session with the configured tools and history."""
+        
+        # Load history from session if not provided
+        if history is None:
+            history = self._get_history_from_db(session_id)
+        
+        # Prune history
+        history = self._prune_history(history)
         
         # Prepare config arguments
         config_args = {
@@ -85,16 +164,21 @@ class NaviBot:
             print(f"Error loading system prompt: {e}")
             return "You are a helpful AI assistant."
 
-    async def send_message(self, message: str) -> Any:
+    async def send_message(self, message: str, session_id: str = "default") -> Any:
         if not self._chat_session:
-            await self.start_chat()
+            await self.start_chat(session_id=session_id)
         
         response = await self._chat_session.send_message(message)
+        
+        # Save session history to DB
+        self._save_history_to_db(session_id, self._chat_session.history)
+        
         return response
 
     async def send_message_with_react(
         self, 
         message: str,
+        session_id: str = "default",
         max_iterations: int = 10,
         timeout_seconds: int = 300,
         event_callback: Optional[Callable] = None
@@ -124,6 +208,7 @@ class NaviBot:
         
         react_loop = ReActLoop(
             agent=self,
+            session_id=session_id,
             max_iterations=max_iterations,
             timeout_seconds=timeout_seconds,
             event_callback=event_callback
