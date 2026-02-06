@@ -18,8 +18,19 @@ The `NaviBot` class is the central intelligence of the system.
 - **AI Model**: Defaults to `gemini-2.0-flash`.
 - **Tool Registration**: Automatically registers skills from the `app/skills` directory.
 - **Chat Sessions**: Manages asynchronous chat sessions with automatic function calling enabled.
+- **Execution Modes**:
+  - **Simple Mode**: Single-turn execution via `send_message()` for quick responses.
+  - **ReAct Mode**: Multi-turn autonomous execution via `send_message_with_react()` for complex tasks.
 
-### 2. Scheduler Service (`app/core/scheduler_service.py`)
+### 2. ReAct Loop Engine (`app/core/react_engine.py`)
+Implements the **ReAct (Reason + Act)** cognitive loop for autonomous multi-turn execution.
+- **Iterative Reasoning**: Agent can execute multiple reasoning cycles before responding.
+- **Observation & Reflection**: Processes tool results and determines next actions.
+- **Termination Conditions**: Natural completion, max iterations, timeout, or error.
+- **Reasoning Trace**: Comprehensive logging of all execution steps.
+- **Configurable Limits**: Max iterations (default: 10) and timeout (default: 300s).
+
+### 3. Scheduler Service (`app/core/scheduler_service.py`)
 Provides persistent job scheduling using **APScheduler** and **SQLAlchemy**.
 
 #### Persistence
@@ -32,12 +43,14 @@ Provides persistent job scheduling using **APScheduler** and **SQLAlchemy**.
 
 #### Execution Lifecycle
 1. The scheduler monitors the database for due jobs.
-2. When a job triggers, it calls `execute_agent_task(prompt)`.
+2. When a job triggers, it calls `execute_agent_task(prompt, use_react_loop, max_iterations)`.
 3. This function:
-    - Prints an execution log.
+    - Prints an execution log with mode indicator (ReAct vs Simple).
     - Instantiates a **fresh** `NaviBot` instance.
-    - Sends the `prompt` to the agent.
-    - Logs the final response from the AI.
+    - Sends the `prompt` to the agent using the selected execution mode.
+    - Logs the final response, iteration count, and reasoning trace (if ReAct mode).
+    - **ReAct Mode** (default): Enables autonomous multi-turn execution for complex tasks.
+    - **Simple Mode**: Single-turn execution for straightforward queries.
 
 ---
 

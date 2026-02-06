@@ -16,9 +16,17 @@ async def startup_event():
 
 class ChatRequest(BaseModel):
     message: str
+    use_react_loop: bool = False  # Default to simple mode for API backward compatibility
+    max_iterations: int = 10
+    include_trace: bool = False  # Return reasoning trace in response
 
 class ChatResponse(BaseModel):
     response: str
+    iterations: int | None = None
+    tool_calls: list[dict] | None = None
+    reasoning_trace: list[str] | None = None
+    termination_reason: str | None = None
+    execution_time_seconds: float | None = None
 
 @app.get("/")
 async def root():
@@ -27,8 +35,25 @@ async def root():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        response_text = await bot.send_message(request.message)
-        return ChatResponse(response=response_text)
+        if request.use_react_loop:
+            # Use ReAct loop for autonomous multi-turn execution
+            result = await bot.send_message_with_react(
+                request.message,
+                max_iterations=request.max_iterations
+            )
+            
+            return ChatResponse(
+                response=result["response"],
+                iterations=result["iterations"] if request.include_trace else None,
+                tool_calls=result.get("tool_calls") if request.include_trace else None,
+                reasoning_trace=result.get("reasoning_trace") if request.include_trace else None,
+                termination_reason=result.get("termination_reason") if request.include_trace else None,
+                execution_time_seconds=result.get("execution_time_seconds") if request.include_trace else None
+            )
+        else:
+            # Simple single-turn execution (backward compatibility)
+            response_text = await bot.send_message(request.message)
+            return ChatResponse(response=response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
