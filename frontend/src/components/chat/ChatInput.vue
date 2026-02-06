@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useChatStore } from '../../stores/chat';
-import { Send, Loader2 } from 'lucide-vue-next';
+import { Send, Square, Activity } from 'lucide-vue-next';
 
 const store = useChatStore();
 const input = ref('');
 
 function handleSubmit() {
-  if (!input.value.trim() || store.isStreaming) return;
+  if (store.isStreaming) {
+    store.stopGeneration();
+    return;
+  }
+  if (!input.value.trim()) return;
   store.sendMessage(input.value);
   input.value = '';
 }
@@ -22,6 +26,12 @@ function handleKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="relative bg-white border-t border-slate-200 p-4 shadow-lg">
+    <!-- Activity Indicator -->
+    <div v-if="store.isStreaming" class="max-w-4xl mx-auto mb-2 flex items-center gap-2 text-xs text-sky-600 animate-pulse">
+      <Activity class="w-3 h-3" />
+      <span class="font-medium">{{ store.currentThought || 'Processing...' }}</span>
+    </div>
+
     <div class="max-w-4xl mx-auto relative">
       <form @submit.prevent="handleSubmit" class="relative">
         <textarea
@@ -35,15 +45,17 @@ function handleKeydown(e: KeyboardEvent) {
         
         <button
           type="submit"
-          :disabled="store.isStreaming || !input.trim()"
-          class="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg transition-colors"
+          :disabled="!store.isStreaming && !input.trim()"
+          class="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg transition-colors shadow-sm"
           :class="[
-            store.isStreaming || !input.trim() 
-              ? 'text-slate-400 bg-transparent cursor-not-allowed' 
-              : 'text-white bg-sky-500 hover:bg-sky-600 shadow-sm'
+            store.isStreaming 
+              ? 'text-white bg-red-500 hover:bg-red-600' 
+              : !input.trim() 
+                ? 'text-slate-400 bg-transparent cursor-not-allowed shadow-none' 
+                : 'text-white bg-sky-500 hover:bg-sky-600'
           ]"
         >
-          <Loader2 v-if="store.isStreaming" class="w-5 h-5 animate-spin" />
+          <Square v-if="store.isStreaming" class="w-5 h-5 fill-current" />
           <Send v-else class="w-5 h-5" />
         </button>
       </form>
