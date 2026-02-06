@@ -68,7 +68,8 @@ class NaviBot:
         self, 
         message: str,
         max_iterations: int = 10,
-        timeout_seconds: int = 300
+        timeout_seconds: int = 300,
+        event_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
         Execute message with ReAct (Reason + Act) loop.
@@ -80,6 +81,7 @@ class NaviBot:
             message: The task/question for the agent
             max_iterations: Maximum reasoning cycles (default: 10)
             timeout_seconds: Maximum execution time (default: 300s)
+            event_callback: Optional async callback for streaming events
             
         Returns:
             Dict containing:
@@ -95,7 +97,8 @@ class NaviBot:
         react_loop = ReActLoop(
             agent=self,
             max_iterations=max_iterations,
-            timeout_seconds=timeout_seconds
+            timeout_seconds=timeout_seconds,
+            event_callback=event_callback
         )
         
         return await react_loop.execute(message)

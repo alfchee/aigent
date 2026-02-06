@@ -54,6 +54,13 @@ Provides persistent job scheduling using **APScheduler** and **SQLAlchemy**.
 
 ---
 
+| Skill | Tools Provided | Description |
+| :--- | :--- | :--- |
+| **System** | `list_files`, `read_file`, `create_file` | Basic filesystem operations. |
+| **Browser** | `navigate`, `get_page_content`, `screenshot`, `close_browser` | Web automation and content extraction. |
+| **Scheduler** | `schedule_task`, `schedule_interval_task` | Ability for the agent to schedule its own future tasks. |
+| **Workspace** | `create_doc`, `send_email`, `create_calendar_event` | Placeholders for Google Workspace integrations. |
+
 ## API Endpoints
 
 The backend runs on port **8231** by default.
@@ -62,20 +69,22 @@ The backend runs on port **8231** by default.
 - **GET `/`**: Returns the status and version of the API.
 
 ### Chat Interface
-- **POST `/api/chat`**: Sends a message to the NaviBot agent.
-    - **Request Body**: `{"message": "string"}`
-    - **Response**: `{"response": "string"}`
+- **POST `/api/chat`**: Sends a message to the NaviBot agent (blocking).
+    - **Request Body**: `{"message": "string", "use_react_loop": bool}`
+    - **Response**: `{"response": "string", ...}`
 
-## Skills and Tools
-
-The agent has access to several specialized skills:
-
-| Skill | Tools Provided | Description |
-| :--- | :--- | :--- |
-| **System** | `list_files`, `read_file`, `create_file` | Basic filesystem operations. |
-| **Browser** | `navigate`, `get_page_content`, `screenshot`, `close_browser` | Web automation and content extraction. |
-| **Scheduler** | `schedule_task`, `schedule_interval_task` | Ability for the agent to schedule its own future tasks. |
-| **Workspace** | `create_doc`, `send_email`, `create_calendar_event` | Placeholders for Google Workspace integrations. |
+- **POST `/api/chat/stream`**: Sends a message and receives real-time progress via Server-Sent Events (SSE).
+    - **Request Body**: Same as `/api/chat`
+    - **Stream Events**:
+        - `start`: Initial task setup
+        - `iteration_start`: New reasoning cycle
+        - `thinking`: Progress message
+        - `tool_call`: (Planned) Tool execution start
+        - `observation`: (Planned) Tool results
+        - `response`: Text provided by agent
+        - `completion`: Loop finished
+        - `final`: Final aggregated result (JSON)
+        - `error`: Error details
 
 ## Configuration
 

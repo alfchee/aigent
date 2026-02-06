@@ -7,7 +7,7 @@ The agent iteratively reasons, acts, observes results, and reflects until the ta
 
 import asyncio
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 
 
@@ -27,7 +27,8 @@ class ReActLoop:
         self, 
         agent,  # NaviBot instance
         max_iterations: int = 10,
-        timeout_seconds: int = 300
+        timeout_seconds: int = 300,
+        event_callback: Optional[Callable] = None
     ):
         """
         Initialize ReAct loop.
@@ -36,10 +37,12 @@ class ReActLoop:
             agent: NaviBot instance to execute with
             max_iterations: Maximum number of reasoning iterations
             timeout_seconds: Maximum execution time in seconds
+            event_callback: Optional async callback for streaming events
         """
         self.agent = agent
         self.max_iterations = max_iterations
         self.timeout_seconds = timeout_seconds
+        self.event_callback = event_callback
         
         # Execution state
         self.iterations = 0
@@ -67,6 +70,12 @@ class ReActLoop:
         self.tool_calls_history = []
         self.reasoning_trace = []
         
+        # Emit start event
+        await self._emit_event("start", {
+            "message": initial_prompt,
+            "max_iterations": self.max_iterations
+        })
+        
         # Start chat session
         await self.agent.start_chat()
         
@@ -84,15 +93,36 @@ class ReActLoop:
                 termination_reason = "timeout"
                 final_response = f"Task execution timed out after {self.timeout_seconds} seconds. Completed {self.iterations} iterations."
                 self._log_trace(f"[TIMEOUT] Execution exceeded {self.timeout_seconds}s")
+                await self._emit_event("error", {
+                    "message": "Execution timeout",
+                    "details": final_response
+                })
                 break
             
             self._log_trace(f"\n[ITERATION {self.iterations}] Starting reasoning cycle")
+            
+            # Emit iteration start event
+            await self._emit_event("iteration_start", {
+                "iteration": self.iterations,
+                "max_iterations": self.max_iterations
+            })
+            
+            # Emit thinking event
+            await self._emit_event("thinking", {
+                "message": f"Processing iteration {self.iterations} of {self.max_iterations}..."
+            })
             
             try:
                 # Send message to agent
                 response = await self.agent.send_message(current_prompt)
                 
                 self._log_trace(f"[RESPONSE] {response}")
+                
+                # Emit response event
+                await self._emit_event("response", {
+                    "text": response,
+                    "iteration": self.iterations
+                })
                 
                 # Check if this is a final answer (no tool calls needed)
                 # In the current implementation with automatic_function_calling=True,
@@ -112,6 +142,10 @@ class ReActLoop:
                 self._log_trace(f"[ERROR] {str(e)}")
                 final_response = f"Error during execution: {str(e)}"
                 termination_reason = "error"
+                await self._emit_event("error", {
+                    "message": "Execution error",
+                    "details": str(e)
+                })
                 break
         
         # Check if we hit max iterations
@@ -120,6 +154,13 @@ class ReActLoop:
             self._log_trace(f"[MAX ITERATIONS] Reached limit of {self.max_iterations}")
         
         execution_time = time.time() - self.start_time
+        
+        # Emit completion event
+        await self._emit_event("completion", {
+            "reason": termination_reason,
+            "iterations": self.iterations,
+            "execution_time_seconds": round(execution_time, 2)
+        })
         
         return {
             "response": final_response or "No response generated",
@@ -143,6 +184,17 @@ class ReActLoop:
         trace_entry = f"[{timestamp}] {message}"
         self.reasoning_trace.append(trace_entry)
         print(trace_entry)  # Also print for real-time debugging
+    
+    async def _emit_event(self, event_type: str, data: Dict[str, Any]):
+        """Emit an event to the callback if one is registered."""
+        if self.event_callback:
+            try:
+                await self.event_callback(event_type, {
+                    **data,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception as e:
+                print(f"Error emitting event: {e}")
     
     def _extract_observations(self, tool_results: Any) -> str:
         """
