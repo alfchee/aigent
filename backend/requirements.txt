@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+google-genai
+playwright
+apscheduler
+pydantic
+python-dotenv
+httpx
+sqlalchemy

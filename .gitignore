@@ -1,0 +1,57 @@
+# General
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+
+# Python (Backend)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+scheduler.db
+
+# Node.js (Frontend)
+node_modules/
+dist/
+dist-ssr/
+*.local
+.nuxt/
+.output/
+.nitro/
+.cache/
+.vite-inspect/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project documentation artifacts
+.gemini/
+brain/
