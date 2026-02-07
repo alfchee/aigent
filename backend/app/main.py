@@ -1,10 +1,29 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.core.agent import NaviBot
 from app.skills.scheduler import start_scheduler
 import asyncio
+import os
 
 app = FastAPI(title="NaviBot API", version="0.1.0")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+# Ensure user_data directory exists
+USER_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_data")
+os.makedirs(USER_DATA_DIR, exist_ok=True)
+
+# Mount static files for user artifacts
+app.mount("/files", StaticFiles(directory=USER_DATA_DIR), name="files")
 
 # Initialize Agent
 bot = NaviBot()
@@ -16,6 +35,7 @@ async def startup_event():
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default"
     use_react_loop: bool = False  # Default to simple mode for API backward compatibility
     max_iterations: int = 10
     include_trace: bool = False  # Return reasoning trace in response
@@ -28,6 +48,10 @@ class ChatResponse(BaseModel):
     termination_reason: str | None = None
     execution_time_seconds: float | None = None
 
+def _validate_session_id(session_id: str):
+    if session_id is None or not str(session_id).strip() or session_id == "default":
+        raise HTTPException(status_code=400, detail="session_id es requerido y no puede ser 'default'")
+
 @app.get("/")
 async def root():
     return {"message": "NaviBot Backend is running", "status": "ok"}
@@ -35,10 +59,13 @@ async def root():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
+        _validate_session_id(request.session_id)
+        print(f"[API] /api/chat session_id={request.session_id}")
         if request.use_react_loop:
             # Use ReAct loop for autonomous multi-turn execution
             result = await bot.send_message_with_react(
                 request.message,
+                session_id=request.session_id,
                 max_iterations=request.max_iterations
             )
             
@@ -52,7 +79,7 @@ async def chat(request: ChatRequest):
             )
         else:
             # Simple single-turn execution (backward compatibility)
-            response_text = await bot.send_message(request.message)
+            response_text = await bot.send_message(request.message, session_id=request.session_id)
             return ChatResponse(response=response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -65,6 +92,8 @@ async def chat_stream(request: ChatRequest):
     """
     from sse_starlette.sse import EventSourceResponse
     import json
+    _validate_session_id(request.session_id)
+    print(f"[API] /api/chat/stream session_id={request.session_id}")
     
     async def event_generator():
         # Create event queue for communication between agent and SSE stream
@@ -87,12 +116,13 @@ async def chat_stream(request: ChatRequest):
                 if request.use_react_loop:
                     final_result = await bot.send_message_with_react(
                         request.message,
+                        session_id=request.session_id,
                         max_iterations=request.max_iterations,
                         event_callback=event_callback
                     )
                 else:
                     # For simple mode, just send the message
-                    response_text = await bot.send_message(request.message)
+                    response_text = await bot.send_message(request.message, session_id=request.session_id)
                     final_result = {"response": response_text}
             except Exception as e:
                 task_error = e

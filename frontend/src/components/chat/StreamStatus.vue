@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useChatStore } from '../../stores/chat';
-import { Loader2, BrainCircuit } from 'lucide-vue-next';
+import { BrainCircuit } from 'lucide-vue-next';
 
 const store = useChatStore();
 </script>

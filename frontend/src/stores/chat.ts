@@ -23,15 +23,25 @@ export const useChatStore = defineStore('chat', () => {
     }
   ]);
   
-  const logs = ref<LogEntry[]>([]);
+  const logs = ref<LogEntry[]>([]); // Keeping global logs for now, might be useful for debug
   const status = ref<StreamStatus>('idle');
   const currentThought = ref<string>('');
+  const abortController = ref<AbortController | null>(null);
   
   // Getters
   const isStreaming = computed(() => status.value === 'connecting' || status.value === 'streaming');
   const hasLogs = computed(() => logs.value.length > 0);
 
   // Actions
+  function getSessionId(): string {
+    let id = localStorage.getItem('chat_session_id');
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem('chat_session_id', id);
+    }
+    return id;
+  }
+
   function addLog(type: LogEntry['type'], title: string, details?: any) {
     logs.value.push({
       id: crypto.randomUUID(),
@@ -41,6 +51,38 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
       expanded: true
     });
+  }
+
+  function addMessageLog(msgId: string, type: LogEntry['type'], title: string, details?: any) {
+    const msg = messages.value.find(m => m.id === msgId);
+    if (msg) {
+      if (!msg.steps) msg.steps = [];
+      msg.steps.push({
+        id: crypto.randomUUID(),
+        type,
+        title,
+        details,
+        timestamp: Date.now(),
+        expanded: false // Default collapsed in message view
+      });
+    }
+    // Also add to global logs for now
+    addLog(type, title, details);
+  }
+
+  function stopGeneration() {
+    if (abortController.value) {
+      abortController.value.abort();
+      abortController.value = null;
+    }
+    status.value = 'completed'; // Or 'cancelled' if we had that state
+    currentThought.value = '';
+    
+    // Find the last streaming message and mark it as done
+    const lastMsg = messages.value.find(m => m.isStreaming);
+    if (lastMsg) {
+      lastMsg.isStreaming = false;
+    }
   }
 
   async function sendMessage(content: string) {
@@ -62,13 +104,14 @@ export const useChatStore = defineStore('chat', () => {
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
-      isStreaming: true
+      isStreaming: true,
+      steps: []
     });
     
-    // Clear previous transient state if needed, but keep logs? 
-    // Maybe better to clear logs for a new turn or keep them? 
-    // "Observability Console" usually keeps a history. We'll append.
     currentThought.value = '';
+    
+    // Init AbortController
+    abortController.value = new AbortController();
 
     try {
       await fetchEventSource('/api/chat/stream', {
@@ -78,8 +121,10 @@ export const useChatStore = defineStore('chat', () => {
         },
         body: JSON.stringify({
           message: content,
+          session_id: getSessionId(),
           use_react_loop: true
         }),
+        signal: abortController.value.signal,
         async onopen(response) {
           if (response.ok) {
             status.value = 'streaming';
@@ -112,12 +157,20 @@ export const useChatStore = defineStore('chat', () => {
           finalizeStream(assistantMsgId);
         },
         onerror(err) {
+          if (abortController.value?.signal.aborted) {
+             // Ignore if aborted manually
+             return;
+          }
           status.value = 'error';
-          addLog('error', 'Connection Error', err);
+          addMessageLog(assistantMsgId, 'error', 'Connection Error', err);
           throw err; // rethrow to stop retries by default, or handle logic
         }
       });
-    } catch (err) {
+    } catch (err: any) {
+       if (abortController.value?.signal.aborted) {
+         console.log('Stream aborted by user');
+         return;
+       }
       console.error('Stream error:', err);
       status.value = 'error';
       finalizeStream(assistantMsgId);
@@ -125,39 +178,46 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function handleBackendEvent(event: BackendEvent, msgId: string) {
+    // Update transient thought
+    const msg = messages.value.find(m => m.id === msgId);
+    
     switch (event.type) {
       case 'start':
-        addLog('info', 'Process Started');
+        addMessageLog(msgId, 'info', 'Process Started');
         break;
         
       case 'iteration_start':
         const iterData = event.data as ThinkingPayload;
-        addLog('info', `Iteration ${iterData.iteration || '?'}`, iterData);
+        addMessageLog(msgId, 'info', `Iteration ${iterData.iteration || '?'}`, iterData);
         break;
         
       case 'thinking':
         const thinkData = event.data as ThinkingPayload;
         currentThought.value = thinkData.message;
-        // Optionally add to log if verbose, or just update UI indicator
+        if (msg) msg.currentThought = thinkData.message;
+        addMessageLog(msgId, 'thinking', 'Thinking', thinkData.message);
         break;
         
       case 'tool_call':
         const toolData = event.data as ToolCallPayload;
-        addLog('tool', `Calling Tool: ${toolData.tool_name}`, toolData.arguments);
+        addMessageLog(msgId, 'tool', `Calling Tool: ${toolData.tool_name}`, toolData.arguments);
         currentThought.value = `Executing ${toolData.tool_name}...`;
+        if (msg) msg.currentThought = `Executing ${toolData.tool_name}...`;
         break;
         
       case 'observation':
         const obsData = event.data as ObservationPayload;
-        addLog('success', `Tool Result`, obsData.result);
+        addMessageLog(msgId, 'success', `Tool Result`, obsData.result);
         break;
         
       case 'response':
         const respData = event.data as ResponsePayload;
         // Append text to the current message
-        const msg = messages.value.find(m => m.id === msgId);
         if (msg) {
           msg.content += respData.text;
+          // Clear transient thought when responding
+          msg.currentThought = undefined;
+          currentThought.value = 'Responding...';
         }
         break;
         
@@ -167,7 +227,7 @@ export const useChatStore = defineStore('chat', () => {
         break;
         
       case 'error':
-        addLog('error', 'Backend Error', event.data);
+        addMessageLog(msgId, 'error', 'Backend Error', event.data);
         break;
     }
   }
@@ -175,9 +235,11 @@ export const useChatStore = defineStore('chat', () => {
   function finalizeStream(msgId: string) {
     status.value = 'completed';
     currentThought.value = '';
+    abortController.value = null;
     const msg = messages.value.find(m => m.id === msgId);
     if (msg) {
       msg.isStreaming = false;
+      msg.currentThought = undefined;
     }
   }
 
@@ -188,6 +250,7 @@ export const useChatStore = defineStore('chat', () => {
     currentThought,
     isStreaming,
     hasLogs,
-    sendMessage
+    sendMessage,
+    stopGeneration
   };
 });

@@ -6,6 +6,8 @@ export interface Message {
   content: string;
   timestamp: number;
   isStreaming?: boolean;
+  steps?: LogEntry[];
+  currentThought?: string;
 }
 
 // Backend Event Types

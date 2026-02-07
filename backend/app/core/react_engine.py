@@ -26,6 +26,7 @@ class ReActLoop:
     def __init__(
         self, 
         agent,  # NaviBot instance
+        session_id: str = "default",
         max_iterations: int = 10,
         timeout_seconds: int = 300,
         event_callback: Optional[Callable] = None
@@ -35,11 +36,13 @@ class ReActLoop:
         
         Args:
             agent: NaviBot instance to execute with
+            session_id: The session ID for chat history persistence
             max_iterations: Maximum number of reasoning iterations
             timeout_seconds: Maximum execution time in seconds
             event_callback: Optional async callback for streaming events
         """
         self.agent = agent
+        self.session_id = session_id
         self.max_iterations = max_iterations
         self.timeout_seconds = timeout_seconds
         self.event_callback = event_callback
@@ -77,7 +80,7 @@ class ReActLoop:
         })
         
         # Start chat session
-        await self.agent.start_chat()
+        await self.agent.start_chat(session_id=self.session_id)
         
         current_prompt = initial_prompt
         final_response = None
@@ -114,13 +117,142 @@ class ReActLoop:
             
             try:
                 # Send message to agent
-                response = await self.agent.send_message(current_prompt)
+                response_obj = await self.agent.send_message(current_prompt, session_id=self.session_id)
                 
-                self._log_trace(f"[RESPONSE] {response}")
+                # Extract text and handle non-text responses (e.g. function calls)
+                response_text = ""
+                tool_calls_info = []
+
+                try:
+                    # Try getting standard text
+                    if response_obj.text:
+                        response_text = response_obj.text
+                except Exception:
+                    # Handle case where .text fails due to non-text parts
+                    pass
+                
+                # Inspect parts for function calls or other content if text is empty
+                if not response_text:
+                    try:
+                        if hasattr(response_obj, 'candidates') and response_obj.candidates:
+                            for part in response_obj.candidates[0].content.parts:
+                                if part.function_call:
+                                    fc = part.function_call
+                                    tool_calls_info.append(f"{fc.name}({fc.args})")
+                    except Exception as e:
+                        self._log_trace(f"[WARNING] Error inspecting response parts: {e}")
+
+                # If we still have no text but have tool calls, synthesize a response
+                if not response_text and tool_calls_info:
+                    response_text = f"I have executed the following actions: {', '.join(tool_calls_info)}. Please check the results."
+                    self._log_trace(f"[SYNTHESIZED RESPONSE] {response_text}")
+                
+                # If truly empty
+                if not response_text:
+                    response_text = "No response text generated (Action completed without output)."
+                
+                # --- AUTO-INJECT MISSING ARTIFACTS (VALIDATION LAYER) ---
+                # Check if we generated artifacts in this turn but forgot to include them in the final text
+                generated_artifacts = []
+                # Scan tool calls for artifacts
+                if hasattr(response_obj, 'candidates') and response_obj.candidates:
+                    for part in response_obj.candidates[0].content.parts:
+                        if part.function_call:
+                             # This is where we would check the *result* of the function call if we had it here.
+                             # But in this loop, we are receiving the model's *request* to call a tool (if manual) 
+                             # OR the model's response *after* tool execution (if automatic).
+                             # With 'automatic_function_calling', the response_obj contains the final text AFTER tools run.
+                             # However, we don't easily see the tool outputs here unless we look at the history or if the SDK provides them.
+                             
+                             # Wait, with automatic_function_calling, the 'response_obj' is the FINAL response.
+                             # The intermediate tool calls happened behind the scenes in the SDK.
+                             # The SDK unfortunately hides the intermediate tool outputs (like "[FILE_ARTIFACT...]") from the final response object structure usually.
+                             # UNLESS we use the 'history' or if the model decided to repeat it.
+                             
+                             # Actually, in the current Google GenAI SDK with automatic_function_calling, 
+                             # getting the tool outputs that happened is tricky without a custom loop.
+                             # But let's assume for a moment we can't easily see "past" tool outputs in this object.
+                             
+                             # ALTERNATIVE: The tools themselves (browser.py) return strings.
+                             # If the model uses the tool, the *result* is fed back to the model.
+                             # The model *should* see "[FILE_ARTIFACT...]" in its context.
+                             # If the model ignores it, we want to force it.
+                             pass
+
+                # Since we can't easily intercept the tool output in the automatic loop from the 'response_obj' alone 
+                # (without inspecting the chat session history which might be updated),
+                # we will rely on a simpler heuristic or just trust the prompt for now, 
+                # OR we switch to manual tool execution if we want strict control.
+                
+                # However, to strictly follow the plan "Update react_engine.py to auto-inject", 
+                # we need access to the tool outputs. 
+                # Let's inspect the chat history to find the latest tool response.
+                
+                try:
+                    # Access the chat session history
+                    history = self.agent._chat_session.get_history()
+                    # Look at the last few messages. 
+                    # We expect: Model(FunctionCall) -> User(FunctionResponse) -> Model(FinalText)
+                    # The FunctionResponse part contains the tool output.
+                    
+                    if len(history) >= 2:
+                        last_user_message = history[-2] # The one before the final model response?
+                        # Actually, history structure depends on the SDK.
+                        # Usually it's [User, Model, User(ToolOutput), Model]
+                        
+                        # Iterate backwards to find recent tool outputs in this "turn"
+                        # Since we don't know exactly how many turns happened in one send_message call (automatic),
+                        # we can just look for tool outputs that are NOT present in the final response text.
+                        
+                        for msg in reversed(history):
+                            if msg.role == "user" and msg.parts: # Tool outputs are often treated as 'user' role or 'function' role depending on API version
+                                for part in msg.parts:
+                                    # Check for function_response
+                                    if hasattr(part, 'function_response'):
+                                        # This is a tool output!
+                                        # The content is usually in the 'response' field of the function_response
+                                        # But the SDK might wrap it. 
+                                        # Let's try to stringify or access it.
+                                        result_content = str(part.function_response) 
+                                        # This might need refinement depending on exact object structure
+                                        # But let's look for our tag regex in the string representation
+                                        
+                                        import re
+                                        matches = re.findall(r"\[FILE_ARTIFACT:\s*(.+?)\]", result_content)
+                                        for match in matches:
+                                            artifact_tag = f"[FILE_ARTIFACT: {match}]"
+                                            if artifact_tag not in response_text:
+                                                generated_artifacts.append(artifact_tag)
+                                    
+                                    # Also check plain text parts if the SDK puts tool output there
+                                    if hasattr(part, 'text') and part.text:
+                                        import re
+                                        matches = re.findall(r"\[FILE_ARTIFACT:\s*(.+?)\]", part.text)
+                                        for match in matches:
+                                            artifact_tag = f"[FILE_ARTIFACT: {match}]"
+                                            if artifact_tag not in response_text:
+                                                generated_artifacts.append(artifact_tag)
+                            
+                            # Stop if we hit a normal user message (not tool response)
+                            # This is hard to distinguish perfectly without more metadata, 
+                            # but we can limit to the last few messages.
+                            if msg.role == "user" and not any(hasattr(p, 'function_response') for p in msg.parts):
+                                break
+
+                    if generated_artifacts:
+                        # Deduplicate
+                        generated_artifacts = list(set(generated_artifacts))
+                        response_text += "\n\n" + "\n".join(generated_artifacts)
+                        self._log_trace(f"[AUTO-INJECTED ARTIFACTS] {generated_artifacts}")
+
+                except Exception as e:
+                    self._log_trace(f"[WARNING] Artifact injection check failed: {e}")
+
+                self._log_trace(f"[RESPONSE] {response_text}")
                 
                 # Emit response event
                 await self._emit_event("response", {
-                    "text": response,
+                    "text": response_text,
                     "iteration": self.iterations
                 })
                 
@@ -133,7 +265,7 @@ class ReActLoop:
                 # This is a simplification - in a more sophisticated implementation,
                 # we would disable automatic function calling and manually handle tools
                 
-                final_response = response
+                final_response = response_text
                 termination_reason = "natural_completion"
                 self._log_trace(f"[COMPLETION] Agent provided final answer")
                 break
