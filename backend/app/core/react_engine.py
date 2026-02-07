@@ -26,6 +26,7 @@ class ReActLoop:
     def __init__(
         self, 
         agent,  # NaviBot instance
+        session_id: str = "default",
         max_iterations: int = 10,
         timeout_seconds: int = 300,
         event_callback: Optional[Callable] = None
@@ -35,11 +36,13 @@ class ReActLoop:
         
         Args:
             agent: NaviBot instance to execute with
+            session_id: The session ID for chat history persistence
             max_iterations: Maximum number of reasoning iterations
             timeout_seconds: Maximum execution time in seconds
             event_callback: Optional async callback for streaming events
         """
         self.agent = agent
+        self.session_id = session_id
         self.max_iterations = max_iterations
         self.timeout_seconds = timeout_seconds
         self.event_callback = event_callback
@@ -114,7 +117,7 @@ class ReActLoop:
             
             try:
                 # Send message to agent
-                response_obj = await self.agent.send_message(current_prompt)
+                response_obj = await self.agent.send_message(current_prompt, session_id=self.session_id)
                 
                 # Extract text and handle non-text responses (e.g. function calls)
                 response_text = ""
@@ -187,7 +190,7 @@ class ReActLoop:
                 
                 try:
                     # Access the chat session history
-                    history = self.agent._chat_session.history
+                    history = self.agent._chat_session.get_history()
                     # Look at the last few messages. 
                     # We expect: Model(FunctionCall) -> User(FunctionResponse) -> Model(FinalText)
                     # The FunctionResponse part contains the tool output.

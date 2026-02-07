@@ -48,6 +48,10 @@ class ChatResponse(BaseModel):
     termination_reason: str | None = None
     execution_time_seconds: float | None = None
 
+def _validate_session_id(session_id: str):
+    if session_id is None or not str(session_id).strip() or session_id == "default":
+        raise HTTPException(status_code=400, detail="session_id es requerido y no puede ser 'default'")
+
 @app.get("/")
 async def root():
     return {"message": "NaviBot Backend is running", "status": "ok"}
@@ -55,6 +59,8 @@ async def root():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
+        _validate_session_id(request.session_id)
+        print(f"[API] /api/chat session_id={request.session_id}")
         if request.use_react_loop:
             # Use ReAct loop for autonomous multi-turn execution
             result = await bot.send_message_with_react(
@@ -86,6 +92,8 @@ async def chat_stream(request: ChatRequest):
     """
     from sse_starlette.sse import EventSourceResponse
     import json
+    _validate_session_id(request.session_id)
+    print(f"[API] /api/chat/stream session_id={request.session_id}")
     
     async def event_generator():
         # Create event queue for communication between agent and SSE stream

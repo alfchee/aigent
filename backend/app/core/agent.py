@@ -56,12 +56,14 @@ class NaviBot:
             # Check if session exists
             db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
             if not db_session:
+                print(f"[DB] Session not found for session_id={session_id}")
                 return []
             
             # Get messages
             messages = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id).all()
             
             # Convert back to SDK Content objects
+            print(f"[DB] Loaded {len(messages)} messages for session_id={session_id}")
             return [dict_to_content(msg.content) for msg in messages]
         except Exception as e:
             print(f"Error retrieving history: {e}")
@@ -79,32 +81,49 @@ class NaviBot:
                 db_session = ChatSession(id=session_id)
                 db.add(db_session)
                 db.commit()
+                print(f"[DB] Created chat_session for session_id={session_id}")
             
-            # Simple approach: Wipe existing messages for this session and rewrite (inefficient but safe for syncing)
-            # A better approach would be to append only new messages, but we need to track what's new.
-            # Given the request for "persistence" and "context", syncing the state is reliable.
-            # However, for performance, we should ideally check IDs. 
-            # But the SDK history is a list without IDs.
+            # Validation: Check for empty history if we expect something
+            if not history:
+                print(f"[DB] Warning: Attempting to save empty history for session {session_id}")
             
-            # Let's delete old messages and re-insert. 
-            # In a high-traffic production app, we would use a more incremental approach.
+            # Count existing messages before delete
+            existing_count = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).count()
+            
+            # Simple heuristic: If we have significantly fewer messages than before, and not pruning, log warning
+            if len(history) < existing_count and existing_count < 20: # Assuming pruning threshold 20
+                 print(f"[DB] Warning: New history ({len(history)}) is smaller than existing ({existing_count}) for session {session_id}. Potential data loss?")
+
+            # Delete old messages
             db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
             
             new_messages = []
-            for msg in history:
-                # Serialize content
-                msg_dict = content_to_dict(msg)
-                new_messages.append(ChatMessage(
-                    session_id=session_id,
-                    role=msg_dict["role"],
-                    content=msg_dict
-                ))
-            
-            db.add_all(new_messages)
-            db.commit()
+            for i, msg in enumerate(history):
+                try:
+                    # Serialize content
+                    msg_dict = content_to_dict(msg)
+                    if not msg_dict.get("parts"):
+                        print(f"[DB] Warning: Message {i} has no parts after serialization. Role: {msg.role}")
+                    
+                    new_messages.append(ChatMessage(
+                        session_id=session_id,
+                        role=msg_dict["role"],
+                        content=msg_dict
+                    ))
+                except Exception as e:
+                    print(f"[DB] Error serializing message {i}: {e}")
+
+            if new_messages:
+                db.add_all(new_messages)
+                db.commit()
+                print(f"[DB] Successfully saved {len(new_messages)} messages for session {session_id}")
+            else:
+                print(f"[DB] No messages to save for session {session_id}")
             
         except Exception as e:
-            print(f"Error saving history: {e}")
+            print(f"[DB] Critical Error saving history: {e}")
+            import traceback
+            traceback.print_exc()
             db.rollback()
         finally:
             db.close()
@@ -118,6 +137,7 @@ class NaviBot:
         
         # Prune history
         history = self._prune_history(history)
+        print(f"[Agent] start_chat session_id={session_id} history_count={len(history)}")
         
         # Prepare config arguments
         config_args = {
@@ -168,10 +188,26 @@ class NaviBot:
         if not self._chat_session:
             await self.start_chat(session_id=session_id)
         
+        print(f"[Agent] send_message session_id={session_id}")
         response = await self._chat_session.send_message(message)
         
-        # Save session history to DB
-        self._save_history_to_db(session_id, self._chat_session.history)
+        # Try to get comprehensive history (including tool calls) if available
+        # Some SDK versions hide tool calls in .history property
+        history_to_save = []
+        try:
+            # Check for _comprehensive_history (private attribute in some versions)
+            if hasattr(self._chat_session, '_comprehensive_history'):
+                history_to_save = self._chat_session._comprehensive_history
+            # Check for get_history(curated=False) which is default but let's be explicit if needed
+            # or just use get_history() as fallback
+            if not history_to_save:
+                history_to_save = self._chat_session.get_history()
+        except Exception as e:
+             print(f"[Agent] Error retrieving comprehensive history: {e}")
+             history_to_save = self._chat_session.get_history()
+
+        print(f"[Agent] save_history session_id={session_id} history_count={len(history_to_save)}")
+        self._save_history_to_db(session_id, history_to_save)
         
         return response
 
