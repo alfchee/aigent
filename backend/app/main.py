@@ -1,10 +1,20 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.core.agent import NaviBot
+from app.api.files import router as files_router
+from app.api.artifacts import router as artifacts_router
 from app.skills.scheduler import start_scheduler
 import asyncio
 
 app = FastAPI(title="NaviBot API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize Agent
 bot = NaviBot()
@@ -16,6 +26,7 @@ async def startup_event():
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default"
     use_react_loop: bool = False  # Default to simple mode for API backward compatibility
     max_iterations: int = 10
     include_trace: bool = False  # Return reasoning trace in response
@@ -32,8 +43,15 @@ class ChatResponse(BaseModel):
 async def root():
     return {"message": "NaviBot Backend is running", "status": "ok"}
 
+
+app.include_router(files_router)
+app.include_router(artifacts_router)
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
+    session_token = set_session_id(request.session_id)
+    callback_token = set_event_callback(None)
     try:
         if request.use_react_loop:
             # Use ReAct loop for autonomous multi-turn execution
@@ -56,6 +74,9 @@ async def chat(request: ChatRequest):
             return ChatResponse(response=response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        reset_session_id(session_token)
+        reset_event_callback(callback_token)
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
@@ -83,6 +104,9 @@ async def chat_stream(request: ChatRequest):
         # Start agent execution in background task
         async def run_agent():
             nonlocal final_result, task_error
+            from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
+            session_token = set_session_id(request.session_id)
+            callback_token = set_event_callback(event_callback)
             try:
                 if request.use_react_loop:
                     final_result = await bot.send_message_with_react(
@@ -97,6 +121,8 @@ async def chat_stream(request: ChatRequest):
             except Exception as e:
                 task_error = e
             finally:
+                reset_session_id(session_token)
+                reset_event_callback(callback_token)
                 task_complete.set()
         
         # Start the agent task

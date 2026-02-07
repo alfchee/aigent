@@ -8,3 +8,5 @@ python-dotenv
 httpx
 sqlalchemy
 sse-starlette
+pypdf
+python-multipart
