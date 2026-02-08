@@ -36,6 +36,9 @@ class SessionWorkspace:
         except Exception:
             raise ValueError(f"Acceso denegado: {virtual_path}")
         return target
+
+    def safe_path(self, virtual_path: str) -> Path:
+        return self._safe_path(virtual_path)
  
     def list_files(self, virtual_dir: str = "/") -> list[dict[str, Any]]:
         base = self._safe_path(virtual_dir)

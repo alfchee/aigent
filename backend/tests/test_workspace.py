@@ -67,6 +67,24 @@ class TestFileApi(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.content, b"hola")
  
+    def test_workspace_alias_list_and_get(self):
+        from app.api.workspace import router as workspace_router
+        app = FastAPI()
+        app.include_router(workspace_router)
+        client = TestClient(app)
+        session_id = "s1"
+        ws = filesystem.SessionWorkspace(session_id)
+        ws.write_text("hola.html", "<h1>hola</h1>")
+
+        r = client.get(f"/api/workspace/{session_id}/files")
+        self.assertEqual(r.status_code, 200)
+        paths = [f["path"] for f in r.json()["files"]]
+        self.assertIn("hola.html", paths)
+
+        r = client.get(f"/api/workspace/{session_id}/files/hola.html")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"hola", r.content)
+
  
 class TestToolEvents(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -91,3 +109,52 @@ class TestToolEvents(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["saved"]["path"], "hello.txt")
         await asyncio.sleep(0)
         self.assertTrue(any(t == "artifact" and e.get("op") == "write" for t, e in self.events))
+
+
+class TestChatSessionIsolation(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        filesystem.BASE_WORKSPACE = Path(self.tmp.name)
+
+    async def asyncTearDown(self):
+        self.tmp.cleanup()
+
+    async def test_chat_is_per_session(self):
+        from app.core.agent import NaviBot
+        from app.core.runtime_context import reset_session_id, set_session_id
+
+        bot = NaviBot()
+
+        class DummyChats:
+            def __init__(self):
+                self.calls = 0
+
+            def create(self, **kwargs):
+                self.calls += 1
+                return object()
+
+        class DummyAio:
+            def __init__(self):
+                self.chats = DummyChats()
+
+        class DummyClient:
+            def __init__(self):
+                self.aio = DummyAio()
+
+        bot.client = DummyClient()
+
+        token1 = set_session_id("s1")
+        try:
+            await bot.start_chat(session_id="s1")
+        finally:
+            reset_session_id(token1)
+
+        token2 = set_session_id("s2")
+        try:
+            await bot.start_chat(session_id="s2")
+        finally:
+            reset_session_id(token2)
+
+        self.assertIn("s1", bot._chat_sessions)
+        self.assertIn("s2", bot._chat_sessions)
+        self.assertIsNot(bot._chat_sessions["s1"], bot._chat_sessions["s2"])

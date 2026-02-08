@@ -26,6 +26,7 @@ def get_scheduler():
 
 async def execute_agent_task(
     prompt: str,
+    session_id: str = "default",
     use_react_loop: bool = True,
     max_iterations: int = 10,
     timeout_seconds: int = 300
@@ -45,8 +46,11 @@ async def execute_agent_task(
     print(f"{'='*60}\n")
     
     from app.core.agent import NaviBot
+    from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
     
     try:
+        session_token = set_session_id(session_id)
+        callback_token = set_event_callback(None)
         # Instantiate a fresh agent for this task
         bot = NaviBot()
         
@@ -83,6 +87,12 @@ async def execute_agent_task(
         print(f"\n{'='*60}")
         print(f"Error executing task: {e}")
         print(f"{'='*60}\n")
+    finally:
+        try:
+            reset_session_id(session_token)
+            reset_event_callback(callback_token)
+        except Exception:
+            pass
 
 
 def start_scheduler():
@@ -91,7 +101,7 @@ def start_scheduler():
         sched.start()
         print("Scheduler started with persistent storage.")
 
-def schedule_task(prompt: str, execute_at: str, use_react_loop: bool = True, max_iterations: int = 10):
+def schedule_task(prompt: str, execute_at: str, session_id: str = "default", use_react_loop: bool = True, max_iterations: int = 10):
     """
     Schedules a one-off task.
     
@@ -107,7 +117,7 @@ def schedule_task(prompt: str, execute_at: str, use_react_loop: bool = True, max
         sched.add_job(
             execute_agent_task, 
             DateTrigger(run_date=run_date), 
-            args=[prompt, use_react_loop, max_iterations]
+            args=[prompt, session_id, use_react_loop, max_iterations]
         )
         mode = "ReAct loop" if use_react_loop else "simple"
         return f"Task '{prompt}' scheduled for {execute_at} ({mode} mode)"
@@ -116,7 +126,7 @@ def schedule_task(prompt: str, execute_at: str, use_react_loop: bool = True, max
     except Exception as e:
         return f"Error scheduling task: {str(e)}"
 
-def schedule_interval_task(prompt: str, interval_seconds: int, use_react_loop: bool = True, max_iterations: int = 10):
+def schedule_interval_task(prompt: str, interval_seconds: int, session_id: str = "default", use_react_loop: bool = True, max_iterations: int = 10):
     """
     Schedules a recurring task.
     
@@ -131,7 +141,7 @@ def schedule_interval_task(prompt: str, interval_seconds: int, use_react_loop: b
         sched.add_job(
             execute_agent_task, 
             IntervalTrigger(seconds=interval_seconds), 
-            args=[prompt, use_react_loop, max_iterations]
+            args=[prompt, session_id, use_react_loop, max_iterations]
         )
         mode = "ReAct loop" if use_react_loop else "simple"
         return f"Task '{prompt}' scheduled every {interval_seconds} seconds ({mode} mode)"

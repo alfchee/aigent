@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.core.agent import NaviBot
 from app.api.files import router as files_router
 from app.api.artifacts import router as artifacts_router
+from app.api.workspace import router as workspace_router
 from app.skills.scheduler import start_scheduler
 import asyncio
 
@@ -46,6 +47,7 @@ async def root():
 
 app.include_router(files_router)
 app.include_router(artifacts_router)
+app.include_router(workspace_router)
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):

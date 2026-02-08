@@ -18,7 +18,7 @@ class NaviBot:
         
         self.tools: List[Callable] = []
         self.model_name = model_name
-        self._chat_session = None
+        self._chat_sessions: Dict[str, Any] = {}
 
 
         # Register default skills
@@ -37,7 +37,7 @@ class NaviBot:
         """Registers a tool (function) to be used by the agent."""
         self.tools.append(tool)
 
-    async def start_chat(self, history: List[Dict[str, Any]] = None):
+    async def start_chat(self, session_id: str, history: List[Dict[str, Any]] = None):
         """Starts a new chat session with the configured tools."""
         
         # Tools config
@@ -51,17 +51,20 @@ class NaviBot:
              )
 
         # Create async chat session
-        self._chat_session = self.client.aio.chats.create(
+        self._chat_sessions[session_id] = self.client.aio.chats.create(
             model=self.model_name,
             config=tool_config,
             history=history
         )
 
     async def send_message(self, message: str) -> str:
-        if not self._chat_session:
-            await self.start_chat()
+        from app.core.runtime_context import get_session_id
+
+        session_id = get_session_id()
+        if session_id not in self._chat_sessions:
+            await self.start_chat(session_id=session_id)
         
-        response = await self._chat_session.send_message(message)
+        response = await self._chat_sessions[session_id].send_message(message)
         return response.text
 
     async def send_message_with_react(
