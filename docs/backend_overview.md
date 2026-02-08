@@ -18,6 +18,7 @@ The `NaviBot` class is the central intelligence of the system.
 - **AI Model**: Defaults to `gemini-2.0-flash`.
 - **Tool Registration**: Automatically registers skills from the `app/skills` directory.
 - **Chat Sessions**: Manages asynchronous chat sessions with automatic function calling enabled.
+- **History Management**: Abstraction layer (`get_history`) to handle different Gemini SDK history access patterns (sync vs async, property vs method).
 - **Execution Modes**:
   - **Simple Mode**: Single-turn execution via `send_message()` for quick responses.
   - **ReAct Mode**: Multi-turn autonomous execution via `send_message_with_react()` for complex tasks.
@@ -56,10 +57,221 @@ Provides persistent job scheduling using **APScheduler** and **SQLAlchemy**.
 
 | Skill | Tools Provided | Description |
 | :--- | :--- | :--- |
-| **System** | `list_files`, `read_file`, `create_file` | Basic filesystem operations. |
+| **System** | `list_files`, `read_file`, `create_file`, `update_file` | Basic filesystem operations. |
 | **Browser** | `navigate`, `get_page_content`, `screenshot`, `close_browser` | Web automation and content extraction. |
 | **Scheduler** | `schedule_task`, `schedule_interval_task` | Ability for the agent to schedule its own future tasks. |
 | **Workspace** | `create_doc`, `send_email`, `create_calendar_event` | Placeholders for Google Workspace integrations. |
+
+## Tool and Skill Reference (Agent Tooling)
+
+This section is the authoritative tool reference for the agent. Every tool call must include all required parameters with the correct types. Do not call tools with empty arguments.
+
+### System Skill (Filesystem)
+
+#### list_files
+**Signature**: `list_files(directory: str = "/") -> str`  
+**Parameters**:
+- `directory` (optional, string): Virtual directory inside the session workspace. Use `/` for root.
+**Returns**:
+- JSON string: `{"directory": "...", "files": [{"path": "...", "size_bytes": int, "modified_at": "ISO-8601", "mime_type": "..."}, ...]}`
+- Error string: `"Error listing files: ..."`
+
+**Examples**:
+```
+list_files()
+```
+```
+list_files(directory="/reports")
+```
+
+#### read_file
+**Signature**: `read_file(filepath: str, max_bytes: int = 1_000_000) -> str`  
+**Parameters**:
+- `filepath` (required, string): Virtual path to the file inside the session workspace.
+- `max_bytes` (optional, integer): Max bytes to read before truncation behavior.
+**Returns**:
+- Text content for text-like files.
+- JSON string for binary or oversized files:
+  - `{"path": "...", "mime_type": "...", "size_bytes": int, "truncated": true}`
+  - `{"path": "...", "mime_type": "...", "size_bytes": int, "base64": "..."}`
+- Error string: `"Error reading file: ..."`
+
+**Examples**:
+```
+read_file(filepath="notes/todo.txt")
+```
+```
+read_file(filepath="assets/logo.png", max_bytes=200000)
+```
+
+#### create_file
+**Signature**: `create_file(filepath: str, content: str, encoding: str = "utf-8") -> str`  
+**Parameters**:
+- `filepath` (required, string): Virtual path + filename where the file will be written.
+- `content` (required, string): File contents.
+- `encoding` (optional, string): `"utf-8"` for text or `"base64"` for binary content.
+**Returns**:
+- JSON string: `{"saved": {"path": "...", "size_bytes": int, "modified_at": "ISO-8601", "mime_type": "..."}}`
+- Error string: `"Error creating file: ..."`
+
+**Examples (correct usage with required parameters)**:
+```
+create_file(filepath="notes/todo.txt", content="Buy milk\nCall Sam\n")
+```
+```
+create_file(filepath="reports/summary.md", content="# Summary\n- Q1 results\n")
+```
+```
+create_file(filepath="images/logo.png", content="iVBORw0KGgoAAA...", encoding="base64")
+```
+```
+create_file(filepath="index.html", content="<!doctype html><h1>Hola</h1>")
+```
+
+#### update_file
+**Signature**: `update_file(filepath: str, start_line: int, end_line: int, new_content: str) -> str`  
+**Parameters**:
+- `filepath` (required, string): Virtual path to the target file.
+- `start_line` (required, integer): 1-based line to start replacement.
+- `end_line` (required, integer): 1-based line to end replacement. Use `0` or a value less than `start_line` to replace only `start_line`.
+- `new_content` (required, string): Replacement text (include trailing newline if needed).
+**Returns**:
+- JSON string: `{"saved": {"path": "...", "size_bytes": int, "modified_at": "ISO-8601", "mime_type": "..."}}`
+- Error string: `"Error updating file: ..."`
+
+**Examples**:
+```
+update_file(filepath="notes/todo.txt", start_line=2, end_line=2, new_content="Call Alex\n")
+```
+```
+update_file(filepath="notes/todo.txt", start_line=1, end_line=0, new_content="Buy coffee\n")
+```
+
+### Browser Skill
+
+#### navigate
+**Signature**: `navigate(url: str) -> str`  
+**Parameters**:
+- `url` (required, string): Full URL to open.
+**Returns**:
+- Success string with page title, or error string.
+
+**Example**:
+```
+navigate(url="https://example.com")
+```
+
+#### get_page_content
+**Signature**: `get_page_content() -> str`  
+**Parameters**: none  
+**Returns**:
+- HTML content (truncated to 10,000 chars) or error string.
+
+**Example**:
+```
+get_page_content()
+```
+
+#### screenshot
+**Signature**: `screenshot(filename: str = "screenshot.png") -> str`  
+**Parameters**:
+- `filename` (optional, string): Virtual path to save the screenshot in the session workspace.
+**Returns**:
+- JSON string: `{"saved": {"path": "...", "size_bytes": int, "modified_at": "ISO-8601", "mime_type": "..."}}`
+- Error string.
+
+**Example**:
+```
+screenshot(filename="shots/homepage.png")
+```
+
+#### close_browser
+**Signature**: `close_browser() -> str`  
+**Parameters**: none  
+**Returns**:
+- `"Browser closed."` or error string.
+
+**Example**:
+```
+close_browser()
+```
+
+### Scheduler Skill
+
+#### schedule_task
+**Signature**: `schedule_task(prompt: str, execute_at: str, session_id: str = "default", use_react_loop: bool = True, max_iterations: int = 10) -> str`  
+**Parameters**:
+- `prompt` (required, string): Instruction for the agent.
+- `execute_at` (required, string): ISO timestamp `YYYY-MM-DD HH:MM:SS`.
+- `session_id` (optional, string): Session/workspace id.
+- `use_react_loop` (optional, boolean): Use ReAct loop for execution.
+- `max_iterations` (optional, integer): ReAct loop iteration cap.
+**Returns**:
+- Success string confirming scheduling, or error string.
+
+**Example**:
+```
+schedule_task(prompt="Generate daily report", execute_at="2026-02-08 09:00:00", session_id="sales")
+```
+
+#### schedule_interval_task
+**Signature**: `schedule_interval_task(prompt: str, interval_seconds: int, session_id: str = "default", use_react_loop: bool = True, max_iterations: int = 10) -> str`  
+**Parameters**:
+- `prompt` (required, string): Instruction for the agent.
+- `interval_seconds` (required, integer): Interval in seconds.
+- `session_id` (optional, string): Session/workspace id.
+- `use_react_loop` (optional, boolean): Use ReAct loop for execution.
+- `max_iterations` (optional, integer): ReAct loop iteration cap.
+**Returns**:
+- Success string confirming scheduling, or error string.
+
+**Example**:
+```
+schedule_interval_task(prompt="Check status dashboard", interval_seconds=3600, session_id="ops")
+```
+
+### Workspace Skill (Placeholders)
+
+#### create_doc
+**Signature**: `create_doc(title: str, content: str) -> str`  
+**Parameters**:
+- `title` (required, string): Document title.
+- `content` (required, string): Document body.
+**Returns**:
+- Mock success string.
+
+**Example**:
+```
+create_doc(title="Meeting Notes", content="Agenda:\n- Budget\n")
+```
+
+#### send_email
+**Signature**: `send_email(to: str, subject: str, body: str) -> str`  
+**Parameters**:
+- `to` (required, string): Recipient email address.
+- `subject` (required, string): Email subject.
+- `body` (required, string): Email body text.
+**Returns**:
+- Mock success string.
+
+**Example**:
+```
+send_email(to="alex@example.com", subject="Status", body="All tasks completed.")
+```
+
+#### create_calendar_event
+**Signature**: `create_calendar_event(summary: str, start_time: str, end_time: str) -> str`  
+**Parameters**:
+- `summary` (required, string): Event title.
+- `start_time` (required, string): Start time.
+- `end_time` (required, string): End time.
+**Returns**:
+- Mock success string.
+
+**Example**:
+```
+create_calendar_event(summary="Sprint Planning", start_time="2026-02-08 10:00:00", end_time="2026-02-08 11:00:00")
+```
 
 ## API Endpoints
 

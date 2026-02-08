@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 import app.core.filesystem as filesystem
 from app.api.files import router as files_router
 from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
-from app.skills import system as system_tools
- 
- 
+from app.skills import filesystem as filesystem_skill
+
+
 class TestSessionWorkspace(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -104,7 +104,14 @@ class TestToolEvents(unittest.IsolatedAsyncioTestCase):
         self.tmp.cleanup()
  
     async def test_create_file_emits_artifact(self):
-        out = system_tools.create_file("/hello.txt", "hola")
+        # Retrieve the session-bound tools for "s1"
+        tools = filesystem_skill.get_filesystem_tools("s1")
+        # create_file is the first tool in the list [create, read, update, list]
+        create_file = tools[0]
+        
+        # Use keyword argument 'filepath' matching the new signature
+        out = create_file(filepath="/hello.txt", content="hola")
+        
         payload = json.loads(out)
         self.assertEqual(payload["saved"]["path"], "hello.txt")
         await asyncio.sleep(0)

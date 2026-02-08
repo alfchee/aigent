@@ -31,6 +31,7 @@ wheels/
 venv/
 ENV/
 scheduler.db
+navibot.db
 backend/workspace_data/
 
 # Node.js (Frontend)

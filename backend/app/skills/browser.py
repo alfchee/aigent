@@ -3,7 +3,7 @@ import asyncio
 import json
 
 from app.core.filesystem import SessionWorkspace
-from app.core.runtime_context import get_session_id
+from app.core.runtime_context import get_session_id, emit_event
 
 _playwright = None
 _sessions: dict[str, dict] = {}
@@ -61,6 +61,7 @@ async def screenshot(filename: str = "screenshot.png"):
         data = await ctx["page"].screenshot()
         ws = SessionWorkspace(get_session_id())
         meta = ws.write_bytes(filename, data)
+        emit_event("artifact", {"session_id": get_session_id(), "op": "write", "path": meta.get("path"), "meta": meta})
         return json.dumps({"saved": meta}, ensure_ascii=False)
     except Exception as e:
         return f"Error taking screenshot: {str(e)}"
