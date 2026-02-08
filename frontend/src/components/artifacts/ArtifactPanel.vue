@@ -3,12 +3,28 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useArtifactsStore } from '../../stores/artifacts'
 import { useChatStore } from '../../stores/chat'
+import { useSessionsStore } from '../../stores/sessions'
 import ChatContainer from '../chat/ChatContainer.vue'
+import Sidebar from '../chat/Sidebar.vue'
 import WorkspaceViewer from './WorkspaceViewer.vue'
-import { getOrCreateSessionId } from '../../lib/session'
+import { generateSessionId, getOrCreateSessionId, setSessionId } from '../../lib/session'
+import { nextSidebarState, normalizeSidebarState, type SidebarState } from '../../lib/sidebars'
 
 const store = useArtifactsStore()
 const chat = useChatStore()
+const sessions = useSessionsStore()
+
+const sessionsSidebarState = ref<SidebarState>(
+  normalizeSidebarState(localStorage.getItem('navibot_sidebar_sessions_state'), 'medium')
+)
+const artifactsSidebarState = ref<SidebarState>(
+  normalizeSidebarState(localStorage.getItem('navibot_sidebar_artifacts_state'), 'medium')
+)
+
+if (sessionsSidebarState.value === 'collapsed' && artifactsSidebarState.value === 'collapsed') {
+  artifactsSidebarState.value = 'medium'
+  localStorage.setItem('navibot_sidebar_artifacts_state', artifactsSidebarState.value)
+}
 
 const rightWidthPct = ref<number>(Number(localStorage.getItem('navibot_right_panel_pct') || '30'))
 const dragging = ref(false)
@@ -27,6 +43,24 @@ function clamp(n: number, min: number, max: number) {
 
 function persist() {
   localStorage.setItem('navibot_right_panel_pct', String(rightWidthPct.value))
+}
+
+function persistSidebars() {
+  localStorage.setItem('navibot_sidebar_sessions_state', sessionsSidebarState.value)
+  localStorage.setItem('navibot_sidebar_artifacts_state', artifactsSidebarState.value)
+}
+
+function cannotCollapseBoth(target: 'sessions' | 'artifacts', next: SidebarState) {
+  if (next !== 'collapsed') return false
+  if (target === 'sessions' && artifactsSidebarState.value === 'collapsed') return true
+  if (target === 'artifacts' && sessionsSidebarState.value === 'collapsed') return true
+  return false
+}
+
+function notify(msg: string) {
+  const toast = { id: `${Date.now()}_${Math.random()}`, message: msg }
+  store.toasts.push(toast)
+  window.setTimeout(() => store.popToast(toast.id), 3500)
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -52,16 +86,65 @@ onMounted(() => {
   updateStacked()
   window.addEventListener('resize', updateStacked)
   const sid = getOrCreateSessionId()
-  store.setSessionId(sid)
-  store.fetchArtifacts()
-  store.connectSse()
-  chat.loadSessionHistory(sid)
+  void setActiveSession(sid)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateStacked)
   store.disconnectSse()
 })
+
+async function setActiveSession(sid: string) {
+  const sessionId = sid || 'default'
+  setSessionId(sessionId)
+  store.disconnectSse()
+  store.setSessionId(sessionId)
+  store.connectSse()
+  try {
+    await sessions.createSession(sessionId)
+  } catch {
+  }
+  await Promise.allSettled([store.fetchArtifacts(), chat.loadSessionHistory(sessionId)])
+}
+
+async function createNewSession() {
+  const sid = generateSessionId()
+  try {
+    await sessions.createSession(sid, 'Nueva Conversación')
+  } catch {
+  }
+  await setActiveSession(sid)
+}
+
+async function deleteSession(sessionId: string) {
+  try {
+    await sessions.deleteSession(sessionId)
+  } catch {
+  }
+  const remaining = sessions.sessions[0]?.id
+  if (store.sessionId === sessionId) {
+    await setActiveSession(remaining || generateSessionId())
+  }
+}
+
+function toggleSessionsSidebar() {
+  const next = nextSidebarState(sessionsSidebarState.value)
+  if (cannotCollapseBoth('sessions', next)) {
+    notify('No puedes colapsar Sesiones y Artefactos al mismo tiempo.')
+    return
+  }
+  sessionsSidebarState.value = next
+  persistSidebars()
+}
+
+function setArtifactsSidebarState(next: SidebarState) {
+  if (cannotCollapseBoth('artifacts', next)) {
+    notify('No puedes colapsar Sesiones y Artefactos al mismo tiempo.')
+    return
+  }
+  artifactsSidebarState.value = next
+  persistSidebars()
+}
 
 const gridStyle = computed(() => {
   const right = clamp(rightWidthPct.value, 20, 60)
@@ -115,11 +198,24 @@ const gridStyle = computed(() => {
       </div>
 
       <div v-if="isStacked" class="h-full flex flex-col">
+        <div class="h-[260px] min-h-[200px] border-b border-slate-200">
+          <Sidebar
+            :activeSessionId="store.sessionId"
+            sidebarState="medium"
+            @select="setActiveSession"
+            @new="createNewSession"
+            @delete="deleteSession"
+            @toggle="toggleSessionsSidebar"
+          />
+        </div>
         <div class="flex-1 min-h-0">
           <ChatContainer />
         </div>
         <div class="h-[40%] min-h-[260px] border-t border-slate-200">
-          <WorkspaceViewer />
+          <WorkspaceViewer
+            :sidebarState="artifactsSidebarState"
+            @update:sidebarState="setArtifactsSidebarState"
+          />
         </div>
       </div>
 
@@ -133,7 +229,19 @@ const gridStyle = computed(() => {
         @pointerleave="stopDrag"
       >
         <div class="min-w-0 min-h-0">
-          <ChatContainer />
+          <div class="h-full flex">
+            <Sidebar
+              :activeSessionId="store.sessionId"
+              :sidebarState="sessionsSidebarState"
+              @select="setActiveSession"
+              @new="createNewSession"
+              @delete="deleteSession"
+              @toggle="toggleSessionsSidebar"
+            />
+            <div class="flex-1 min-w-0">
+              <ChatContainer />
+            </div>
+          </div>
         </div>
 
         <div
@@ -147,7 +255,10 @@ const gridStyle = computed(() => {
         </div>
 
         <div class="min-w-0 min-h-0 border-l border-slate-200 bg-white">
-          <WorkspaceViewer />
+          <WorkspaceViewer
+            :sidebarState="artifactsSidebarState"
+            @update:sidebarState="setArtifactsSidebarState"
+          />
         </div>
       </div>
     </main>

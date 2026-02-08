@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { fetchJson } from '../lib/api'
+import { useSessionsStore } from './sessions'
 
 export type ChatMessage = {
   id?: number
@@ -103,6 +104,15 @@ export const useChatStore = defineStore('chat', {
           body: JSON.stringify({ message: trimmed, session_id: sessionId })
         })
         this.messages.push({ role: 'assistant', content: data.response || 'No recibí respuesta del agente.' })
+        try {
+          const userCount = this.messages.filter((m) => m.role === 'user').length
+          const assistantCount = this.messages.filter((m) => m.role === 'assistant').length
+          if (userCount === 1 && assistantCount === 2) {
+            const sessions = useSessionsStore()
+            await sessions.autotitle(sessionId)
+          }
+        } catch {
+        }
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)
         this.messages.push({ role: 'assistant', content: 'Lo siento, hubo un error al conectar con el servidor.' })

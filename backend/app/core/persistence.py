@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, create_engine
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.core.runtime_context import get_session_id
@@ -24,6 +24,7 @@ def _utcnow() -> datetime:
 class SessionRecord(Base):
     __tablename__ = "sessions"
     id = Column(String, primary_key=True)
+    title = Column(String, default="Nueva Conversación", nullable=True)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
     updated_at = Column(DateTime, default=_utcnow, nullable=False)
     meta_json = Column(Text, nullable=True)
@@ -70,6 +71,21 @@ def get_engine():
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(engine)
+    _run_sqlite_migrations(engine)
+
+
+def _run_sqlite_migrations(engine) -> None:
+    url = str(engine.url)
+    if not url.startswith("sqlite"):
+        return
+    try:
+        with engine.begin() as conn:
+            cols = conn.execute(text("PRAGMA table_info(sessions)")).fetchall()
+            col_names = {row[1] for row in cols}
+            if "title" not in col_names:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN title VARCHAR"))
+    except Exception:
+        return
 
 
 def _get_session() -> Session:
@@ -99,6 +115,8 @@ def _ensure_session(db: Session, session_id: str) -> None:
         db.add(SessionRecord(id=session_id))
     else:
         existing.updated_at = _utcnow()
+        if existing.title is None:
+            existing.title = "Nueva Conversación"
 
 
 def _to_json(value: Any) -> Optional[str]:

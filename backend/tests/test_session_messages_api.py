@@ -13,12 +13,18 @@ class TestSessionMessagesApi(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db_path = Path(self.tmp.name) / "test.db"
         os.environ["NAVIBOT_DB_URL"] = f"sqlite:///{db_path}"
+        ws_path = Path(self.tmp.name) / "workspace"
+        os.environ["NAVIBOT_WORKSPACE_DIR"] = str(ws_path)
 
         import app.core.persistence as persistence
 
         importlib.reload(persistence)
         persistence.init_db()
         self.persistence = persistence
+
+        import app.core.filesystem as fs
+        importlib.reload(fs)
+        self.fs = fs
 
         import app.main as main
 
@@ -97,6 +103,42 @@ class TestSessionMessagesApi(unittest.TestCase):
         dt = time.perf_counter() - t0
         self.assertEqual(r.status_code, 200)
         self.assertLess(dt, 2.0)
+
+    def test_sessions_crud_and_workspace_cleanup(self):
+        session_id = "s_crud"
+
+        r = self.client.post("/api/sessions", json={"id": session_id, "title": "Mi Sesión"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["id"], session_id)
+
+        r = self.client.get("/api/sessions")
+        self.assertEqual(r.status_code, 200)
+        sessions = r.json()["sessions"]
+        self.assertTrue(any(s["id"] == session_id and s["title"] == "Mi Sesión" for s in sessions))
+
+        r = self.client.patch(f"/api/sessions/{session_id}", json={"title": "Título Nuevo"})
+        self.assertEqual(r.status_code, 200)
+
+        r = self.client.get("/api/sessions")
+        self.assertEqual(r.status_code, 200)
+        sessions = r.json()["sessions"]
+        self.assertTrue(any(s["id"] == session_id and s["title"] == "Título Nuevo" for s in sessions))
+
+        ws = self.fs.SessionWorkspace(session_id)
+        ws.write_text("hello.txt", "hola")
+        self.assertTrue((self.fs.BASE_WORKSPACE / session_id / "hello.txt").exists())
+
+        p = self.persistence
+        p.save_chat_message(session_id, "user", {"role": "user", "parts": [{"text": "hola"}]})
+
+        r = self.client.delete(f"/api/sessions/{session_id}")
+        self.assertEqual(r.status_code, 200)
+
+        self.assertFalse((self.fs.BASE_WORKSPACE / session_id).exists())
+
+        with p.db_session() as db:
+            left = db.query(p.ChatMessage).filter(p.ChatMessage.session_id == session_id).all()
+            self.assertEqual(len(left), 0)
 
 
 if __name__ == "__main__":

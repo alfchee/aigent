@@ -59,6 +59,13 @@ Provides persistent job scheduling using **APScheduler** and **SQLAlchemy**.
 
 The backend exposes a paginated endpoint to retrieve historical chat content for an existing session and render it in the UI.
 
+### Sessions CRUD
+- `GET /api/sessions`: list sessions (ordered by `updated_at desc`)
+- `POST /api/sessions`: create session (id optional)
+- `PATCH /api/sessions/{session_id}`: update title
+- `DELETE /api/sessions/{session_id}`: delete session + chat/tool history + workspace files
+- `POST /api/sessions/{session_id}/autotitle`: generate a short title (Gemini if available, fallback otherwise)
+
 ### GET `/api/sessions/{session_id}/messages`
 - **Purpose**: Load previously stored chat messages for a session (supports lazy loading).
 - **Query params**:
