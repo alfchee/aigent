@@ -1,10 +1,23 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.core.agent import NaviBot
+from app.api.files import router as files_router
+from app.api.artifacts import router as artifacts_router
+from app.api.workspace import router as workspace_router
+from app.api.sessions import router as sessions_router
+from app.core.persistence import init_db, save_chat_message
 from app.skills.scheduler import start_scheduler
 import asyncio
 
 app = FastAPI(title="NaviBot API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize Agent
 bot = NaviBot()
@@ -12,10 +25,12 @@ bot = NaviBot()
 # Start Scheduler on startup
 @app.on_event("startup")
 async def startup_event():
+    init_db()
     start_scheduler()
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default"
     use_react_loop: bool = False  # Default to simple mode for API backward compatibility
     max_iterations: int = 10
     include_trace: bool = False  # Return reasoning trace in response
@@ -32,18 +47,47 @@ class ChatResponse(BaseModel):
 async def root():
     return {"message": "NaviBot Backend is running", "status": "ok"}
 
+app.include_router(files_router)
+app.include_router(artifacts_router)
+app.include_router(workspace_router)
+app.include_router(sessions_router)
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
+    session_token = set_session_id(request.session_id)
+    callback_token = set_event_callback(None)
     try:
+        # Ensure session is loaded to get baseline history length
+        await bot.ensure_session(request.session_id)
+        pre_history = bot.get_history(request.session_id)
+        pre_len = len(pre_history) if pre_history else 0
+
+        # Save user message immediately (as structured content)
+        user_content = {"role": "user", "parts": [{"text": request.message}]}
+        save_chat_message(request.session_id, "user", user_content)
+
         if request.use_react_loop:
-            # Use ReAct loop for autonomous multi-turn execution
             result = await bot.send_message_with_react(
                 request.message,
                 max_iterations=request.max_iterations
             )
+
+            response_text = result["response"]
+            # save_chat_message call removed, handled by history sync below
             
+            # Sync history
+            post_history = bot.get_history(request.session_id)
+            new_items = post_history[pre_len:]
+            # Skip the first item if it matches the user message we already saved
+            if new_items and new_items[0].role == "user":
+                new_items = new_items[1:]
+            
+            for item in new_items:
+                save_chat_message(request.session_id, item.role, item)
+
             return ChatResponse(
-                response=result["response"],
+                response=response_text,
                 iterations=result["iterations"] if request.include_trace else None,
                 tool_calls=result.get("tool_calls") if request.include_trace else None,
                 reasoning_trace=result.get("reasoning_trace") if request.include_trace else None,
@@ -51,11 +95,24 @@ async def chat(request: ChatRequest):
                 execution_time_seconds=result.get("execution_time_seconds") if request.include_trace else None
             )
         else:
-            # Simple single-turn execution (backward compatibility)
             response_text = await bot.send_message(request.message)
+            # save_chat_message call removed, handled by history sync below
+            
+            # Sync history
+            post_history = bot.get_history(request.session_id)
+            new_items = post_history[pre_len:]
+            if new_items and new_items[0].role == "user":
+                new_items = new_items[1:]
+            
+            for item in new_items:
+                save_chat_message(request.session_id, item.role, item)
+
             return ChatResponse(response=response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        reset_session_id(session_token)
+        reset_event_callback(callback_token)
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
@@ -83,6 +140,15 @@ async def chat_stream(request: ChatRequest):
         # Start agent execution in background task
         async def run_agent():
             nonlocal final_result, task_error
+            from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
+            session_token = set_session_id(request.session_id)
+            callback_token = set_event_callback(event_callback)
+            
+            # Ensure session loaded and get baseline
+            await bot.ensure_session(request.session_id)
+            pre_history = bot.get_history(request.session_id)
+            pre_len = len(pre_history) if pre_history else 0
+            
             try:
                 if request.use_react_loop:
                     final_result = await bot.send_message_with_react(
@@ -94,10 +160,25 @@ async def chat_stream(request: ChatRequest):
                     # For simple mode, just send the message
                     response_text = await bot.send_message(request.message)
                     final_result = {"response": response_text}
+                
+                # Sync history
+                post_history = bot.get_history(request.session_id)
+                new_items = post_history[pre_len:]
+                if new_items and new_items[0].role == "user":
+                    new_items = new_items[1:]
+                
+                for item in new_items:
+                    save_chat_message(request.session_id, item.role, item)
+                    
             except Exception as e:
                 task_error = e
             finally:
+                reset_session_id(session_token)
+                reset_event_callback(callback_token)
                 task_complete.set()
+        
+        user_content = {"role": "user", "parts": [{"text": request.message}]}
+        save_chat_message(request.session_id, "user", user_content)
         
         # Start the agent task
         agent_task = asyncio.create_task(run_agent())
@@ -135,6 +216,7 @@ async def chat_stream(request: ChatRequest):
                     })
                 }
             elif final_result:
+                # History saving is handled in run_agent now
                 yield {
                     "event": "final",
                     "data": json.dumps(final_result)

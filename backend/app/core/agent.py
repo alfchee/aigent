@@ -1,8 +1,11 @@
 import os
+from pathlib import Path
 from google import genai
 from google.genai import types
 from typing import List, Callable, Any, Dict, Optional
 from dotenv import load_dotenv
+
+from app.core.persistence import load_chat_history, wrap_tool
 
 load_dotenv()
 
@@ -18,14 +21,13 @@ class NaviBot:
         
         self.tools: List[Callable] = []
         self.model_name = model_name
-        self._chat_session = None
+        self._chat_sessions: Dict[str, Any] = {}
+        self._tool_reference: Optional[str] = None
 
 
         # Register default skills
-        from app.skills import system, scheduler, browser, workspace
+        from app.skills import scheduler, browser, workspace
         
-        for tool in system.tools:
-            self.register_tool(tool)
         for tool in scheduler.tools:
             self.register_tool(tool)
         for tool in browser.tools:
@@ -35,34 +37,101 @@ class NaviBot:
 
     def register_tool(self, tool: Callable):
         """Registers a tool (function) to be used by the agent."""
-        self.tools.append(tool)
+        self.tools.append(wrap_tool(tool))
 
-    async def start_chat(self, history: List[Dict[str, Any]] = None):
+    def _load_tool_reference(self) -> str:
+        if self._tool_reference is not None:
+            return self._tool_reference
+        root = Path(__file__).resolve().parents[3]
+        doc_path = root / "docs" / "backend_overview.md"
+        if not doc_path.exists():
+            self._tool_reference = ""
+            return self._tool_reference
+        try:
+            text = doc_path.read_text(encoding="utf-8")
+        except Exception:
+            self._tool_reference = ""
+            return self._tool_reference
+        marker = "## Tool and Skill Reference (Agent Tooling)"
+        if marker not in text:
+            self._tool_reference = ""
+            return self._tool_reference
+        after = text.split(marker, 1)[1]
+        section = f"{marker}{after}"
+        lines = section.splitlines()
+        collected = [lines[0]]
+        for line in lines[1:]:
+            if line.startswith("## ") and line != lines[0]:
+                break
+            collected.append(line)
+        self._tool_reference = "\n".join(collected).strip()
+        return self._tool_reference
+
+    async def start_chat(self, session_id: str, history: List[Dict[str, Any]] = None):
         """Starts a new chat session with the configured tools."""
+        from app.skills.filesystem import get_filesystem_tools
+        from app.core.persistence import wrap_tool
+
+        if history is None:
+            history = load_chat_history(session_id)
         
         # Tools config
         tool_config = None
-        if self.tools:
+        
+        # 1. Get Global Tools
+        current_tools = self.tools.copy() if self.tools else []
+        
+        # 2. Get Session-Specific Tools (Filesystem)
+        fs_tools = get_filesystem_tools(session_id)
+        for tool in fs_tools:
+            current_tools.append(wrap_tool(tool))
+            
+        if current_tools:
+             tool_reference = self._load_tool_reference()
              tool_config = types.GenerateContentConfig(
-                tools=self.tools,
+                tools=current_tools,
+                system_instruction=tool_reference if tool_reference else None,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(
                     disable=False
                 )
              )
 
         # Create async chat session
-        self._chat_session = self.client.aio.chats.create(
+        self._chat_sessions[session_id] = self.client.aio.chats.create(
             model=self.model_name,
             config=tool_config,
             history=history
         )
 
     async def send_message(self, message: str) -> str:
-        if not self._chat_session:
-            await self.start_chat()
+        from app.core.runtime_context import get_session_id
+
+        session_id = get_session_id()
+        await self.ensure_session(session_id)
         
-        response = await self._chat_session.send_message(message)
+        response = await self._chat_sessions[session_id].send_message(message)
         return response.text
+
+    async def ensure_session(self, session_id: str):
+        """Ensures a chat session exists, loading from history if needed."""
+        if session_id not in self._chat_sessions:
+            await self.start_chat(session_id=session_id)
+
+    def get_history(self, session_id: str) -> List[Any]:
+        """Returns the chat history for a session."""
+        if session_id in self._chat_sessions:
+            chat = self._chat_sessions[session_id]
+            # Handle AsyncChat which uses get_history() method instead of history property
+            if hasattr(chat, "get_history") and callable(chat.get_history):
+                return chat.get_history()
+            # Fallback for other chat types or older SDK versions
+            if hasattr(chat, "history"):
+                return chat.history
+            
+            # If neither exists, log warning and return empty list
+            print(f"Warning: Could not access history for session {session_id}")
+            return []
+        return []
 
     async def send_message_with_react(
         self, 

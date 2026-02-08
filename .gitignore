@@ -31,6 +31,8 @@ wheels/
 venv/
 ENV/
 scheduler.db
+navibot.db
+backend/workspace_data/
 
 # Node.js (Frontend)
 node_modules/
@@ -55,3 +57,4 @@ pnpm-lock.yaml
 # Project documentation artifacts
 .gemini/
 brain/
+.trae/
