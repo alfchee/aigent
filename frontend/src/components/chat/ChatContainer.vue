@@ -10,6 +10,9 @@ const newMessage = ref('')
 
 const messages = computed(() => chat.messages)
 const isLoading = computed(() => chat.isLoading)
+const isHistoryLoading = computed(() => chat.isHistoryLoading)
+const historyHasMore = computed(() => chat.historyHasMore)
+const historyError = computed(() => chat.historyError)
 
 const scrollRef = ref<HTMLElement | null>(null)
 
@@ -17,6 +20,10 @@ async function send() {
   const msg = newMessage.value
   newMessage.value = ''
   await chat.sendMessage(msg, artifacts.sessionId)
+}
+
+async function loadMore() {
+  await chat.loadMoreHistory(artifacts.sessionId)
 }
 
 watch(
@@ -32,9 +39,24 @@ watch(
   <div class="h-full flex flex-col bg-slate-50 overflow-hidden">
     <div ref="scrollRef" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 flex flex-col items-center bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-fixed">
       <div class="w-full max-w-3xl space-y-6">
+        <div class="flex items-center justify-center">
+          <button
+            v-if="historyHasMore"
+            type="button"
+            class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
+            :disabled="isHistoryLoading"
+            @click="loadMore"
+          >
+            {{ isHistoryLoading ? 'Cargando…' : 'Cargar mensajes anteriores' }}
+          </button>
+          <div v-else-if="isHistoryLoading" class="text-xs text-slate-500">Cargando…</div>
+        </div>
+        <div v-if="historyError" class="text-xs text-red-600 text-center">
+          Error al cargar historial: {{ historyError }}
+        </div>
         <div
           v-for="(msg, index) in messages"
-          :key="index"
+          :key="msg.id ?? index"
           :class="['flex w-full animate-in fade-in slide-in-from-bottom-2 duration-300', msg.role === 'user' ? 'justify-end' : 'justify-start']"
         >
           <div

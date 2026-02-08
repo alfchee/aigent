@@ -187,6 +187,123 @@ def load_chat_history(session_id: str, limit: int = 200) -> list[dict[str, Any]]
     return history
 
 
+def _safe_json_loads(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except Exception:
+        return None
+
+
+def _extract_text_from_parts(parts: Any) -> str:
+    if not isinstance(parts, list):
+        return ""
+    out: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text:
+            out.append(text)
+            continue
+        function_call = part.get("function_call")
+        if isinstance(function_call, dict) and function_call:
+            name = function_call.get("name")
+            args = function_call.get("args")
+            label = f"[tool_call] {name}" if name else "[tool_call]"
+            if args is not None:
+                try:
+                    out.append(f"{label} {json.dumps(args, ensure_ascii=False, default=str)}")
+                except Exception:
+                    out.append(f"{label} {str(args)}")
+            else:
+                out.append(label)
+            continue
+        function_response = part.get("function_response")
+        if isinstance(function_response, dict) and function_response:
+            name = function_response.get("name")
+            response = function_response.get("response")
+            label = f"[tool_result] {name}" if name else "[tool_result]"
+            if response is not None:
+                try:
+                    out.append(f"{label} {json.dumps(response, ensure_ascii=False, default=str)}")
+                except Exception:
+                    out.append(f"{label} {str(response)}")
+            else:
+                out.append(label)
+            continue
+    return "\n".join(out).strip()
+
+
+def _normalize_chat_row(row: ChatMessage) -> dict[str, Any]:
+    if row.role in ("assistant", "model"):
+        role = "assistant"
+    else:
+        role = "user"
+
+    parsed = _safe_json_loads(row.content)
+    corrupted = False
+    raw: Any = None
+    text: str = ""
+
+    if isinstance(parsed, dict) and "parts" in parsed:
+        raw = parsed
+        raw_role = parsed.get("role")
+        if raw_role in ("assistant", "model"):
+            role = "assistant"
+        elif raw_role == "user":
+            role = "user"
+        text = _extract_text_from_parts(parsed.get("parts")) or ""
+    elif parsed is not None:
+        raw = parsed
+        text = str(parsed)
+    else:
+        raw = None
+        text = row.content
+        if row.content and row.content.lstrip().startswith("{"):
+            corrupted = True
+
+    return {
+        "id": row.id,
+        "session_id": row.session_id,
+        "role": role,
+        "content": text,
+        "raw": raw,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "corrupted": corrupted,
+    }
+
+
+def load_chat_messages_page(
+    session_id: str,
+    limit: int = 50,
+    before_id: Optional[int] = None,
+) -> dict[str, Any]:
+    if limit < 1:
+        limit = 1
+    if limit > 200:
+        limit = 200
+
+    with db_session() as db:
+        q = db.query(ChatMessage).filter(ChatMessage.session_id == session_id)
+        if before_id is not None:
+            q = q.filter(ChatMessage.id < before_id)
+        rows = q.order_by(ChatMessage.id.desc()).limit(limit + 1).all()
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    rows.reverse()
+
+    items = [_normalize_chat_row(r) for r in rows]
+    next_before_id = items[0]["id"] if items else before_id
+    return {
+        "session_id": session_id,
+        "items": items,
+        "has_more": has_more,
+        "next_before_id": next_before_id,
+        "limit": limit,
+    }
+
+
 def wrap_tool(tool):
     if getattr(tool, "_navibot_wrapped", False):
         return tool

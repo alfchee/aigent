@@ -55,6 +55,19 @@ Provides persistent job scheduling using **APScheduler** and **SQLAlchemy**.
 
 ---
 
+## Session History Retrieval
+
+The backend exposes a paginated endpoint to retrieve historical chat content for an existing session and render it in the UI.
+
+### GET `/api/sessions/{session_id}/messages`
+- **Purpose**: Load previously stored chat messages for a session (supports lazy loading).
+- **Query params**:
+  - `limit` (int, default 50, max 200): page size
+  - `before_id` (int, optional): load messages older than this message id
+- **Response**:
+  - `items` are returned in chronological order (oldest → newest within the page).
+  - `has_more` and `next_before_id` support loading older pages.
+
 | Skill | Tools Provided | Description |
 | :--- | :--- | :--- |
 | **System** | `list_files`, `read_file`, `create_file`, `update_file` | Basic filesystem operations. |

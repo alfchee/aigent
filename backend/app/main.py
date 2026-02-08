@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.core.agent import NaviBot
@@ -45,6 +45,22 @@ class ChatResponse(BaseModel):
 @app.get("/")
 async def root():
     return {"message": "NaviBot Backend is running", "status": "ok"}
+
+@app.get("/api/sessions/{session_id}/messages")
+async def get_session_messages(
+    session_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    before_id: int | None = Query(None, ge=1),
+):
+    from app.core.persistence import load_chat_messages_page
+
+    try:
+        return load_chat_messages_page(session_id=session_id, limit=limit, before_id=before_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database error while loading session history: {str(e)}",
+        )
 
 
 app.include_router(files_router)

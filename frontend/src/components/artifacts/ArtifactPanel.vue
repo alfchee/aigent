@@ -2,11 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useArtifactsStore } from '../../stores/artifacts'
+import { useChatStore } from '../../stores/chat'
 import ChatContainer from '../chat/ChatContainer.vue'
 import WorkspaceViewer from './WorkspaceViewer.vue'
 import { getOrCreateSessionId } from '../../lib/session'
 
 const store = useArtifactsStore()
+const chat = useChatStore()
 
 const rightWidthPct = ref<number>(Number(localStorage.getItem('navibot_right_panel_pct') || '30'))
 const dragging = ref(false)
@@ -49,9 +51,11 @@ function startDrag(e: PointerEvent) {
 onMounted(() => {
   updateStacked()
   window.addEventListener('resize', updateStacked)
-  store.setSessionId(getOrCreateSessionId())
+  const sid = getOrCreateSessionId()
+  store.setSessionId(sid)
   store.fetchArtifacts()
   store.connectSse()
+  chat.loadSessionHistory(sid)
 })
 
 onBeforeUnmount(() => {
