@@ -1,0 +1,20 @@
+name: dev-tag
+on:
+  push:
+    branches:
+      - dev
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create dev tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG="dev-${SHORT_SHA}"
+          git tag -a "$TAG" -m "dev tag $TAG"
+          git push origin "$TAG"

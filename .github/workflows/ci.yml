@@ -1,0 +1,35 @@
+name: ci
+on:
+  pull_request:
+    branches:
+      - dev
+      - qa
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Backend deps
+        run: pip install -r backend/requirements.txt
+      - name: Backend tests
+        run: python -m unittest discover -s backend/tests
+      - name: Backend build
+        run: python -m compileall backend/app
+      - name: Frontend deps
+        run: npm install
+        working-directory: frontend
+      - name: Frontend lint
+        run: npm run lint
+        working-directory: frontend
+      - name: Frontend tests
+        run: npm test
+        working-directory: frontend
+      - name: Frontend build
+        run: npm run build
+        working-directory: frontend
