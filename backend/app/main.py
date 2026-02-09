@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.core.agent import NaviBot
 from app.api.files import router as files_router
@@ -9,6 +10,14 @@ from app.api.sessions import router as sessions_router
 from app.core.persistence import init_db, save_chat_message
 from app.skills.scheduler import start_scheduler
 import asyncio
+import logging
+import time
+import uuid
+
+from app.core.logging import setup_logging, notify_alert
+from app.core.runtime_context import reset_request_id, set_request_id
+
+setup_logging()
 
 app = FastAPI(title="NaviBot API", version="0.1.0")
 app.add_middleware(
@@ -18,6 +27,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger = logging.getLogger("navibot.api")
 
 # Initialize Agent
 bot = NaviBot()
@@ -52,12 +63,112 @@ app.include_router(artifacts_router)
 app.include_router(workspace_router)
 app.include_router(sessions_router)
 
+def _truncate_text(value: str, limit: int = 500) -> str:
+    if len(value) <= limit:
+        return value
+    return value[:limit]
+
+
+def _parse_json_body(body: bytes) -> dict | None:
+    try:
+        import json
+
+        data = json.loads(body.decode("utf-8"))
+        if isinstance(data, dict) and "message" in data and isinstance(data["message"], str):
+            data["message"] = _truncate_text(data["message"])
+        return data
+    except Exception:
+        return None
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    token = set_request_id(request_id)
+    start = time.perf_counter()
+    body = await request.body()
+    body_json = _parse_json_body(body) if body else None
+    logger.info(
+        "request_start",
+        extra={
+            "event": "request_start",
+            "payload": {
+                "method": request.method,
+                "path": request.url.path,
+                "query": str(request.url.query),
+                "client": request.client.host if request.client else None,
+                "body": body_json,
+            },
+        },
+    )
+    try:
+        response = await call_next(request)
+    except Exception:
+        raise
+    finally:
+        if "response" in locals():
+            request.state.status_code = response.status_code
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "request_end",
+            extra={
+                "event": "request_end",
+                "payload": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": getattr(request.state, "status_code", None),
+                    "duration_ms": round(duration_ms, 2),
+                },
+            },
+        )
+        reset_request_id(token)
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    error_id = uuid.uuid4().hex
+    logger.exception(
+        "unhandled_exception",
+        extra={
+            "event": "unhandled_exception",
+            "payload": {
+                "error_id": error_id,
+                "path": request.url.path,
+                "method": request.method,
+            },
+        },
+    )
+    await notify_alert(
+        {
+            "type": "chat_failure" if request.url.path.startswith("/api/chat") else "request_failure",
+            "error_id": error_id,
+            "path": request.url.path,
+            "method": request.method,
+        }
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error", "error_id": error_id})
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
     session_token = set_session_id(request.session_id)
     callback_token = set_event_callback(None)
     try:
+        logger.info(
+            "chat_request_start",
+            extra={
+                "event": "chat_request_start",
+                "payload": {
+                    "session_id": request.session_id,
+                    "use_react_loop": request.use_react_loop,
+                    "max_iterations": request.max_iterations,
+                    "include_trace": request.include_trace,
+                    "message": _truncate_text(request.message),
+                },
+            },
+        )
         # Ensure session is loaded to get baseline history length
         await bot.ensure_session(request.session_id)
         pre_history = bot.get_history(request.session_id)
@@ -86,6 +197,19 @@ async def chat(request: ChatRequest):
             for item in new_items:
                 save_chat_message(request.session_id, item.role, item)
 
+            logger.info(
+                "chat_request_end",
+                extra={
+                    "event": "chat_request_end",
+                    "payload": {
+                        "session_id": request.session_id,
+                        "mode": "react",
+                        "response_length": len(response_text) if response_text else 0,
+                        "iterations": result.get("iterations"),
+                        "termination_reason": result.get("termination_reason"),
+                    },
+                },
+            )
             return ChatResponse(
                 response=response_text,
                 iterations=result["iterations"] if request.include_trace else None,
@@ -107,9 +231,40 @@ async def chat(request: ChatRequest):
             for item in new_items:
                 save_chat_message(request.session_id, item.role, item)
 
+            logger.info(
+                "chat_request_end",
+                extra={
+                    "event": "chat_request_end",
+                    "payload": {
+                        "session_id": request.session_id,
+                        "mode": "simple",
+                        "response_length": len(response_text) if response_text else 0,
+                    },
+                },
+            )
             return ChatResponse(response=response_text)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_id = uuid.uuid4().hex
+        logger.exception(
+            "chat_request_error",
+            extra={
+                "event": "chat_request_error",
+                "payload": {
+                    "error_id": error_id,
+                    "session_id": request.session_id,
+                    "use_react_loop": request.use_react_loop,
+                },
+            },
+        )
+        await notify_alert(
+            {
+                "type": "chat_failure",
+                "error_id": error_id,
+                "session_id": request.session_id,
+                "use_react_loop": request.use_react_loop,
+            }
+        )
+        raise HTTPException(status_code=500, detail=f"Internal Server Error ({error_id})")
     finally:
         reset_session_id(session_token)
         reset_event_callback(callback_token)
@@ -171,6 +326,23 @@ async def chat_stream(request: ChatRequest):
                     save_chat_message(request.session_id, item.role, item)
                     
             except Exception as e:
+                logger.exception(
+                    "chat_stream_error",
+                    extra={
+                        "event": "chat_stream_error",
+                        "payload": {
+                            "session_id": request.session_id,
+                            "use_react_loop": request.use_react_loop,
+                        },
+                    },
+                )
+                await notify_alert(
+                    {
+                        "type": "chat_stream_failure",
+                        "session_id": request.session_id,
+                        "use_react_loop": request.use_react_loop,
+                    }
+                )
                 task_error = e
             finally:
                 reset_session_id(session_token)

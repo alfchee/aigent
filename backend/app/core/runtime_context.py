@@ -9,6 +9,7 @@ EventCallback = Callable[[str, dict], Awaitable[None]]
 
 _session_id_var: ContextVar[SessionId] = ContextVar("navibot_session_id", default="default")
 _event_callback_var: ContextVar[Optional[EventCallback]] = ContextVar("navibot_event_callback", default=None)
+_request_id_var: ContextVar[str] = ContextVar("navibot_request_id", default="")
 
 
 def get_session_id() -> SessionId:
@@ -33,6 +34,18 @@ def set_event_callback(callback: Optional[EventCallback]):
 
 def reset_event_callback(token) -> None:
     _event_callback_var.reset(token)
+
+
+def get_request_id() -> str:
+    return _request_id_var.get()
+
+
+def set_request_id(request_id: str):
+    return _request_id_var.set(request_id or "")
+
+
+def reset_request_id(token) -> None:
+    _request_id_var.reset(token)
 
 
 def emit_event(event_type: str, data: dict) -> None:
