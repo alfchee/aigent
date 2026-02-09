@@ -331,3 +331,31 @@ cd backend
 python -m app.main
 ```
 This starts the FastAPI server on `0.0.0.0:8231` with auto-reload enabled.
+
+---
+
+## Observabilidad y Logging
+
+### Estándares de logging
+- Formato JSON estructurado en stdout y en archivo rotativo.
+- Campos mínimos: timestamp, level, logger, message, service, request_id, session_id, event, payload.
+- Trazas completas en errores con stack trace.
+- Redacción automática de claves, tokens y secretos en payloads.
+- Correlación por request_id en todos los eventos del request.
+
+### Variables de entorno
+- LOG_LEVEL: nivel del logger (default INFO).
+- LOG_FILE_PATH: ruta del archivo de logs (default logs/navibot.log).
+- SERVICE_NAME: nombre del servicio para agregación (default navibot-backend).
+- LOG_AGGREGATION_URL: endpoint HTTP para colectar logs estructurados.
+- ALERT_WEBHOOK_URL: endpoint HTTP para alertas de fallos de chat.
+
+### Checklist de depuración de fallos de chat
+- Confirmar request_id del error en respuesta y buscarlo en logs.
+- Revisar evento chat_request_start con payload de la solicitud.
+- Verificar historia previa y sincronización post-response.
+- Revisar errores de herramientas en tool_calls y tool_errors.
+- Validar configuración de API keys y grounding habilitado.
+- Confirmar disponibilidad de base de datos y workspace.
+- Reproducir el error con el caso mínimo en tests.
+- Revisar alertas enviadas a ALERT_WEBHOOK_URL.

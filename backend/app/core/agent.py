@@ -9,6 +9,16 @@ from app.core.persistence import load_chat_history, wrap_tool
 
 load_dotenv()
 
+SEARCH_POLICY = """
+## Política de búsqueda web (prioridad estricta)
+Cuando el usuario solicite información externa o búsqueda web, sigue este orden:
+1. Usa la herramienta nativa de Google Grounding (google_search_retrieval).
+2. Si falla o no está disponible, usa search_brave.
+3. Si falla o no hay resultados útiles, usa search_duckduckgo_fallback.
+Si el resultado requiere detalles que no están en el snippet (tablas, listados, cifras), usa read_web_content con la URL relevante.
+Devuelve enlaces citables y evita inventar resultados.
+""".strip()
+
 class NaviBot:
     def __init__(self, model_name: str = "gemini-2.0-flash"):
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -26,13 +36,17 @@ class NaviBot:
 
 
         # Register default skills
-        from app.skills import scheduler, browser, workspace
+        from app.skills import scheduler, browser, workspace, search, reader
         
         for tool in scheduler.tools:
             self.register_tool(tool)
         for tool in browser.tools:
             self.register_tool(tool)
         for tool in workspace.tools:
+            self.register_tool(tool)
+        for tool in search.tools:
+            self.register_tool(tool)
+        for tool in reader.tools:
             self.register_tool(tool)
 
     def register_tool(self, tool: Callable):
@@ -67,6 +81,17 @@ class NaviBot:
         self._tool_reference = "\n".join(collected).strip()
         return self._tool_reference
 
+    def _build_system_instruction(self, tool_reference: str) -> str:
+        parts = [part for part in [tool_reference, SEARCH_POLICY] if part]
+        return "\n\n".join(parts).strip()
+
+    def _google_grounding_enabled(self) -> bool:
+        value = os.getenv("ENABLE_GOOGLE_GROUNDING", "true").lower()
+        return value not in {"0", "false", "no"}
+
+    def _google_grounding_mode(self) -> str:
+        return os.getenv("GOOGLE_GROUNDING_MODE", "auto").lower()
+
     async def start_chat(self, session_id: str, history: List[Dict[str, Any]] = None):
         """Starts a new chat session with the configured tools."""
         from app.skills.filesystem import get_filesystem_tools
@@ -86,15 +111,24 @@ class NaviBot:
         for tool in fs_tools:
             current_tools.append(wrap_tool(tool))
             
-        if current_tools:
-             tool_reference = self._load_tool_reference()
-             tool_config = types.GenerateContentConfig(
-                tools=current_tools,
-                system_instruction=tool_reference if tool_reference else None,
+        tools_payload = current_tools
+        if self._google_grounding_enabled():
+            grounding_mode = self._google_grounding_mode()
+            if grounding_mode == "only":
+                tools_payload = [{"google_search_retrieval": {}}]
+            elif grounding_mode == "auto" and not current_tools:
+                tools_payload = [{"google_search_retrieval": {}}]
+
+        if tools_payload:
+            tool_reference = self._load_tool_reference()
+            system_instruction = self._build_system_instruction(tool_reference)
+            tool_config = types.GenerateContentConfig(
+                tools=tools_payload,
+                system_instruction=system_instruction if system_instruction else None,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(
                     disable=False
                 )
-             )
+            )
 
         # Create async chat session
         self._chat_sessions[session_id] = self.client.aio.chats.create(

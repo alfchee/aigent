@@ -15,8 +15,10 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@vueuse/core": "^12.5.0",
     "highlight.js": "^11.11.1",
+    "markdown-it": "^14.1.0",
     "mitt": "^3.0.1",
     "papaparse": "^5.4.1",
     "pinia": "^2.3.1",
@@ -28,10 +30,10 @@
     "@storybook/addon-essentials": "^8.6.0",
     "@storybook/vue3-vite": "^8.6.0",
     "@testing-library/vue": "^8.1.0",
+    "@types/papaparse": "^5.3.16",
     "@vitejs/plugin-vue": "^5.0.0",
     "@vitest/coverage-v8": "^2.1.9",
     "@vue/test-utils": "^2.4.6",
-    "@types/papaparse": "^5.3.16",
     "autoprefixer": "^10.4.19",
     "jsdom": "^25.0.1",
     "postcss": "^8.4.38",

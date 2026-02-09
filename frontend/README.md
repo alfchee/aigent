@@ -27,6 +27,18 @@ npm run dev
 - Archivos > 10MB: se deshabilita la preview completa para evitar degradación; se recomienda descarga.
 - HTML: se renderiza en `iframe` con `sandbox` estricto (sin scripts) para mitigar XSS.
 
+## Guía de estilo UI
+### Bloques de herramientas (Tool Call / Tool Result)
+- Los bloques de herramientas deben usar el mismo contenedor base y tipografía monoespaciada.
+- `tool_call` y `tool_result` comparten estructura, colores y espaciado para consistencia visual.
+- El bloque `tool_result` usa la etiqueta “Resultado del Agente” y un icono distintivo.
+- Ambos bloques se renderizan colapsados por defecto con transición suave al expandir.
+- Los resultados deben soportar contenido de texto, código y tablas sin perder formato.
+
+### Accesibilidad y responsividad
+- Los modales y bloques colapsables deben ser navegables con teclado y legibles en móvil.
+- Evitar anchos fijos; preferir `w-full`, `max-w` y `overflow-x-auto`.
+
 ## Tests
 Unit + integración SSE (mock EventSource):
 ```bash

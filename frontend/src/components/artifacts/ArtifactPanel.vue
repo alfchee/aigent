@@ -15,14 +15,14 @@ const chat = useChatStore()
 const sessions = useSessionsStore()
 
 const sessionsSidebarState = ref<SidebarState>(
-  normalizeSidebarState(localStorage.getItem('navibot_sidebar_sessions_state'), 'medium')
+  normalizeSidebarState(localStorage.getItem('navibot_sidebar_sessions_state'), 'normal')
 )
 const artifactsSidebarState = ref<SidebarState>(
-  normalizeSidebarState(localStorage.getItem('navibot_sidebar_artifacts_state'), 'medium')
+  normalizeSidebarState(localStorage.getItem('navibot_sidebar_artifacts_state'), 'normal')
 )
 
 if (sessionsSidebarState.value === 'collapsed' && artifactsSidebarState.value === 'collapsed') {
-  artifactsSidebarState.value = 'medium'
+  artifactsSidebarState.value = 'normal'
   localStorage.setItem('navibot_sidebar_artifacts_state', artifactsSidebarState.value)
 }
 
@@ -201,7 +201,7 @@ const gridStyle = computed(() => {
         <div class="h-[260px] min-h-[200px] border-b border-slate-200">
           <Sidebar
             :activeSessionId="store.sessionId"
-            sidebarState="medium"
+            sidebarState="normal"
             @select="setActiveSession"
             @new="createNewSession"
             @delete="deleteSession"

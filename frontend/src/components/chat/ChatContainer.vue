@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { useChatStore } from '../../stores/chat'
 import { useArtifactsStore } from '../../stores/artifacts'
+import ChatMessage from './ChatMessage.vue'
 
 const chat = useChatStore()
 const artifacts = useArtifactsStore()
@@ -59,19 +60,7 @@ watch(
           :key="msg.id ?? index"
           :class="['flex w-full animate-in fade-in slide-in-from-bottom-2 duration-300', msg.role === 'user' ? 'justify-end' : 'justify-start']"
         >
-          <div
-            :class="[
-              'max-w-[85%] p-4 rounded-2xl shadow-md text-sm leading-relaxed',
-              msg.role === 'user'
-                ? 'bg-sky-600 text-white rounded-tr-none'
-                : 'bg-white text-slate-800 border border-slate-100 rounded-tl-none'
-            ]"
-          >
-            <div class="flex gap-2 items-center mb-1 pb-1 border-b border-white/10" :class="msg.role === 'user' ? 'border-sky-400' : 'border-slate-100'">
-              <span class="text-[10px] font-bold uppercase tracking-widest opacity-70">{{ msg.role === 'user' ? 'Tú' : 'Navibot' }}</span>
-            </div>
-            <p class="whitespace-pre-wrap">{{ msg.content }}</p>
-          </div>
+          <ChatMessage :role="msg.role" :content="msg.content" />
         </div>
 
         <div v-if="isLoading" class="flex justify-start animate-pulse">

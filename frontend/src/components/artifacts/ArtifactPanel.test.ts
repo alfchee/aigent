@@ -47,7 +47,7 @@ describe('ArtifactPanel', () => {
     sessions.createSession = async () => 's1' as any
 
     mount(ArtifactPanel, { global: { plugins: [pinia] } })
-    expect(localStorage.getItem('navibot_sidebar_artifacts_state')).toBe('medium')
+    expect(localStorage.getItem('navibot_sidebar_artifacts_state')).toBe('normal')
   })
 
   it('renders stacked layout when matchMedia matches', async () => {
