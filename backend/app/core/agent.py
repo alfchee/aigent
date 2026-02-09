@@ -20,7 +20,7 @@ Devuelve enlaces citables y evita inventar resultados.
 """.strip()
 
 class NaviBot:
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, model_name: str = "gemini-flash-latest"):
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
             print("Warning: GOOGLE_API_KEY not found in environment variables.")
@@ -83,8 +83,9 @@ class NaviBot:
         self._tool_reference = "\n".join(collected).strip()
         return self._tool_reference
 
-    def _build_system_instruction(self, tool_reference: str) -> str:
-        parts = [part for part in [tool_reference, SEARCH_POLICY] if part]
+    def _build_system_instruction(self, tool_reference: str, extra_prompt: str | None = None) -> str:
+        extra = (extra_prompt or "").strip()
+        parts = [part for part in [extra, tool_reference, SEARCH_POLICY] if part]
         return "\n\n".join(parts).strip()
 
     def _google_grounding_enabled(self) -> bool:
@@ -123,7 +124,9 @@ class NaviBot:
 
         if tools_payload:
             tool_reference = self._load_tool_reference()
-            system_instruction = self._build_system_instruction(tool_reference)
+            from app.core.config_manager import get_settings
+
+            system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt)
             tool_config = types.GenerateContentConfig(
                 tools=tools_payload,
                 system_instruction=system_instruction if system_instruction else None,

@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import ArtifactPanel from './components/artifacts/ArtifactPanel.vue'
 </script>
 
 <template>
-  <ArtifactPanel />
+  <RouterView />
 </template>
 
 <style>

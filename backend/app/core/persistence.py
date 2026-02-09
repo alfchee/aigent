@@ -50,8 +50,25 @@ class ToolCall(Base):
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
 
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+    key = Column(String, primary_key=True)
+    value_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class SessionSetting(Base):
+    __tablename__ = "session_settings"
+    session_id = Column(String, ForeignKey("sessions.id"), primary_key=True)
+    model_name = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+Index("ix_app_settings_updated", AppSetting.updated_at)
+Index("ix_session_settings_updated", SessionSetting.updated_at)
+
+
 Index("ix_chat_messages_session_created", ChatMessage.session_id, ChatMessage.created_at)
-Index("ix_tool_calls_session_created", ToolCall.session_id, ToolCall.created_at)
 
 
 def get_db_url() -> str:
@@ -126,6 +143,59 @@ def _to_json(value: Any) -> Optional[str]:
         return json.dumps(value, ensure_ascii=False, default=str)
     except Exception:
         return json.dumps(str(value), ensure_ascii=False)
+
+
+def get_app_setting(key: str) -> Any:
+    if not key:
+        return None
+    with db_session() as db:
+        rec = db.get(AppSetting, key)
+        if rec is None:
+            return None
+        return _safe_json_loads(rec.value_json)
+
+
+def set_app_setting(key: str, value: Any) -> None:
+    if not key:
+        raise ValueError("key vacío")
+    encoded = _to_json(value)
+    if encoded is None:
+        encoded = "null"
+    with db_session() as db:
+        rec = db.get(AppSetting, key)
+        if rec is None:
+            db.add(AppSetting(key=key, value_json=encoded, updated_at=_utcnow()))
+        else:
+            rec.value_json = encoded
+            rec.updated_at = _utcnow()
+
+
+def get_session_model_setting(session_id: str) -> Optional[str]:
+    sid = (session_id or "").strip()
+    if not sid:
+        return None
+    with db_session() as db:
+        rec = db.get(SessionSetting, sid)
+        if rec is None:
+            return None
+        return rec.model_name
+
+
+def set_session_model_setting(session_id: str, model_name: str) -> None:
+    sid = (session_id or "").strip()
+    if not sid:
+        raise ValueError("session_id vacío")
+    name = (model_name or "").strip()
+    if not name:
+        raise ValueError("model_name vacío")
+    with db_session() as db:
+        _ensure_session(db, sid)
+        rec = db.get(SessionSetting, sid)
+        if rec is None:
+            db.add(SessionSetting(session_id=sid, model_name=name, updated_at=_utcnow()))
+        else:
+            rec.model_name = name
+            rec.updated_at = _utcnow()
 
 
 def save_chat_message(session_id: str, role: str, content: Any) -> None:

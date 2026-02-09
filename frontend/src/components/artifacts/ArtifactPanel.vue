@@ -167,6 +167,13 @@ const gridStyle = computed(() => {
         <h1 class="text-xl font-bold tracking-tight">Navibot <span class="text-sky-500 font-medium font-mono text-sm border border-sky-100 bg-sky-50 px-2 py-0.5 rounded ml-1">v2.0</span></h1>
       </div>
       <div class="flex items-center gap-3">
+        <RouterLink
+          to="/settings"
+          class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+          title="Settings"
+        >
+          ⚙
+        </RouterLink>
         <div v-if="store.unreadCount" class="text-xs bg-amber-100 text-amber-900 border border-amber-200 px-2 py-1 rounded-full">
           {{ store.unreadCount }} nuevo(s)
         </div>

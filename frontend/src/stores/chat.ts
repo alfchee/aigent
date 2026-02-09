@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { fetchJson } from '../lib/api'
+import { ApiError, fetchJson } from '../lib/api'
 import { useSessionsStore } from './sessions'
 
 export type ChatMessage = {
@@ -91,17 +91,18 @@ export const useChatStore = defineStore('chat', {
         this.isHistoryLoading = false
       }
     },
-    async sendMessage(message: string, sessionId: string) {
+    async sendMessage(message: string, sessionId: string, modelName?: string) {
       const trimmed = message.trim()
       if (!trimmed || this.isLoading) return
       this.messages.push({ role: 'user', content: trimmed })
       this.isLoading = true
       this.error = null
       try {
+        const model_name = (modelName || '').trim()
         const data = await fetchJson<ChatResponse>('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: trimmed, session_id: sessionId })
+          body: JSON.stringify({ message: trimmed, session_id: sessionId, model_name: model_name || undefined })
         })
         this.messages.push({ role: 'assistant', content: data.response || 'No recibí respuesta del agente.' })
         try {
@@ -114,8 +115,15 @@ export const useChatStore = defineStore('chat', {
         } catch {
         }
       } catch (e) {
-        this.error = e instanceof Error ? e.message : String(e)
-        this.messages.push({ role: 'assistant', content: 'Lo siento, hubo un error al conectar con el servidor.' })
+        let msg = e instanceof Error ? e.message : String(e)
+        if (e instanceof ApiError) {
+          const body = e.body as any
+          if (typeof body === 'string' && body.trim()) msg = body
+          else if (body && typeof body.detail === 'string') msg = body.detail
+          else msg = `HTTP ${e.status}`
+        }
+        this.error = msg
+        this.messages.push({ role: 'assistant', content: `Lo siento, hubo un error: ${msg}` })
       } finally {
         this.isLoading = false
       }

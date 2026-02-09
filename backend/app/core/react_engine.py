@@ -78,7 +78,7 @@ class ReActLoop:
         
         # Start chat session
         from app.core.runtime_context import get_session_id
-        await self.agent.start_chat(session_id=get_session_id())
+        await self.agent.ensure_session(session_id=get_session_id())
         
         current_prompt = initial_prompt
         final_response = None

@@ -47,6 +47,7 @@ async def _generate_title_with_gemini(seed: str) -> Optional[str]:
         return None
     try:
         from google import genai
+        from app.core.config_manager import get_settings
 
         client = genai.Client(api_key=api_key)
         prompt = (
@@ -54,7 +55,8 @@ async def _generate_title_with_gemini(seed: str) -> Optional[str]:
             "Return only the title, no quotes, no punctuation at the end.\n\n"
             f"Conversation snippet:\n{seed}"
         )
-        resp = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        model_name = get_settings().current_model or "gemini-2.0-flash"
+        resp = client.models.generate_content(model=model_name, contents=prompt)
         title = (resp.text or "").strip()
         title = re.sub(r"[\r\n]+", " ", title).strip()
         title = title.strip('"').strip("'").strip()
