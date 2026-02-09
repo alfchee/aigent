@@ -1,7 +1,9 @@
 import importlib
 import os
+import tempfile
 import types as pytypes
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from app.core.runtime_context import reset_session_id, set_session_id
@@ -27,6 +29,20 @@ class DummyClient:
 
 
 class TestAgentGrounding(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db_path = Path(self.tmp.name) / "test.db"
+        os.environ["NAVIBOT_DB_URL"] = f"sqlite:///{db_path}"
+        ws_path = Path(self.tmp.name) / "workspace"
+        os.environ["NAVIBOT_WORKSPACE_DIR"] = str(ws_path)
+        import app.core.persistence as persistence
+
+        importlib.reload(persistence)
+        persistence.init_db()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
     async def test_grounding_not_appended_with_tools(self):
         with patch.dict(os.environ, {"ENABLE_GOOGLE_GROUNDING": "true", "GOOGLE_GROUNDING_MODE": "auto"}):
             import app.core.agent as agent
