@@ -1,10 +1,28 @@
 
+import importlib
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import asyncio
 from app.core.agent import NaviBot
 
 class TestAgentHistory(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db_path = Path(self.tmp.name) / "test.db"
+        os.environ["NAVIBOT_DB_URL"] = f"sqlite:///{db_path}"
+        ws_path = Path(self.tmp.name) / "workspace"
+        os.environ["NAVIBOT_WORKSPACE_DIR"] = str(ws_path)
+        import app.core.persistence as persistence
+
+        importlib.reload(persistence)
+        persistence.init_db()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
     def test_get_history_uses_get_history_method(self):
         """Test that get_history calls the method on the chat object if it exists."""
         bot = NaviBot()
