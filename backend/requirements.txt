@@ -11,3 +11,9 @@ sse-starlette
 pypdf
 python-multipart
 markdownify
+pandas
+numpy
+matplotlib
+seaborn
+scipy
+pillow

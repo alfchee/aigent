@@ -7,6 +7,7 @@ from app.api.files import router as files_router
 from app.api.artifacts import router as artifacts_router
 from app.api.workspace import router as workspace_router
 from app.api.sessions import router as sessions_router
+from app.api.code_execution import router as code_execution_router
 from app.core.persistence import init_db, save_chat_message
 from app.skills.scheduler import start_scheduler
 import asyncio
@@ -62,6 +63,7 @@ app.include_router(files_router)
 app.include_router(artifacts_router)
 app.include_router(workspace_router)
 app.include_router(sessions_router)
+app.include_router(code_execution_router)
 
 def _truncate_text(value: str, limit: int = 500) -> str:
     if len(value) <= limit:
@@ -195,6 +197,9 @@ async def chat(request: ChatRequest):
                 new_items = new_items[1:]
             
             for item in new_items:
+                if not item.role:
+                    logger.warning("history_sync_skip_no_role", extra={"payload": {"item": str(item)}})
+                    continue
                 save_chat_message(request.session_id, item.role, item)
 
             logger.info(
@@ -229,6 +234,9 @@ async def chat(request: ChatRequest):
                 new_items = new_items[1:]
             
             for item in new_items:
+                if not item.role:
+                    logger.warning("history_sync_skip_no_role", extra={"payload": {"item": str(item)}})
+                    continue
                 save_chat_message(request.session_id, item.role, item)
 
             logger.info(

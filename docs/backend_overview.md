@@ -250,6 +250,46 @@ schedule_task(prompt="Generate daily report", execute_at="2026-02-08 09:00:00", 
 schedule_interval_task(prompt="Check status dashboard", interval_seconds=3600, session_id="ops")
 ```
 
+### Code Execution Skill (Python Seguro)
+
+Usa esta skill cuando necesites **cálculos numéricos**, **análisis de datos**, o **generación de visualizaciones** y el resultado dependa de ejecutar código. No la uses para tareas de escritura/edición de archivos (usa filesystem) ni para navegación web.
+
+#### execute_python
+**Signature**: `execute_python(code: str, timeout_seconds: int = 30, auto_correct: bool = True, max_attempts: int = 3) -> str`  
+**Parameters**:
+- `code` (required, string): Código Python a ejecutar.
+- `timeout_seconds` (optional, integer): Timeout máximo por ejecución (default 30, máx 300).
+- `auto_correct` (optional, boolean): Activa auto-corrección best-effort (default true).
+- `max_attempts` (optional, integer): Máximo de intentos (cap 3).
+
+**Returns**:
+- JSON string con:
+  - `status`: `ok | error | timeout | blocked | syntax_error | deps_missing`
+  - `stdout`, `stderr`
+  - `created_files`: lista con metadatos y `path` dentro del workspace de la sesión
+  - `attempts`: historial de intentos (incluye errores parseados)
+  - `run_id`: identificador de corrida
+
+**Acceso a archivos generados**:
+- Los archivos generados quedan bajo `workspace/{session_id}/code_exec/{run_id}/...`.
+- Se pueden descargar vía `GET /api/files/{session_id}/{path}` usando el campo `path` de `created_files`.
+
+**Formato recomendado para análisis de datos (CSV)**:
+- Indica la ruta del CSV dentro del workspace (habitualmente `uploads/...`).
+- Dentro del código, accede a la raíz de sesión usando el prefijo `session/`, por ejemplo: `session/uploads/mi_archivo.csv`.
+- Especifica columnas objetivo, filtros y el tipo de gráfico deseado (líneas/barras/histograma/scatter).
+
+**Examples**:
+```
+execute_python(code="print(sum(range(100)))")
+```
+```
+execute_python(code="import math\nprint(math.sin(1.23))\n")
+```
+```
+execute_python(code="import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.read_csv('session/uploads/data.csv')\ndf['x'].hist()\nplt.savefig('hist.png')\n")
+```
+
 ### Workspace Skill (Placeholders)
 
 #### create_doc
