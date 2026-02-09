@@ -14,6 +14,8 @@ jobs:
           fetch-depth: 0
       - name: Create dev tag
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           SHORT_SHA=$(git rev-parse --short HEAD)
           TAG="dev-${SHORT_SHA}"
           git tag -a "$TAG" -m "dev tag $TAG"
