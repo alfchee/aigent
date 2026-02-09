@@ -31,12 +31,38 @@ class ModelConfig(BaseModel):
     max_output_tokens: int = 8192
 
 
+class RoutingConfig(BaseModel):
+    default_model: str = "gemini-flash-latest"
+    force_upgrade_on_tools: list[str] = ["execute_python", "read_web_content"]
+    auto_retry_with_pro: bool = True
+    retry_triggers: list[str] = [
+        "SyntaxError",
+        "ModuleNotFoundError",
+        "I cannot complete the request",
+        "404",
+        "Internal Server Error"
+    ]
+
+
+class LimitsConfig(BaseModel):
+    execution_timeout_seconds: int = 300
+    max_search_results: int = 5
+    max_retries: int = 1
+
+
 class AppSettings(BaseModel):
     current_model: str = "gemini-flash-latest"
     fallback_model: str = "gemini-2.5-pro"
     auto_escalate: bool = True
     system_prompt: str = ""
     models: dict[str, ModelConfig] = Field(default_factory=dict)
+    
+    # New configurations
+    routing_config: RoutingConfig = Field(default_factory=RoutingConfig)
+    limits_config: LimitsConfig = Field(default_factory=LimitsConfig)
+    
+    # Store the raw JSON for the "Command Center" advanced editor
+    model_routing_json: dict[str, Any] = Field(default_factory=dict)
 
 
 _CACHE_TTL_SECONDS = 2.0
@@ -59,6 +85,36 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 
 def _defaults() -> AppSettings:
+    # Default routing logic as per proposal
+    routing_defaults = RoutingConfig()
+    limits_defaults = LimitsConfig()
+    
+    # Construct the full model_routing.json structure for the editor
+    model_routing_json = {
+        "available_models": [
+            {
+                "id": "gemini-flash-latest",
+                "alias": "fast",
+                "label": "⚡ Fast (Gemini Flash)",
+                "capabilities": ["web_search", "general_chat", "simple_file_read"]
+            },
+            {
+                "id": "gemini-2.5-pro",
+                "alias": "smart",
+                "label": "🧠 Smart (Gemini Pro)",
+                "capabilities": ["complex_coding", "data_analysis", "deep_research"]
+            }
+        ],
+        "routing_logic": routing_defaults.model_dump(),
+        "parameters": {
+            "temperature_map": {
+                "coding": 0.1,
+                "creative": 0.8,
+                "default": 0.4
+            }
+        }
+    }
+
     return AppSettings(
         current_model="gemini-flash-latest",
         fallback_model="gemini-2.5-pro",
@@ -76,6 +132,9 @@ def _defaults() -> AppSettings:
             ),
             "gemini-2.5-pro": ModelConfig(name="gemini-2.5-pro", temperature=0.7, top_p=0.95, max_output_tokens=8192),
         },
+        routing_config=routing_defaults,
+        limits_config=limits_defaults,
+        model_routing_json=model_routing_json
     )
 
 
@@ -101,6 +160,11 @@ def _load_from_db(base: AppSettings) -> AppSettings:
     fallback_model = get_app_setting("fallback_model")
     auto_escalate = get_app_setting("auto_escalate")
     system_prompt = get_app_setting("system_prompt")
+    
+    # New settings
+    routing_config_data = get_app_setting("routing_config")
+    limits_config_data = get_app_setting("limits_config")
+    model_routing_json_data = get_app_setting("model_routing_json")
 
     updates: dict[str, Any] = {}
     if isinstance(current_model, str) and current_model.strip():
@@ -111,6 +175,16 @@ def _load_from_db(base: AppSettings) -> AppSettings:
         updates["auto_escalate"] = _coerce_bool(auto_escalate, base.auto_escalate)
     if isinstance(system_prompt, str):
         updates["system_prompt"] = system_prompt
+        
+    if isinstance(routing_config_data, dict):
+        updates["routing_config"] = RoutingConfig(**routing_config_data)
+    if isinstance(limits_config_data, dict):
+        updates["limits_config"] = LimitsConfig(**limits_config_data)
+    if isinstance(model_routing_json_data, dict):
+        updates["model_routing_json"] = model_routing_json_data
+        # Also sync routing_config from this JSON if present, as the JSON is the "master" in UI
+        if "routing_logic" in model_routing_json_data:
+            updates["routing_config"] = RoutingConfig(**model_routing_json_data["routing_logic"])
 
     return base.model_copy(update=updates)
 
@@ -166,7 +240,10 @@ def get_settings(force_reload: bool = False) -> AppSettings:
 
 
 def update_settings(payload: dict[str, Any]) -> AppSettings:
-    allowed_keys = {"current_model", "fallback_model", "auto_escalate", "system_prompt"}
+    allowed_keys = {
+        "current_model", "fallback_model", "auto_escalate", "system_prompt",
+        "routing_config", "limits_config", "model_routing_json"
+    }
     for key in list(payload.keys()):
         if key not in allowed_keys:
             payload.pop(key, None)
@@ -187,6 +264,19 @@ def update_settings(payload: dict[str, Any]) -> AppSettings:
         set_app_setting("auto_escalate", bool(payload["auto_escalate"]))
     if "system_prompt" in payload:
         set_app_setting("system_prompt", str(payload["system_prompt"] or ""))
+        
+    if "limits_config" in payload:
+        set_app_setting("limits_config", payload["limits_config"])
+        
+    if "model_routing_json" in payload:
+        # If user updates the master JSON, we save it AND update the derived routing_config
+        json_data = payload["model_routing_json"]
+        set_app_setting("model_routing_json", json_data)
+        if isinstance(json_data, dict) and "routing_logic" in json_data:
+            set_app_setting("routing_config", json_data["routing_logic"])
+    elif "routing_config" in payload:
+        # If user updates just the routing config (e.g. from simpler UI), we save it
+        set_app_setting("routing_config", payload["routing_config"])
 
     return get_settings(force_reload=True)
 

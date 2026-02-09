@@ -9,7 +9,8 @@ from app.api.sessions import router as sessions_router
 from app.api.code_execution import router as code_execution_router
 from app.api.settings import router as settings_router
 from app.core.bot_pool import bot_pool
-from app.core.config_manager import get_settings, resolve_model
+from app.core.config_manager import get_settings
+from app.core.model_orchestrator import ModelOrchestrator
 from app.core.persistence import load_chat_history
 from app.core.persistence import init_db, save_chat_message
 from app.skills.scheduler import start_scheduler
@@ -22,6 +23,8 @@ from app.core.logging import setup_logging, notify_alert
 from app.core.runtime_context import reset_request_id, set_request_id
 
 setup_logging()
+
+orchestrator = ModelOrchestrator()
 
 app = FastAPI(title="NaviBot API", version="0.1.0")
 app.add_middleware(
@@ -165,7 +168,7 @@ async def chat(request: ChatRequest):
         settings = get_settings()
         explicit_model = (request.model_name or "").strip() or None
         try:
-            model_name = resolve_model(session_id=request.session_id, requested_model=explicit_model)
+            model_name = orchestrator.get_model_for_task(session_id=request.session_id, requested_model=explicit_model)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         bot = bot_pool.get(model_name)
@@ -209,16 +212,30 @@ async def chat(request: ChatRequest):
                     pass
                 raise
             escalated_from: str | None = None
+            
+            # Orchestrator: Check for escalation
+            upgrade_target = None
+            if result.get("termination_reason") == "error":
+                error_obj = Exception(result.get("response", "Unknown error"))
+                upgrade_target = orchestrator.should_upgrade_model(model_name, error=error_obj)
+                
+                # Also check tools if error didn't trigger specific string but failed
+                if not upgrade_target and result.get("tool_calls"):
+                    for tc in result["tool_calls"]:
+                        t_name = tc.get("name") if isinstance(tc, dict) else None
+                        if t_name:
+                            tgt = orchestrator.should_upgrade_model(model_name, error=None, tool_name=t_name)
+                            if tgt:
+                                upgrade_target = tgt
+                                break
+
             if (
-                settings.auto_escalate
+                upgrade_target
                 and explicit_model is None
-                and model_name == settings.current_model
-                and settings.fallback_model
-                and settings.fallback_model != model_name
-                and result.get("termination_reason") == "error"
+                and upgrade_target != model_name
             ):
                 escalated_from = model_name
-                fallback_bot = bot_pool.get(settings.fallback_model)
+                fallback_bot = bot_pool.get(upgrade_target)
                 history = load_chat_history(request.session_id)
                 if history:
                     last = history[-1]
@@ -236,7 +253,7 @@ async def chat(request: ChatRequest):
                 await fallback_bot.start_chat(session_id=request.session_id, history=history)
                 result = await fallback_bot.send_message_with_react(request.message, max_iterations=request.max_iterations)
                 bot = fallback_bot
-                model_name = settings.fallback_model
+                model_name = upgrade_target
 
             response_text = result["response"]
             # save_chat_message call removed, handled by history sync below
@@ -381,7 +398,7 @@ async def chat_stream(request: ChatRequest):
             settings = get_settings()
             explicit_model = (request.model_name or "").strip() or None
             try:
-                model_name = resolve_model(session_id=request.session_id, requested_model=explicit_model)
+                model_name = orchestrator.get_model_for_task(session_id=request.session_id, requested_model=explicit_model)
             except ValueError as e:
                 task_error = e
                 reset_session_id(session_token)
@@ -407,16 +424,29 @@ async def chat_stream(request: ChatRequest):
                     )
                     if isinstance(final_result, dict) and "model_name" not in final_result:
                         final_result["model_name"] = model_name
+                    
+                    # Orchestrator: Check for escalation
+                    upgrade_target = None
+                    if isinstance(final_result, dict) and final_result.get("termination_reason") == "error":
+                        error_obj = Exception(final_result.get("response", "Unknown error"))
+                        upgrade_target = orchestrator.should_upgrade_model(model_name, error=error_obj)
+                        
+                        # Also check tools
+                        if not upgrade_target and final_result.get("tool_calls"):
+                            for tc in final_result["tool_calls"]:
+                                t_name = tc.get("name") if isinstance(tc, dict) else None
+                                if t_name:
+                                    tgt = orchestrator.should_upgrade_model(model_name, error=None, tool_name=t_name)
+                                    if tgt:
+                                        upgrade_target = tgt
+                                        break
+                                        
                     if (
-                        settings.auto_escalate
+                        upgrade_target
                         and explicit_model is None
-                        and model_name == settings.current_model
-                        and settings.fallback_model
-                        and settings.fallback_model != model_name
-                        and isinstance(final_result, dict)
-                        and final_result.get("termination_reason") == "error"
+                        and upgrade_target != model_name
                     ):
-                        await event_callback("escalation", {"from": model_name, "to": settings.fallback_model})
+                        await event_callback("escalation", {"from": model_name, "to": upgrade_target})
                         history = load_chat_history(request.session_id)
                         if history:
                             last = history[-1]
@@ -431,7 +461,7 @@ async def chat_stream(request: ChatRequest):
                                     history = history[:-1]
                             except Exception:
                                 pass
-                        bot = bot_pool.get(settings.fallback_model)
+                        bot = bot_pool.get(upgrade_target)
                         await bot.start_chat(session_id=request.session_id, history=history)
                         final_result = await bot.send_message_with_react(
                             request.message,
@@ -439,7 +469,7 @@ async def chat_stream(request: ChatRequest):
                             event_callback=event_callback
                         )
                         if isinstance(final_result, dict):
-                            final_result["model_name"] = settings.fallback_model
+                            final_result["model_name"] = upgrade_target
                             final_result["escalated_from"] = model_name
                 else:
                     # For simple mode, just send the message

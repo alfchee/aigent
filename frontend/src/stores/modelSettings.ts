@@ -10,6 +10,9 @@ type AppSettingsResponse = {
     system_prompt: string
     models: string[]
     tiers?: { fast: string[]; fallback: string[] }
+    routing_config?: Record<string, any>
+    limits_config?: Record<string, any>
+    model_routing_json?: Record<string, any>
   }
   providers: Record<string, boolean>
 }
@@ -27,6 +30,11 @@ export const useModelSettingsStore = defineStore('modelSettings', {
     currentModel: '' as string,
     fallbackModel: '' as string,
     autoEscalate: true as boolean,
+    systemPrompt: '' as string,
+    routingConfig: {} as Record<string, any>,
+    limitsConfig: {} as Record<string, any>,
+    modelRoutingJson: {} as Record<string, any>,
+    
     providers: {} as Record<string, boolean>,
     sessionModels: {} as Record<string, string | null>,
     loading: false as boolean,
@@ -44,6 +52,12 @@ export const useModelSettingsStore = defineStore('modelSettings', {
         this.currentModel = data.settings?.current_model || ''
         this.fallbackModel = data.settings?.fallback_model || ''
         this.autoEscalate = Boolean(data.settings?.auto_escalate)
+        this.systemPrompt = data.settings?.system_prompt || ''
+        
+        this.routingConfig = data.settings?.routing_config || {}
+        this.limitsConfig = data.settings?.limits_config || {}
+        this.modelRoutingJson = data.settings?.model_routing_json || {}
+        
         this.providers = data.providers || {}
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)
@@ -76,6 +90,9 @@ export const useModelSettingsStore = defineStore('modelSettings', {
       fallback_model?: string
       auto_escalate?: boolean
       system_prompt?: string
+      routing_config?: Record<string, any>
+      limits_config?: Record<string, any>
+      model_routing_json?: Record<string, any>
     }) {
       this.loading = true
       this.error = null
@@ -91,6 +108,12 @@ export const useModelSettingsStore = defineStore('modelSettings', {
         this.currentModel = data.settings?.current_model || ''
         this.fallbackModel = data.settings?.fallback_model || ''
         this.autoEscalate = Boolean(data.settings?.auto_escalate)
+        this.systemPrompt = data.settings?.system_prompt || ''
+        
+        this.routingConfig = data.settings?.routing_config || {}
+        this.limitsConfig = data.settings?.limits_config || {}
+        this.modelRoutingJson = data.settings?.model_routing_json || {}
+        
         this.providers = data.providers || {}
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)

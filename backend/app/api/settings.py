@@ -1,3 +1,4 @@
+from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -29,6 +30,9 @@ class UpdateSettingsRequest(BaseModel):
     fallback_model: str | None = None
     auto_escalate: bool | None = None
     system_prompt: str | None = None
+    routing_config: dict[str, Any] | None = None
+    limits_config: dict[str, Any] | None = None
+    model_routing_json: dict[str, Any] | None = None
 
 
 class SessionSettingsRequest(BaseModel):
@@ -46,6 +50,9 @@ def get_app_settings():
             "system_prompt": s.system_prompt,
             "models": list(s.models.keys()),
             "tiers": {"fast": FAST_MODELS, "fallback": FALLBACK_MODELS},
+            "routing_config": s.routing_config.model_dump(),
+            "limits_config": s.limits_config.model_dump(),
+            "model_routing_json": s.model_routing_json,
         },
         "providers": provider_status(),
     }
@@ -65,6 +72,9 @@ def put_app_settings(payload: UpdateSettingsRequest):
             "system_prompt": updated.system_prompt,
             "models": list(updated.models.keys()),
             "tiers": {"fast": FAST_MODELS, "fallback": FALLBACK_MODELS},
+            "routing_config": updated.routing_config.model_dump(),
+            "limits_config": updated.limits_config.model_dump(),
+            "model_routing_json": updated.model_routing_json,
         },
         "providers": provider_status(),
     }
