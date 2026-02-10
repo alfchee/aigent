@@ -83,8 +83,8 @@ function getToolName(content: string): string {
             <summary class="px-3 py-2 text-xs font-mono font-medium text-slate-600 cursor-pointer hover:bg-slate-100 flex items-center gap-2 select-none">
               <span class="text-emerald-600">🤖</span> Resultado del Agente
             </summary>
-            <div class="p-3 border-t border-slate-200 bg-slate-900 text-slate-50 text-xs font-mono overflow-x-auto tool-content">
-              <pre>{{ segment.content }}</pre>
+            <div class="p-3 border-t border-slate-200 bg-slate-900 text-slate-50 text-xs overflow-x-auto tool-content">
+              <div class="prose prose-invert prose-sm max-w-none break-words" v-html="md.render(segment.content)"></div>
             </div>
           </details>
         </div>

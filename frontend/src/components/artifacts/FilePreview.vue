@@ -165,6 +165,9 @@ onBeforeUnmount(() => {
         <a
           class="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50"
           :href="downloadUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Download file (opens in a new tab)"
         >
           Descargar
         </a>
@@ -173,7 +176,8 @@ onBeforeUnmount(() => {
           class="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50"
           :href="viewUrl"
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
+          aria-label="Open file preview (opens in a new tab)"
         >
           Abrir
         </a>

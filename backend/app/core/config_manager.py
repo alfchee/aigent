@@ -60,6 +60,7 @@ class AppSettings(BaseModel):
     # New configurations
     routing_config: RoutingConfig = Field(default_factory=RoutingConfig)
     limits_config: LimitsConfig = Field(default_factory=LimitsConfig)
+    google_workspace_config: dict[str, Any] = Field(default_factory=dict)
     
     # Store the raw JSON for the "Command Center" advanced editor
     model_routing_json: dict[str, Any] = Field(default_factory=dict)
@@ -119,7 +120,16 @@ def _defaults() -> AppSettings:
         current_model="gemini-flash-latest",
         fallback_model="gemini-2.5-pro",
         auto_escalate=True,
-        system_prompt="",
+        system_prompt="""# GOOGLE WORKSPACE PROTOCOL
+- Tienes permiso para interactuar con Google Sheets.
+- Al crear un documento, SIEMPRE proporciona el enlace resultante al usuario.
+- Si los datos son masivos, procésalos primero con 'execute_python' usando DataFrames y luego envía la lista final de valores a la API de Sheets.
+- Cuando el usuario pida "investigar y guardar", realiza primero la búsqueda web profunda, sintetiza y luego estructura la información en filas y columnas.
+
+# NUEVA REGLA DE DRIVE:
+- Si el usuario menciona una carpeta como "Finanzas", primero usa search_drive('Finanzas') para obtener el ID.
+- Usa list_drive_files(folder_id) para ver qué hay dentro.
+- Si necesitas analizar un archivo (CSV, XLSX, TXT), usa download_file_from_drive para traerlo a tu entorno local y luego usa execute_python para leerlo.""",
         models={
             "gemini-3-flash-preview": ModelConfig(
                 name="gemini-3-flash-preview", temperature=0.7, top_p=0.95, max_output_tokens=8192
@@ -134,6 +144,10 @@ def _defaults() -> AppSettings:
         },
         routing_config=routing_defaults,
         limits_config=limits_defaults,
+        google_workspace_config={
+            "owner_email": "alfchee@gmail.com",
+            "auth_mode": "oauth"
+        },
         model_routing_json=model_routing_json
     )
 
@@ -164,6 +178,7 @@ def _load_from_db(base: AppSettings) -> AppSettings:
     # New settings
     routing_config_data = get_app_setting("routing_config")
     limits_config_data = get_app_setting("limits_config")
+    google_workspace_config_data = get_app_setting("google_workspace_config")
     model_routing_json_data = get_app_setting("model_routing_json")
 
     updates: dict[str, Any] = {}
@@ -180,6 +195,8 @@ def _load_from_db(base: AppSettings) -> AppSettings:
         updates["routing_config"] = RoutingConfig(**routing_config_data)
     if isinstance(limits_config_data, dict):
         updates["limits_config"] = LimitsConfig(**limits_config_data)
+    if isinstance(google_workspace_config_data, dict):
+        updates["google_workspace_config"] = google_workspace_config_data
     if isinstance(model_routing_json_data, dict):
         updates["model_routing_json"] = model_routing_json_data
         # Also sync routing_config from this JSON if present, as the JSON is the "master" in UI
@@ -242,7 +259,7 @@ def get_settings(force_reload: bool = False) -> AppSettings:
 def update_settings(payload: dict[str, Any]) -> AppSettings:
     allowed_keys = {
         "current_model", "fallback_model", "auto_escalate", "system_prompt",
-        "routing_config", "limits_config", "model_routing_json"
+        "routing_config", "limits_config", "model_routing_json", "google_workspace_config"
     }
     for key in list(payload.keys()):
         if key not in allowed_keys:
@@ -267,6 +284,9 @@ def update_settings(payload: dict[str, Any]) -> AppSettings:
         
     if "limits_config" in payload:
         set_app_setting("limits_config", payload["limits_config"])
+        
+    if "google_workspace_config" in payload:
+        set_app_setting("google_workspace_config", payload["google_workspace_config"])
         
     if "model_routing_json" in payload:
         # If user updates the master JSON, we save it AND update the derived routing_config

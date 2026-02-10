@@ -8,6 +8,25 @@ export const md = new MarkdownIt({
   typographer: true
 })
 
+const defaultLinkRender =
+  md.renderer.rules.link_open ||
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  token.attrSet('target', '_blank')
+  token.attrSet('rel', 'noopener noreferrer')
+  const existingClass = token.attrGet('class')
+  token.attrSet('class', existingClass ? `${existingClass} external-link` : 'external-link')
+  const href = token.attrGet('href') || ''
+  const existingLabel = token.attrGet('aria-label') || ''
+  const baseLabel = existingLabel || href || 'Link'
+  const suffix = ' (opens in a new tab)'
+  const nextLabel = baseLabel.includes('opens in a new tab') ? baseLabel : `${baseLabel}${suffix}`
+  token.attrSet('aria-label', nextLabel)
+  return defaultLinkRender(tokens, idx, options, env, self)
+}
+
 md.set({
   highlight: (str: string, lang?: string): string => {
     if (lang && hljs.getLanguage(lang)) {
