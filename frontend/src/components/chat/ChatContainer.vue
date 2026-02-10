@@ -26,6 +26,13 @@ async function send() {
   await chat.sendMessage(msg, artifacts.sessionId, selectedModel.value || undefined)
 }
 
+async function handleComposerKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter') return
+  if (event.shiftKey || event.isComposing) return
+  event.preventDefault()
+  await send()
+}
+
 async function loadMore() {
   await chat.loadMoreHistory(artifacts.sessionId)
 }
@@ -118,10 +125,10 @@ watch(
 
     <footer class="p-4 bg-white border-t border-slate-200">
       <div class="max-w-3xl mx-auto">
-        <form @submit.prevent="send" class="flex gap-2 items-end">
+        <form @submit.prevent="send" class="flex gap-1.5 items-end">
           <select
             v-model="selectedModel"
-            class="h-[44px] px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm"
+            class="h-10 px-2.5 pr-7 bg-slate-50 border border-slate-200 rounded-xl text-[11px] sm:text-xs md:text-sm w-[120px] sm:w-[150px] md:w-[180px] truncate"
             :disabled="isLoading || !modelSettings.models.length"
             title="Modelo"
           >
@@ -134,7 +141,7 @@ watch(
               rows="1"
               class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all resize-none text-sm pr-12"
               :disabled="isLoading"
-              @keydown.enter.prevent="send"
+              @keydown="handleComposerKeydown"
             ></textarea>
             <button
               type="submit"
