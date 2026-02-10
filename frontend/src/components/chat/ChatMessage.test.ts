@@ -35,4 +35,16 @@ describe('ChatMessage', () => {
     expect(toolResultDetails.attributes('open')).toBeUndefined()
     expect(toolResult.classes()).toContain('bg-slate-50')
   })
+
+  it('renders links with external attributes', () => {
+    const content = 'Visit [Docs](https://example.com)'
+    const wrapper = mount(ChatMessage, {
+      props: { role: 'assistant', content }
+    })
+    const link = wrapper.get('a')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(link.classes()).toContain('external-link')
+    expect(link.attributes('aria-label')).toContain('opens in a new tab')
+  })
 })

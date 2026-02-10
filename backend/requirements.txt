@@ -17,3 +17,10 @@ matplotlib
 seaborn
 scipy
 pillow
+gspread
+google-auth
+google-auth-oauthlib
+tenacity
+google-api-python-client
+
+

@@ -33,6 +33,7 @@ ENV/
 scheduler.db
 navibot.db
 backend/workspace_data/
+backend/app/core/credentials/
 
 # Node.js (Frontend)
 node_modules/
