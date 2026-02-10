@@ -28,8 +28,6 @@ const jsonError = ref<string | null>(null)
 // Read-only data from store
 const providers = computed(() => store.providers)
 const models = computed(() => store.models)
-const fastModels = computed(() => store.fastModels)
-const fallbackModels = computed(() => store.fallbackModels)
 const availableModels = computed(() => store.availableModels)
 
 // Use availableModels if present, otherwise fall back to static lists
