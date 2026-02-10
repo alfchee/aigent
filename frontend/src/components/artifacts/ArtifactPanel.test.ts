@@ -27,7 +27,7 @@ describe('ArtifactPanel', () => {
       global: { plugins: [pinia] }
     })
 
-    expect(wrapper.text()).toContain('2 nuevo(s)')
+    expect(wrapper.text()).toContain('2 new')
   })
 
   it('prevents both sidebars from being collapsed on load', async () => {

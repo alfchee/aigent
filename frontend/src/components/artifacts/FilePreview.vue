@@ -12,6 +12,11 @@ const props = defineProps<{
   file: ArtifactFileEntry
 }>()
 
+const emit = defineEmits<{
+  (e: 'back'): void
+  (e: 'collapse'): void
+}>()
+
 const loading = ref(false)
 const error = ref<string | null>(null)
 
@@ -24,10 +29,20 @@ const pageSize = ref(25)
 
 const objectUrl = ref<string | null>(null)
 const zoom = ref(1)
+const copied = ref(false)
+const copyTimer = ref<number | null>(null)
 
 const path = computed(() => props.file.path)
 const ext = computed(() => (props.file.path.split('.').pop() || '').toLowerCase())
 const isLarge = computed(() => props.file.size_bytes > 10 * 1024 * 1024)
+const sizeLabel = computed(() => {
+  const n = props.file.size_bytes
+  if (n < 1024) return `${n} B`
+  const kb = n / 1024
+  if (kb < 1024) return `${kb.toFixed(1)} KB`
+  const mb = kb / 1024
+  return `${mb.toFixed(1)} MB`
+})
 
 function encodePathSegments(p: string) {
   return p
@@ -81,6 +96,41 @@ const paged = computed(() => {
   const start = (p - 1) * pageSize.value
   return filtered.value.slice(start, start + pageSize.value)
 })
+const canCopy = computed(() => !!text.value)
+const rawPreview = computed(() => {
+  if (!text.value) return ''
+  if (isJson.value) {
+    try {
+      return JSON.stringify(JSON.parse(text.value), null, 2)
+    } catch {
+      return text.value
+    }
+  }
+  return text.value
+})
+
+function clearCopyState() {
+  if (copyTimer.value) {
+    window.clearTimeout(copyTimer.value)
+    copyTimer.value = null
+  }
+}
+
+async function copyRaw() {
+  if (!text.value) return
+  try {
+    if (!navigator.clipboard?.writeText) return
+    await navigator.clipboard.writeText(text.value)
+    copied.value = true
+    clearCopyState()
+    copyTimer.value = window.setTimeout(() => {
+      copied.value = false
+      copyTimer.value = null
+    }, 1500)
+  } catch {
+    copied.value = false
+  }
+}
 
 function resetState() {
   loading.value = false
@@ -95,6 +145,8 @@ function resetState() {
     objectUrl.value = null
   }
   zoom.value = 1
+  copied.value = false
+  clearCopyState()
 }
 
 async function load() {
@@ -151,37 +203,70 @@ watch(
 
 onBeforeUnmount(() => {
   if (objectUrl.value) URL.revokeObjectURL(objectUrl.value)
+  clearCopyState()
 })
 </script>
 
 <template>
   <div class="h-full min-h-0 flex flex-col">
-    <div class="p-3 border-b border-slate-200 flex items-center justify-between gap-2 bg-white">
-      <div class="min-w-0">
-        <div class="text-sm font-semibold truncate">{{ path }}</div>
-        <div class="text-xs text-slate-500">{{ file.size_bytes }} bytes</div>
-      </div>
-      <div class="flex items-center gap-2">
-        <a
-          class="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50"
-          :href="downloadUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Download file (opens in a new tab)"
+    <div class="p-4 border-b border-slate-200 flex items-center justify-between gap-2 bg-gray-50/50">
+      <div class="flex items-center gap-2 min-w-0">
+        <button
+          class="flex items-center justify-center p-1.5 text-slate-500 hover:text-slate-800 rounded-md hover:bg-gray-200 transition-colors"
+          type="button"
+          title="Volver a la lista"
+          @click="emit('back')"
         >
-          Descargar
-        </a>
+          <span class="material-icons-outlined text-sm">arrow_back</span>
+        </button>
+        <div class="min-w-0">
+          <div class="text-sm font-bold text-slate-800 truncate">{{ path }}</div>
+          <div class="text-[10px] text-slate-500">Preview Mode</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-1">
         <a
-          v-if="isPdf || isImage"
-          class="text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50"
+          class="p-1.5 text-slate-400 hover:text-sky-500 hover:bg-gray-100 rounded transition-colors"
           :href="viewUrl"
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="Open file preview (opens in a new tab)"
+          title="Abrir en nueva pestaña"
+          aria-label="Abrir en nueva pestaña"
         >
-          Abrir
+          <span class="material-icons-outlined text-lg">open_in_new</span>
         </a>
+        <button
+          class="p-1.5 text-slate-400 hover:text-sky-500 hover:bg-gray-100 rounded transition-colors"
+          type="button"
+          title="Colapsar panel"
+          @click="emit('collapse')"
+        >
+          <span class="material-icons-outlined text-lg">chevron_right</span>
+        </button>
       </div>
+    </div>
+    <div class="px-4 py-2 border-b border-slate-200 flex items-center gap-2 bg-white">
+      <a
+        class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-gray-50 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors"
+        :href="downloadUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Descargar archivo"
+      >
+        <span class="material-icons-outlined text-sm">download</span>
+        Download
+      </a>
+      <button
+        class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-gray-50 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        type="button"
+        :disabled="!canCopy"
+        @click="copyRaw"
+      >
+        <span class="material-icons-outlined text-sm">content_copy</span>
+        {{ copied ? 'Copiado' : 'Copy Raw' }}
+      </button>
+      <div class="flex-1"></div>
+      <span class="text-[10px] text-slate-400 font-mono">{{ sizeLabel }}</span>
     </div>
 
     <div v-if="isLarge" class="p-4 text-sm text-slate-600">
@@ -193,7 +278,7 @@ onBeforeUnmount(() => {
       {{ error }}
     </div>
 
-    <div v-else class="flex-1 min-h-0 overflow-auto">
+    <div v-else class="flex-1 min-h-0 overflow-auto bg-gray-50">
       <div v-if="isImage && objectUrl" class="p-4">
         <div class="flex items-center justify-between mb-2">
           <div class="text-xs text-slate-500">Zoom</div>
@@ -217,15 +302,15 @@ onBeforeUnmount(() => {
         <HtmlRenderer :html="text" />
       </div>
 
-      <div v-else-if="(isCsv || isJson) && rows.length" class="p-3">
+      <div v-else-if="(isCsv || isJson) && text !== null" class="p-4">
         <div class="flex items-center justify-between gap-2 mb-2">
           <input
             v-model="query"
             type="text"
-            class="w-full p-2 text-sm border border-slate-200 rounded"
+            class="w-full p-2 text-sm border border-slate-200 rounded bg-white"
             placeholder="Buscar…"
           />
-          <select v-model.number="pageSize" class="p-2 text-sm border border-slate-200 rounded">
+          <select v-model.number="pageSize" class="p-2 text-sm border border-slate-200 rounded bg-white">
             <option :value="10">10</option>
             <option :value="25">25</option>
             <option :value="50">50</option>
@@ -236,16 +321,22 @@ onBeforeUnmount(() => {
           Mostrando {{ filtered.length }} fila(s) (hasta 500 en preview)
         </div>
 
-        <div class="overflow-auto border border-slate-200 rounded bg-white">
-          <table class="min-w-full text-sm">
-            <thead class="bg-slate-50 sticky top-0">
+        <div v-if="rows.length" class="overflow-auto border border-slate-200 rounded-lg shadow-sm bg-white">
+          <table class="min-w-full text-xs text-slate-600">
+            <thead class="bg-gray-100 sticky top-0 text-slate-800 font-semibold uppercase tracking-wider">
               <tr>
-                <th v-for="c in columns" :key="c" class="text-left p-2 border-b border-slate-200 font-semibold">{{ c }}</th>
+                <th
+                  v-for="c in columns"
+                  :key="c"
+                  class="text-left px-3 py-2 border-b border-r border-slate-200 last:border-r-0"
+                >
+                  {{ c }}
+                </th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(r, idx) in paged" :key="idx" class="odd:bg-white even:bg-slate-50">
-                <td v-for="c in columns" :key="c" class="p-2 border-b border-slate-100 align-top">
+                <td v-for="c in columns" :key="c" class="px-3 py-2 border-b border-slate-100 align-top">
                   {{ (r as any)[c] }}
                 </td>
               </tr>
@@ -253,7 +344,7 @@ onBeforeUnmount(() => {
           </table>
         </div>
 
-        <div class="flex items-center justify-between mt-2 text-sm">
+        <div v-if="rows.length" class="flex items-center justify-between mt-2 text-sm">
           <button
             class="px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
             type="button"
@@ -272,6 +363,13 @@ onBeforeUnmount(() => {
             Siguiente
           </button>
         </div>
+
+        <div v-if="rawPreview" class="mt-4">
+          <div class="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Raw Preview</div>
+          <div class="bg-white border border-slate-200 rounded-lg p-3 overflow-x-auto">
+            <pre class="text-[10px] leading-relaxed font-mono text-slate-600">{{ rawPreview }}</pre>
+          </div>
+        </div>
       </div>
 
       <div v-else-if="isCode && text !== null" class="p-3">
@@ -285,6 +383,12 @@ onBeforeUnmount(() => {
       <div v-else class="p-4 text-sm text-slate-500">
         No se pudo previsualizar este archivo.
       </div>
+    </div>
+    <div class="p-3 bg-white border-t border-slate-200 text-center">
+      <p class="text-[10px] text-slate-400 flex items-center justify-center gap-1">
+        <span class="material-icons-outlined text-xs">info</span>
+        Generado por Navibot · {{ file.modified_at }}
+      </p>
     </div>
   </div>
 </template>
