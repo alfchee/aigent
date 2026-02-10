@@ -15,12 +15,15 @@ The NaviBot backend is built using **FastAPI**, a modern, high-performance web f
 
 ### 1. NaviBot Agent (`app/core/agent.py`)
 The `NaviBot` class is the central intelligence of the system.
-- **AI Model**: Defaults to `gemini-2.0-flash`.
-- **Tool Registration**: Automatically registers skills from the `app/skills` directory.
-- **Chat Sessions**: Manages asynchronous chat sessions with automatic function calling enabled.
-- **History Management**: Abstraction layer (`get_history`) to handle different Gemini SDK history access patterns (sync vs async, property vs method).
+- **AI Model**: Defaults to `gemini-2.0-flash` (dynamically configurable).
+- **Tool Registration**: Automatically registers skills from the `app/skills` directory (`scheduler`, `browser`, `workspace`, `search`, `reader`, `code_execution`).
+- **Prompt Architecture (The "Sandwich")**: Implements a layered system instruction structure:
+  1. **Personality Layer**: User-defined persona and tone (from settings).
+  2. **Capabilities Layer**: Dynamic tool definitions and technical instructions (`tool_reference`).
+  3. **Search Policy Layer**: Strict rules for information retrieval (`SEARCH_POLICY`).
+  4. **Base Constraints Layer**: Non-negotiable security, formatting, and privacy rules (`BASE_CONSTRAINTS`).
 - **Execution Modes**:
-  - **Simple Mode**: Single-turn execution via `send_message()` for quick responses.
+  - **Simple Mode**: Single-turn execution via `send_message()`.
   - **ReAct Mode**: Multi-turn autonomous execution via `send_message_with_react()` for complex tasks.
 
 ### 2. ReAct Loop Engine (`app/core/react_engine.py`)
@@ -29,29 +32,17 @@ Implements the **ReAct (Reason + Act)** cognitive loop for autonomous multi-turn
 - **Observation & Reflection**: Processes tool results and determines next actions.
 - **Termination Conditions**: Natural completion, max iterations, timeout, or error.
 - **Reasoning Trace**: Comprehensive logging of all execution steps.
-- **Configurable Limits**: Max iterations (default: 10) and timeout (default: 300s).
 
 ### 3. Scheduler Service (`app/core/scheduler_service.py`)
 Provides persistent job scheduling using **APScheduler** and **SQLAlchemy**.
 
 #### Persistence
-- **Database**: Uses `scheduler.db` (SQLite) to store job metadata.
-- **Reliability**: Jobs survive server restarts. If the server is down when a job was supposed to run, it will typically execute upon startup (depending on misfire parameters).
+- **Database**: Uses `navibot.db` (SQLite) to store job metadata.
+- **Reliability**: Jobs survive server restarts.
 
 #### Job Types
 - **Date-based**: One-off execution at a specific ISO timestamp (`YYYY-MM-DD HH:MM:SS`).
 - **Interval-based**: Recurring execution every $N$ seconds.
-
-#### Execution Lifecycle
-1. The scheduler monitors the database for due jobs.
-2. When a job triggers, it calls `execute_agent_task(prompt, use_react_loop, max_iterations)`.
-3. This function:
-    - Prints an execution log with mode indicator (ReAct vs Simple).
-    - Instantiates a **fresh** `NaviBot` instance.
-    - Sends the `prompt` to the agent using the selected execution mode.
-    - Logs the final response, iteration count, and reasoning trace (if ReAct mode).
-    - **ReAct Mode** (default): Enables autonomous multi-turn execution for complex tasks.
-    - **Simple Mode**: Single-turn execution for straightforward queries.
 
 ---
 
@@ -75,18 +66,13 @@ The backend exposes a paginated endpoint to retrieve historical chat content for
   - `items` are returned in chronological order (oldest → newest within the page).
   - `has_more` and `next_before_id` support loading older pages.
 
-| Skill | Tools Provided | Description |
-| :--- | :--- | :--- |
-| **System** | `list_files`, `read_file`, `create_file`, `update_file` | Basic filesystem operations. |
-| **Browser** | `navigate`, `get_page_content`, `screenshot`, `close_browser` | Web automation and content extraction. |
-| **Scheduler** | `schedule_task`, `schedule_interval_task` | Ability for the agent to schedule its own future tasks. |
-| **Workspace** | `create_doc`, `send_email`, `create_calendar_event` | Placeholders for Google Workspace integrations. |
+---
 
 ## Tool and Skill Reference (Agent Tooling)
 
 This section is the authoritative tool reference for the agent. Every tool call must include all required parameters with the correct types. Do not call tools with empty arguments.
 
-### System Skill (Filesystem)
+### 1. System Skill (Filesystem)
 
 #### list_files
 **Signature**: `list_files(directory: str = "/") -> str`  
@@ -97,10 +83,8 @@ This section is the authoritative tool reference for the agent. Every tool call 
 - Error string: `"Error listing files: ..."`
 
 **Examples**:
-```
+```python
 list_files()
-```
-```
 list_files(directory="/reports")
 ```
 
@@ -110,17 +94,16 @@ list_files(directory="/reports")
 - `filepath` (required, string): Virtual path to the file inside the session workspace.
 - `max_bytes` (optional, integer): Max bytes to read before truncation behavior.
 **Returns**:
-- Text content for text-like files.
+- Text content for text-like files (including PDFs via text extraction).
 - JSON string for binary or oversized files:
   - `{"path": "...", "mime_type": "...", "size_bytes": int, "truncated": true}`
   - `{"path": "...", "mime_type": "...", "size_bytes": int, "base64": "..."}`
 - Error string: `"Error reading file: ..."`
 
 **Examples**:
-```
+```python
 read_file(filepath="notes/todo.txt")
-```
-```
+read_file(filepath="docs/specs.pdf")
 read_file(filepath="assets/logo.png", max_bytes=200000)
 ```
 
@@ -134,18 +117,10 @@ read_file(filepath="assets/logo.png", max_bytes=200000)
 - JSON string: `{"saved": {"path": "...", "size_bytes": int, "modified_at": "ISO-8601", "mime_type": "..."}}`
 - Error string: `"Error creating file: ..."`
 
-**Examples (correct usage with required parameters)**:
-```
+**Examples**:
+```python
 create_file(filepath="notes/todo.txt", content="Buy milk\nCall Sam\n")
-```
-```
-create_file(filepath="reports/summary.md", content="# Summary\n- Q1 results\n")
-```
-```
 create_file(filepath="images/logo.png", content="iVBORw0KGgoAAA...", encoding="base64")
-```
-```
-create_file(filepath="index.html", content="<!doctype html><h1>Hola</h1>")
 ```
 
 #### update_file
@@ -160,14 +135,55 @@ create_file(filepath="index.html", content="<!doctype html><h1>Hola</h1>")
 - Error string: `"Error updating file: ..."`
 
 **Examples**:
-```
+```python
 update_file(filepath="notes/todo.txt", start_line=2, end_line=2, new_content="Call Alex\n")
 ```
-```
-update_file(filepath="notes/todo.txt", start_line=1, end_line=0, new_content="Buy coffee\n")
+
+### 2. Search Skill & Reader Skill
+
+**Search Policy**:
+1. **Google Grounding**: (Native) First priority for general queries.
+2. **Brave Search**: Second priority if grounding fails or for specific API usage.
+3. **DuckDuckGo**: Fallback only.
+
+#### search_brave
+**Signature**: `search_brave(query: str, count: int = 5, offset: int = 0, lang: str = "es") -> str`  
+**Parameters**:
+- `query` (required, string): Search terms.
+- `count` (optional, int): Number of results (default 5).
+- `offset` (optional, int): Pagination offset.
+- `lang` (optional, string): Language code (default "es").
+**Returns**:
+- JSON string with search results (title, url, description).
+
+**Example**:
+```python
+search_brave(query="latest python features", count=3)
 ```
 
-### Browser Skill
+#### search_duckduckgo_fallback
+**Signature**: `search_duckduckgo_fallback(query: str, max_results: int = 5) -> str`  
+**Parameters**:
+- `query` (required, string): Search terms.
+- `max_results` (optional, int): Number of results.
+**Returns**:
+- JSON string with search results.
+
+#### read_web_content
+**Signature**: `read_web_content(url: str, max_chars: int = 20000, timeout: float = 10.0) -> str`  
+**Parameters**:
+- `url` (required, string): URL to fetch.
+- `max_chars` (optional, int): limit content length (default 20000).
+- `timeout` (optional, float): request timeout.
+**Returns**:
+- JSON string containing markdown-converted content, metadata, or error message.
+
+**Example**:
+```python
+read_web_content(url="https://example.com/article")
+```
+
+### 3. Browser Skill (Playwright)
 
 #### navigate
 **Signature**: `navigate(url: str) -> str`  
@@ -176,34 +192,18 @@ update_file(filepath="notes/todo.txt", start_line=1, end_line=0, new_content="Bu
 **Returns**:
 - Success string with page title, or error string.
 
-**Example**:
-```
-navigate(url="https://example.com")
-```
-
 #### get_page_content
 **Signature**: `get_page_content() -> str`  
 **Parameters**: none  
 **Returns**:
 - HTML content (truncated to 10,000 chars) or error string.
 
-**Example**:
-```
-get_page_content()
-```
-
 #### screenshot
 **Signature**: `screenshot(filename: str = "screenshot.png") -> str`  
 **Parameters**:
-- `filename` (optional, string): Virtual path to save the screenshot in the session workspace.
+- `filename` (optional, string): Virtual path to save the screenshot.
 **Returns**:
-- JSON string: `{"saved": {"path": "...", "size_bytes": int, "modified_at": "ISO-8601", "mime_type": "..."}}`
-- Error string.
-
-**Example**:
-```
-screenshot(filename="shots/homepage.png")
-```
+- JSON string: `{"saved": {...}}` or error string.
 
 #### close_browser
 **Signature**: `close_browser() -> str`  
@@ -211,12 +211,27 @@ screenshot(filename="shots/homepage.png")
 **Returns**:
 - `"Browser closed."` or error string.
 
-**Example**:
-```
-close_browser()
+### 4. Code Execution Skill (Python)
+
+Use this skill for **numerical calculations**, **data analysis**, or **visualization generation**. Do not use for file editing (use filesystem) or web browsing.
+
+#### execute_python
+**Signature**: `execute_python(code: str, timeout_seconds: int = 30, auto_correct: bool = True, max_attempts: int = 3) -> str`  
+**Parameters**:
+- `code` (required, string): Python code to execute.
+- `timeout_seconds` (optional, integer): Max execution time (default 30).
+- `auto_correct` (optional, boolean): Enable best-effort auto-correction (default True).
+- `max_attempts` (optional, integer): Max retries (default 3).
+**Returns**:
+- JSON string with `status`, `stdout`, `stderr`, `created_files`, etc.
+
+**Examples**:
+```python
+execute_python(code="print(sum(range(100)))")
+execute_python(code="import math\nprint(math.sin(1.23))")
 ```
 
-### Scheduler Skill
+### 5. Scheduler Skill
 
 #### schedule_task
 **Signature**: `schedule_task(prompt: str, execute_at: str, session_id: str = "default", use_react_loop: bool = True, max_iterations: int = 10) -> str`  
@@ -224,74 +239,22 @@ close_browser()
 - `prompt` (required, string): Instruction for the agent.
 - `execute_at` (required, string): ISO timestamp `YYYY-MM-DD HH:MM:SS`.
 - `session_id` (optional, string): Session/workspace id.
-- `use_react_loop` (optional, boolean): Use ReAct loop for execution.
+- `use_react_loop` (optional, boolean): Use ReAct loop.
 - `max_iterations` (optional, integer): ReAct loop iteration cap.
-**Returns**:
-- Success string confirming scheduling, or error string.
-
-**Example**:
-```
-schedule_task(prompt="Generate daily report", execute_at="2026-02-08 09:00:00", session_id="sales")
-```
 
 #### schedule_interval_task
 **Signature**: `schedule_interval_task(prompt: str, interval_seconds: int, session_id: str = "default", use_react_loop: bool = True, max_iterations: int = 10) -> str`  
 **Parameters**:
 - `prompt` (required, string): Instruction for the agent.
 - `interval_seconds` (required, integer): Interval in seconds.
-- `session_id` (optional, string): Session/workspace id.
-- `use_react_loop` (optional, boolean): Use ReAct loop for execution.
-- `max_iterations` (optional, integer): ReAct loop iteration cap.
-**Returns**:
-- Success string confirming scheduling, or error string.
 
-**Example**:
-```
-schedule_interval_task(prompt="Check status dashboard", interval_seconds=3600, session_id="ops")
-```
+### 6. Workspace Skill (Mocks)
 
-### Workspace Skill (Placeholders)
+- `create_doc(title: str, content: str) -> str`
+- `send_email(to: str, subject: str, body: str) -> str`
+- `create_calendar_event(summary: str, start_time: str, end_time: str) -> str`
 
-#### create_doc
-**Signature**: `create_doc(title: str, content: str) -> str`  
-**Parameters**:
-- `title` (required, string): Document title.
-- `content` (required, string): Document body.
-**Returns**:
-- Mock success string.
-
-**Example**:
-```
-create_doc(title="Meeting Notes", content="Agenda:\n- Budget\n")
-```
-
-#### send_email
-**Signature**: `send_email(to: str, subject: str, body: str) -> str`  
-**Parameters**:
-- `to` (required, string): Recipient email address.
-- `subject` (required, string): Email subject.
-- `body` (required, string): Email body text.
-**Returns**:
-- Mock success string.
-
-**Example**:
-```
-send_email(to="alex@example.com", subject="Status", body="All tasks completed.")
-```
-
-#### create_calendar_event
-**Signature**: `create_calendar_event(summary: str, start_time: str, end_time: str) -> str`  
-**Parameters**:
-- `summary` (required, string): Event title.
-- `start_time` (required, string): Start time.
-- `end_time` (required, string): End time.
-**Returns**:
-- Mock success string.
-
-**Example**:
-```
-create_calendar_event(summary="Sprint Planning", start_time="2026-02-08 10:00:00", end_time="2026-02-08 11:00:00")
-```
+---
 
 ## API Endpoints
 
@@ -307,55 +270,22 @@ The backend runs on port **8231** by default.
 
 - **POST `/api/chat/stream`**: Sends a message and receives real-time progress via Server-Sent Events (SSE).
     - **Request Body**: Same as `/api/chat`
-    - **Stream Events**:
-        - `start`: Initial task setup
-        - `iteration_start`: New reasoning cycle
-        - `thinking`: Progress message
-        - `tool_call`: (Planned) Tool execution start
-        - `observation`: (Planned) Tool results
-        - `response`: Text provided by agent
-        - `completion`: Loop finished
-        - `final`: Final aggregated result (JSON)
-        - `error`: Error details
+    - **Stream Events**: `start`, `iteration_start`, `thinking`, `tool_call`, `observation`, `response`, `completion`, `final`, `error`.
+
+### Settings & Models
+- **GET `/api/available-models`**: Lists dynamically available Gemini models for the current API Key.
 
 ## Configuration
 
 Environment variables are managed via a `.env` file in the `backend/` directory:
 - `GOOGLE_API_KEY`: Required for interacting with the Gemini model.
+- `BRAVE_API_KEY`: Optional, for Brave Search.
+- `ENABLE_GOOGLE_GROUNDING`: Toggle for native grounding (`true`/`false`).
 
 ## Running the Backend
 
-To start the backend server with the default configuration:
 ```bash
 cd backend
 python -m app.main
 ```
 This starts the FastAPI server on `0.0.0.0:8231` with auto-reload enabled.
-
----
-
-## Observabilidad y Logging
-
-### Estándares de logging
-- Formato JSON estructurado en stdout y en archivo rotativo.
-- Campos mínimos: timestamp, level, logger, message, service, request_id, session_id, event, payload.
-- Trazas completas en errores con stack trace.
-- Redacción automática de claves, tokens y secretos en payloads.
-- Correlación por request_id en todos los eventos del request.
-
-### Variables de entorno
-- LOG_LEVEL: nivel del logger (default INFO).
-- LOG_FILE_PATH: ruta del archivo de logs (default logs/navibot.log).
-- SERVICE_NAME: nombre del servicio para agregación (default navibot-backend).
-- LOG_AGGREGATION_URL: endpoint HTTP para colectar logs estructurados.
-- ALERT_WEBHOOK_URL: endpoint HTTP para alertas de fallos de chat.
-
-### Checklist de depuración de fallos de chat
-- Confirmar request_id del error en respuesta y buscarlo en logs.
-- Revisar evento chat_request_start con payload de la solicitud.
-- Verificar historia previa y sincronización post-response.
-- Revisar errores de herramientas en tool_calls y tool_errors.
-- Validar configuración de API keys y grounding habilitado.
-- Confirmar disponibilidad de base de datos y workspace.
-- Reproducir el error con el caso mínimo en tests.
-- Revisar alertas enviadas a ALERT_WEBHOOK_URL.

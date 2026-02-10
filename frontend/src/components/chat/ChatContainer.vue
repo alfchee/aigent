@@ -3,11 +3,14 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { useChatStore } from '../../stores/chat'
 import { useArtifactsStore } from '../../stores/artifacts'
+import { useModelSettingsStore } from '../../stores/modelSettings'
 import ChatMessage from './ChatMessage.vue'
 
 const chat = useChatStore()
 const artifacts = useArtifactsStore()
+const modelSettings = useModelSettingsStore()
 const newMessage = ref('')
+const selectedModel = ref('')
 
 const messages = computed(() => chat.messages)
 const isLoading = computed(() => chat.isLoading)
@@ -20,12 +23,49 @@ const scrollRef = ref<HTMLElement | null>(null)
 async function send() {
   const msg = newMessage.value
   newMessage.value = ''
-  await chat.sendMessage(msg, artifacts.sessionId)
+  await chat.sendMessage(msg, artifacts.sessionId, selectedModel.value || undefined)
 }
 
 async function loadMore() {
   await chat.loadMoreHistory(artifacts.sessionId)
 }
+
+function modelLabel(name: string) {
+  if (name === 'gemini-3-flash-preview') return '⚡ Fast (Gemini 3 Flash Preview)'
+  if (name === 'gemini-flash-latest') return '⚡ Fast (Gemini Flash Latest)'
+  if (name === 'gemini-3-pro-preview') return '🧠 Pro (Gemini 3 Pro Preview)'
+  if (name === 'gemini-2.5-pro') return '🧠 Pro (Gemini 2.5 Pro)'
+  return name
+}
+
+async function syncModelForSession(sessionId: string) {
+  if (!modelSettings.models.length) {
+    await modelSettings.loadAppSettings()
+  }
+  await modelSettings.loadSessionModel(sessionId)
+  const sid = sessionId || 'default'
+  selectedModel.value = modelSettings.sessionModels[sid] || modelSettings.currentModel || ''
+}
+
+watch(
+  () => artifacts.sessionId,
+  async (sid) => {
+    await syncModelForSession(sid)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => selectedModel.value,
+  async (next, prev) => {
+    if (!next || next === prev) return
+    const sid = artifacts.sessionId || 'default'
+    try {
+      await modelSettings.setSessionModel(sid, next)
+    } catch {
+    }
+  }
+)
 
 watch(
   () => chat.messages.length,
@@ -78,25 +118,35 @@ watch(
 
     <footer class="p-4 bg-white border-t border-slate-200">
       <div class="max-w-3xl mx-auto">
-        <form @submit.prevent="send" class="flex gap-2 relative">
-          <textarea
-            v-model="newMessage"
-            placeholder="Escribe un mensaje..."
-            rows="1"
-            class="flex-1 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all resize-none text-sm pr-12"
-            :disabled="isLoading"
-            @keydown.enter.prevent="send"
-          ></textarea>
-          <button
-            type="submit"
-            :disabled="isLoading || !newMessage.trim()"
-            class="absolute right-2 bottom-2 p-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50 disabled:bg-slate-300 transition-colors shadow-sm"
-            aria-label="Enviar mensaje"
+        <form @submit.prevent="send" class="flex gap-2 items-end">
+          <select
+            v-model="selectedModel"
+            class="h-[44px] px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm"
+            :disabled="isLoading || !modelSettings.models.length"
+            title="Modelo"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-            </svg>
-          </button>
+            <option v-for="m in modelSettings.models" :key="m" :value="m">{{ modelLabel(m) }}</option>
+          </select>
+          <div class="flex-1 relative">
+            <textarea
+              v-model="newMessage"
+              placeholder="Escribe un mensaje..."
+              rows="1"
+              class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all resize-none text-sm pr-12"
+              :disabled="isLoading"
+              @keydown.enter.prevent="send"
+            ></textarea>
+            <button
+              type="submit"
+              :disabled="isLoading || !newMessage.trim()"
+              class="absolute right-2 bottom-2 p-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50 disabled:bg-slate-300 transition-colors shadow-sm"
+              aria-label="Enviar mensaje"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+              </svg>
+            </button>
+          </div>
         </form>
         <p class="text-[10px] text-center text-slate-400 mt-2">© 2026 Navibot Agent</p>
       </div>

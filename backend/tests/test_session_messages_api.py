@@ -140,6 +140,38 @@ class TestSessionMessagesApi(unittest.TestCase):
             left = db.query(p.ChatMessage).filter(p.ChatMessage.session_id == session_id).all()
             self.assertEqual(len(left), 0)
 
+    def test_settings_models_and_session_model_validation(self):
+        r = self.client.get("/api/settings")
+        self.assertEqual(r.status_code, 200)
+        payload = r.json()
+        tiers = payload["settings"]["tiers"]
+        self.assertEqual(tiers["fast"], ["gemini-3-flash-preview", "gemini-flash-latest"])
+        self.assertEqual(tiers["fallback"], ["gemini-3-pro-preview", "gemini-2.5-pro"])
+
+        models = payload["settings"]["models"]
+        self.assertTrue(all(m in models for m in tiers["fast"]))
+        self.assertTrue(all(m in models for m in tiers["fallback"]))
+
+        r = self.client.put("/api/settings", json={"current_model": "gemini-1.5-pro"})
+        self.assertEqual(r.status_code, 400)
+
+        r = self.client.put("/api/settings", json={"fallback_model": "gemini-2.0-flash"})
+        self.assertEqual(r.status_code, 400)
+
+        session_id = "s_settings"
+        r = self.client.post("/api/sessions", json={"id": session_id, "title": "Settings"})
+        self.assertEqual(r.status_code, 200)
+
+        r = self.client.put(f"/api/sessions/{session_id}/settings", json={"model_name": "gemini-1.5-pro"})
+        self.assertEqual(r.status_code, 400)
+
+        r = self.client.put(f"/api/sessions/{session_id}/settings", json={"model_name": "gemini-2.5-pro"})
+        self.assertEqual(r.status_code, 200)
+
+        r = self.client.get(f"/api/sessions/{session_id}/settings")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["model_name"], "gemini-2.5-pro")
+
 
 if __name__ == "__main__":
     unittest.main()

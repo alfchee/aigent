@@ -31,7 +31,11 @@ class TestChatFailureRepro(unittest.TestCase):
         import app.main as main
 
         importlib.reload(main)
-        main.bot = DummyBot()
+        class DummyPool:
+            def get(self, model_name: str):
+                return DummyBot()
+
+        main.bot_pool = DummyPool()
         self.client = TestClient(main.app)
 
     def tearDown(self):
