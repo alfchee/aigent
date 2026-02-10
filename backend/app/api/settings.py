@@ -11,6 +11,7 @@ from app.core.config_manager import (
     set_session_model,
     update_settings,
 )
+from app.core.models import get_available_gemini_models
 
 
 router = APIRouter(tags=["settings"])
@@ -37,6 +38,12 @@ class UpdateSettingsRequest(BaseModel):
 
 class SessionSettingsRequest(BaseModel):
     model_name: str
+
+
+@router.get("/api/available-models")
+async def list_models():
+    models = await get_available_gemini_models()
+    return {"models": models}
 
 
 @router.get("/api/settings")

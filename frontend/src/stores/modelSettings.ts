@@ -22,11 +22,24 @@ type SessionSettingsResponse = {
   model_name: string | null
 }
 
+type ModelInfo = {
+  id: string
+  display_name: string
+  description: string
+  input_token_limit?: number
+  output_token_limit?: number
+}
+
+type AvailableModelsResponse = {
+  models: ModelInfo[]
+}
+
 export const useModelSettingsStore = defineStore('modelSettings', {
   state: () => ({
     models: [] as string[],
     fastModels: [] as string[],
     fallbackModels: [] as string[],
+    availableModels: [] as ModelInfo[],
     currentModel: '' as string,
     fallbackModel: '' as string,
     autoEscalate: true as boolean,
@@ -45,7 +58,14 @@ export const useModelSettingsStore = defineStore('modelSettings', {
       this.loading = true
       this.error = null
       try {
-        const data = await fetchJson<AppSettingsResponse>('/api/settings')
+        const [settingsData, modelsData] = await Promise.all([
+          fetchJson<AppSettingsResponse>('/api/settings'),
+          fetchJson<AvailableModelsResponse>('/api/available-models').catch(() => ({ models: [] }))
+        ])
+        
+        const data = settingsData
+        this.availableModels = modelsData.models || []
+        
         this.models = data.settings?.models || []
         this.fastModels = data.settings?.tiers?.fast || []
         this.fallbackModels = data.settings?.tiers?.fallback || []

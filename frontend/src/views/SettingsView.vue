@@ -30,6 +30,15 @@ const providers = computed(() => store.providers)
 const models = computed(() => store.models)
 const fastModels = computed(() => store.fastModels)
 const fallbackModels = computed(() => store.fallbackModels)
+const availableModels = computed(() => store.availableModels)
+
+// Use availableModels if present, otherwise fall back to static lists
+const dynamicModels = computed(() => {
+  if (availableModels.value.length > 0) {
+    return availableModels.value.map(m => m.id)
+  }
+  return models.value
+})
 
 const canSave = computed(() => {
   if (saving.value) return false
@@ -202,7 +211,7 @@ onMounted(() => {
                       v-model="currentModel"
                       class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none"
                     >
-                      <option v-for="m in (fastModels.length ? fastModels : models)" :key="m" :value="m">{{ m }}</option>
+                      <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
                     </select>
                   </div>
                   <p class="text-xs text-slate-500">Usado por defecto para tareas simples y rápidas.</p>
@@ -215,7 +224,7 @@ onMounted(() => {
                       v-model="fallbackModel"
                       class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none"
                     >
-                      <option v-for="m in (fallbackModels.length ? fallbackModels : models)" :key="m" :value="m">{{ m }}</option>
+                      <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
                     </select>
                   </div>
                   <p class="text-xs text-slate-500">Usado para razonamiento complejo o cuando el principal falla.</p>
