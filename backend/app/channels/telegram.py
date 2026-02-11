@@ -39,7 +39,7 @@ class TelegramChannel(BaseChannel):
     @classmethod
     async def validate_settings(cls, settings: dict[str, Any], check_connection: bool = False) -> list[str]:
         errors = []
-        token = (settings or {}).get("token")
+        token = (settings or {}).get("token") or os.getenv("TELEGRAM_TOKEN")
         if not isinstance(token, str) or not token.strip():
             errors.append("token requerido")
         if check_connection and not errors:
@@ -54,7 +54,7 @@ class TelegramChannel(BaseChannel):
 
     def __init__(self, settings: dict[str, Any], status_callback=None):
         super().__init__(settings, status_callback=status_callback)
-        self.token = settings.get("token")
+        self.token = (settings or {}).get("token") or os.getenv("TELEGRAM_TOKEN")
         self.auto_send_artifacts = bool(settings.get("auto_send_artifacts", True))
         self.app = ApplicationBuilder().token(self.token).build()
         self._setup_handlers()
