@@ -187,6 +187,13 @@ const gridStyle = computed(() => {
             <span class="truncate font-mono text-xs max-w-[150px]">{{ store.sessionId }}</span>
           </div>
           <RouterLink
+            to="/channels"
+            class="flex items-center justify-center p-1.5 text-slate-500 hover:text-slate-700 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors"
+            title="Channels"
+          >
+            <span class="material-icons-outlined text-sm">hub</span>
+          </RouterLink>
+          <RouterLink
             to="/settings"
             class="flex items-center justify-center p-1.5 text-slate-500 hover:text-slate-700 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors"
             title="Settings"

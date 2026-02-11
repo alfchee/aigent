@@ -226,3 +226,27 @@ class NaviBot:
         )
         
         return await react_loop.execute(message)
+
+
+async def execute_agent_task(user_text: str, session_id: str) -> str:
+    """
+    Executes an agent task for a given session.
+    Used by external integrations like Telegram.
+    """
+    from app.core.runtime_context import set_session_id
+    
+    # Set the session context
+    set_session_id(session_id)
+    
+    # Initialize the agent
+    agent = NaviBot()
+    
+    # Ensure session exists
+    await agent.ensure_session(session_id)
+    
+    # Execute the task
+    result = await agent.send_message_with_react(user_text)
+    
+    # Return the response text
+    return result.get("response", "")
+

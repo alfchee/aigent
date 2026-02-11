@@ -147,9 +147,7 @@ onMounted(() => {
         <RouterLink
           to="/"
           class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Open Command Center home (opens in a new tab)"
+          aria-label="Volver"
         >
           Volver
         </RouterLink>
