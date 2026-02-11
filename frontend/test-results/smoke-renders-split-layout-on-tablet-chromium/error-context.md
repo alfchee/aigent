@@ -1,0 +1,132 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e7]: near_me
+      - heading "Navibot" [level=1] [ref=e8]
+      - generic [ref=e9]: v2.0
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - generic [ref=e12]:
+          - generic [ref=e13]: fingerprint
+          - generic [ref=e14]: s_vbipvxyzenb_mlh36knm
+        - link "settings (opens in a new tab)" [ref=e15] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e16]: settings
+          - text: ↗
+      - button "dark_mode" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: dark_mode
+  - main [ref=e20]:
+    - generic [ref=e21]:
+      - complementary [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]: Sesiones
+          - generic [ref=e26]:
+            - button "compare_arrows" [ref=e27] [cursor=pointer]:
+              - generic [ref=e28]: compare_arrows
+            - button "add New" [ref=e29] [cursor=pointer]:
+              - generic [ref=e30]: add
+              - text: New
+        - generic [ref=e31]:
+          - button "Nueva Conversación s_vbipvxyzenb_mlh36knm delete_outline" [ref=e32] [cursor=pointer]:
+            - generic [ref=e34]:
+              - heading "Nueva Conversación" [level=3] [ref=e35]
+              - paragraph [ref=e36]: s_vbipvxyzenb_mlh36knm
+            - button "delete_outline" [ref=e37]:
+              - generic [ref=e38]: delete_outline
+          - button "Nueva Conversación s_27bbjf1az8nj_mlh35w68 delete_outline" [ref=e39] [cursor=pointer]:
+            - generic [ref=e41]:
+              - heading "Nueva Conversación" [level=3] [ref=e42]
+              - paragraph [ref=e43]: s_27bbjf1az8nj_mlh35w68
+            - button "delete_outline" [ref=e44]:
+              - generic [ref=e45]: delete_outline
+          - button "Análisis de ventas mensuales s_mlpwy2l94b_mlfopkob delete_outline" [ref=e46] [cursor=pointer]:
+            - generic [ref=e48]:
+              - heading "Análisis de ventas mensuales" [level=3] [ref=e49]
+              - paragraph [ref=e50]: s_mlpwy2l94b_mlfopkob
+            - button "delete_outline" [ref=e51]:
+              - generic [ref=e52]: delete_outline
+          - button "Nueva Conversación s_pvo4ji836si_mlh2xvkv delete_outline" [ref=e53] [cursor=pointer]:
+            - generic [ref=e55]:
+              - heading "Nueva Conversación" [level=3] [ref=e56]
+              - paragraph [ref=e57]: s_pvo4ji836si_mlh2xvkv
+            - button "delete_outline" [ref=e58]:
+              - generic [ref=e59]: delete_outline
+          - button "Nueva Conversación s_pquflot1h4g_mlcsc6zq delete_outline" [ref=e60] [cursor=pointer]:
+            - generic [ref=e62]:
+              - heading "Nueva Conversación" [level=3] [ref=e63]
+              - paragraph [ref=e64]: s_pquflot1h4g_mlcsc6zq
+            - button "delete_outline" [ref=e65]:
+              - generic [ref=e66]: delete_outline
+          - button "Nueva Conversación s_6q5ydc3hsya_mlh286l2 delete_outline" [ref=e67] [cursor=pointer]:
+            - generic [ref=e69]:
+              - heading "Nueva Conversación" [level=3] [ref=e70]
+              - paragraph [ref=e71]: s_6q5ydc3hsya_mlh286l2
+            - button "delete_outline" [ref=e72]:
+              - generic [ref=e73]: delete_outline
+          - button "Nueva Conversación s_by78cwa1plc_mlh27i3f delete_outline" [ref=e74] [cursor=pointer]:
+            - generic [ref=e76]:
+              - heading "Nueva Conversación" [level=3] [ref=e77]
+              - paragraph [ref=e78]: s_by78cwa1plc_mlh27i3f
+            - button "delete_outline" [ref=e79]:
+              - generic [ref=e80]: delete_outline
+          - button "Nueva Conversación s_vkuqgie4jy_mlh26lke delete_outline" [ref=e81] [cursor=pointer]:
+            - generic [ref=e83]:
+              - heading "Nueva Conversación" [level=3] [ref=e84]
+              - paragraph [ref=e85]: s_vkuqgie4jy_mlh26lke
+            - button "delete_outline" [ref=e86]:
+              - generic [ref=e87]: delete_outline
+          - button "Nueva Conversación s_thnada4n8ub_mlh26jqv delete_outline" [ref=e88] [cursor=pointer]:
+            - generic [ref=e90]:
+              - heading "Nueva Conversación" [level=3] [ref=e91]
+              - paragraph [ref=e92]: s_thnada4n8ub_mlh26jqv
+            - button "delete_outline" [ref=e93]:
+              - generic [ref=e94]: delete_outline
+      - generic [ref=e96]:
+        - generic [ref=e98]:
+          - generic [ref=e100]: Cargando…
+          - generic [ref=e102]:
+            - generic [ref=e104]: Navibot
+            - paragraph [ref=e108]: ¡Hola! Soy Navibot. ¿En qué puedo ayudarte hoy?
+        - generic [ref=e109]:
+          - generic [ref=e110]:
+            - textbox "Escribe un mensaje..." [ref=e111]
+            - generic [ref=e112]:
+              - generic [ref=e113]:
+                - combobox "Modelo" [ref=e114] [cursor=pointer]:
+                  - option "⚡ Fast (Gemini 3 Flash Preview)"
+                  - option "⚡ Fast (Gemini Flash Latest)"
+                  - option "🧠 Pro (Gemini 3 Pro Preview)"
+                  - option "🧠 Pro (Gemini 2.5 Pro)"
+                - generic: expand_more
+              - generic [ref=e115]:
+                - generic [ref=e116]:
+                  - button "location_on" [disabled] [ref=e117]:
+                    - generic [ref=e118]: location_on
+                  - button "add_to_drive" [disabled] [ref=e119]:
+                    - generic [ref=e120]: add_to_drive
+                - button "send" [disabled] [ref=e121]:
+                  - generic [ref=e122]: send
+          - generic [ref=e123]: © 2026 Navibot Agent
+      - generic [ref=e125]:
+        - generic [ref=e126]:
+          - generic [ref=e127]:
+            - generic [ref=e128]:
+              - generic [ref=e129]: Artefactos
+              - generic [ref=e130]: "0"
+            - generic [ref=e131]:
+              - button "view_sidebar" [ref=e132] [cursor=pointer]:
+                - generic [ref=e133]: view_sidebar
+              - button "chevron_right" [ref=e134] [cursor=pointer]:
+                - generic [ref=e135]: chevron_right
+          - generic [ref=e136]:
+            - generic [ref=e137] [cursor=pointer]:
+              - generic [ref=e138]: upload_file
+              - text: Subir
+            - button "refresh Refrescar" [ref=e139] [cursor=pointer]:
+              - generic [ref=e140]: refresh
+              - text: Refrescar
+        - generic [ref=e144]: Selecciona un archivo para previsualizarlo.
+```
