@@ -22,5 +22,6 @@ google-auth
 google-auth-oauthlib
 tenacity
 google-api-python-client
+python-telegram-bot
 
 
