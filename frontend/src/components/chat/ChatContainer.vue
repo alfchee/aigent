@@ -5,6 +5,7 @@ import { useChatStore } from '../../stores/chat'
 import { useArtifactsStore } from '../../stores/artifacts'
 import { useModelSettingsStore } from '../../stores/modelSettings'
 import ChatMessage from './ChatMessage.vue'
+import { FEATURES } from '../../lib/featureFlags'
 
 const chat = useChatStore()
 const artifacts = useArtifactsStore()
@@ -37,12 +38,29 @@ async function loadMore() {
   await chat.loadMoreHistory(artifacts.sessionId)
 }
 
+const MODEL_LABELS: Record<string, string> = {
+  'gemini-3-flash-preview': 'Fast (Gemini 3 Flash Preview)',
+  'gemini-flash-latest': 'Fast (Gemini Flash Latest)',
+  'gemini-3-pro-preview': 'Pro (Gemini 3 Pro Preview)',
+  'gemini-2.5-pro': 'Pro (Gemini 2.5 Pro)'
+}
+
+const MODEL_ICONS: Record<string, string> = {
+  'gemini-3-flash-preview': '⚡',
+  'gemini-flash-latest': '⚡',
+  'gemini-3-pro-preview': '🧠',
+  'gemini-2.5-pro': '🧠'
+}
+
+function normalizeModelLabel(label: string) {
+  return label.replace(/^(⚡|🧠)\s*/u, '').trim()
+}
+
 function modelLabel(name: string) {
-  if (name === 'gemini-3-flash-preview') return '⚡ Fast (Gemini 3 Flash Preview)'
-  if (name === 'gemini-flash-latest') return '⚡ Fast (Gemini Flash Latest)'
-  if (name === 'gemini-3-pro-preview') return '🧠 Pro (Gemini 3 Pro Preview)'
-  if (name === 'gemini-2.5-pro') return '🧠 Pro (Gemini 2.5 Pro)'
-  return name
+  const baseLabel = MODEL_LABELS[name] || name
+  const normalized = normalizeModelLabel(baseLabel)
+  const icon = MODEL_ICONS[name]
+  return icon ? `${icon} ${normalized}` : normalized
 }
 
 async function syncModelForSession(sessionId: string) {
@@ -85,7 +103,7 @@ watch(
 
 <template>
   <div class="h-full flex flex-col bg-slate-50 overflow-hidden">
-    <div ref="scrollRef" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 flex flex-col items-center bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-fixed">
+    <div ref="scrollRef" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 flex flex-col items-center bg-slate-50/50 bg-pattern">
       <div class="w-full max-w-3xl space-y-6">
         <div class="flex items-center justify-center">
           <button
@@ -123,40 +141,66 @@ watch(
       </div>
     </div>
 
-    <footer class="p-4 bg-white border-t border-slate-200">
-      <div class="max-w-3xl mx-auto">
-        <form @submit.prevent="send" class="flex gap-1.5 items-end">
-          <select
-            v-model="selectedModel"
-            class="h-10 px-2.5 pr-7 bg-slate-50 border border-slate-200 rounded-xl text-[11px] sm:text-xs md:text-sm w-[120px] sm:w-[150px] md:w-[180px] truncate"
-            :disabled="isLoading || !modelSettings.models.length"
-            title="Modelo"
-          >
-            <option v-for="m in modelSettings.models" :key="m" :value="m">{{ modelLabel(m) }}</option>
-          </select>
-          <div class="flex-1 relative">
-            <textarea
-              v-model="newMessage"
-              placeholder="Escribe un mensaje..."
-              rows="1"
-              class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all resize-none text-sm pr-12"
-              :disabled="isLoading"
-              @keydown="handleComposerKeydown"
-            ></textarea>
-            <button
-              type="submit"
-              :disabled="isLoading || !newMessage.trim()"
-              class="absolute right-2 bottom-2 p-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50 disabled:bg-slate-300 transition-colors shadow-sm"
-              aria-label="Enviar mensaje"
+    <div class="shrink-0 p-4 md:p-6 max-w-4xl mx-auto w-full">
+      <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-2 flex flex-col gap-2">
+        <textarea
+          v-model="newMessage"
+          placeholder="Escribe un mensaje..."
+          rows="1"
+          class="w-full bg-transparent border-none focus:ring-0 text-slate-800 placeholder-slate-400 resize-none py-3 px-3 min-h-[50px]"
+          :disabled="isLoading"
+          @keydown="handleComposerKeydown"
+        ></textarea>
+        <div class="flex items-center justify-between px-2 pb-1">
+          <div class="relative group">
+            <select
+              v-model="selectedModel"
+              class="appearance-none pl-8 pr-8 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium text-slate-700 bg-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+              :disabled="isLoading || !modelSettings.models.length"
+              title="Modelo"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-              </svg>
+              <option v-for="m in modelSettings.models" :key="m" :value="m">{{ modelLabel(m) }}</option>
+            </select>
+            <span class="material-icons-outlined text-sm text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1 mr-2 border-r border-slate-200 pr-3">
+              <button
+                class="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                title="Locate (Requires implementation)"
+                :disabled="!FEATURES.LOCATE_SKILL"
+              >
+                <span class="material-icons-outlined text-lg">location_on</span>
+              </button>
+              <button
+                class="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                title="Drive (Requires implementation)"
+                :disabled="!FEATURES.DRIVE_SKILL"
+              >
+                <span class="material-icons-outlined text-lg">add_to_drive</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              :disabled="isLoading || !newMessage.trim()"
+              class="p-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg transition-colors shadow-sm flex items-center justify-center disabled:opacity-50 disabled:bg-slate-300"
+              @click="send"
+            >
+              <span class="material-icons-outlined text-lg transform -rotate-45 translate-x-0.5 -translate-y-0.5">send</span>
             </button>
           </div>
-        </form>
-        <p class="text-[10px] text-center text-slate-400 mt-2">© 2026 Navibot Agent</p>
+        </div>
       </div>
-    </footer>
+      <div class="text-center mt-2">
+        <span class="text-[10px] text-slate-400">© 2026 Navibot Agent</span>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.bg-pattern {
+  background-image: radial-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+</style>

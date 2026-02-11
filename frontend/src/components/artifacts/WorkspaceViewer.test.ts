@@ -16,14 +16,14 @@ describe('WorkspaceViewer sidebar', () => {
     ]
 
     const wrapper = mount(WorkspaceViewer, {
-      props: { sidebarState: 'collapsed' },
+      props: { sidebarState: 'collapsed', panelCollapsed: false },
       global: { plugins: [pinia] }
     })
 
     const sidebar = wrapper.get('[data-testid="artifacts-sidebar"]')
     expect(sidebar.attributes('style')).toContain('width: 50px')
 
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some((b) => b.attributes('title') === 'a.png')).toBe(true)
+    const titled = wrapper.findAll('[title]')
+    expect(titled.some((el) => el.attributes('title') === 'a.png')).toBe(true)
   })
 })

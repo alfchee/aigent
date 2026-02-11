@@ -20,6 +20,7 @@ const sessionsSidebarState = ref<SidebarState>(
 const artifactsSidebarState = ref<SidebarState>(
   normalizeSidebarState(localStorage.getItem('navibot_sidebar_artifacts_state'), 'normal')
 )
+const artifactsPanelCollapsed = ref<boolean>(localStorage.getItem('navibot_artifacts_panel_collapsed') === 'true')
 
 if (sessionsSidebarState.value === 'collapsed' && artifactsSidebarState.value === 'collapsed') {
   artifactsSidebarState.value = 'normal'
@@ -48,6 +49,10 @@ function persist() {
 function persistSidebars() {
   localStorage.setItem('navibot_sidebar_sessions_state', sessionsSidebarState.value)
   localStorage.setItem('navibot_sidebar_artifacts_state', artifactsSidebarState.value)
+}
+
+function persistPanel() {
+  localStorage.setItem('navibot_artifacts_panel_collapsed', String(artifactsPanelCollapsed.value))
 }
 
 function cannotCollapseBoth(target: 'sessions' | 'artifacts', next: SidebarState) {
@@ -146,7 +151,17 @@ function setArtifactsSidebarState(next: SidebarState) {
   persistSidebars()
 }
 
+function setArtifactsPanelCollapsed(next: boolean) {
+  artifactsPanelCollapsed.value = next
+  persistPanel()
+}
+
 const gridStyle = computed(() => {
+  if (artifactsPanelCollapsed.value) {
+    return {
+      gridTemplateColumns: `100% 8px 0%`
+    }
+  }
   const right = clamp(rightWidthPct.value, 20, 60)
   const left = 100 - right
   return {
@@ -157,29 +172,35 @@ const gridStyle = computed(() => {
 
 <template>
   <div class="h-screen w-screen flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
-    <header class="p-4 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-10">
+    <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-20 shadow-sm">
       <div class="flex items-center gap-3">
-        <div class="bg-sky-500 p-2 rounded-lg text-white">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-          </svg>
+        <div class="bg-sky-500 text-white p-1.5 rounded-lg">
+          <span class="material-icons-outlined text-2xl">near_me</span>
         </div>
-        <h1 class="text-xl font-bold tracking-tight">Navibot <span class="text-sky-500 font-medium font-mono text-sm border border-sky-100 bg-sky-50 px-2 py-0.5 rounded ml-1">v2.0</span></h1>
+        <h1 class="text-xl font-bold tracking-tight text-slate-900">Navibot</h1>
+        <span class="px-2 py-0.5 text-xs font-medium bg-sky-50 text-sky-500 rounded-full">v2.0</span>
       </div>
       <div class="flex items-center gap-3">
-        <RouterLink
-          to="/settings"
-          class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
-          title="Settings"
-        >
-          ⚙
-        </RouterLink>
-        <div v-if="store.unreadCount" class="text-xs bg-amber-100 text-amber-900 border border-amber-200 px-2 py-1 rounded-full">
-          {{ store.unreadCount }} nuevo(s)
+        <div class="hidden md:flex items-center gap-2">
+          <div v-if="store.sessionId" class="flex items-center gap-2 text-sm text-slate-500 border border-slate-200 rounded-md px-3 py-1.5 bg-gray-50">
+            <span class="material-icons-outlined text-xs">fingerprint</span>
+            <span class="truncate font-mono text-xs max-w-[150px]">{{ store.sessionId }}</span>
+          </div>
+          <RouterLink
+            to="/settings"
+            class="flex items-center justify-center p-1.5 text-slate-500 hover:text-slate-700 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors"
+            title="Settings"
+          >
+            <span class="material-icons-outlined text-sm">settings</span>
+          </RouterLink>
+          <div v-if="store.unreadCount" class="text-xs bg-amber-100 text-amber-900 border border-amber-200 px-2 py-1 rounded-full">
+            {{ store.unreadCount }} new
+          </div>
         </div>
-        <div class="text-xs text-slate-500 font-mono">
-          {{ store.sessionId }}
-        </div>
+        <div class="h-6 w-px bg-slate-200 mx-1 hidden md:block"></div>
+        <button class="p-2 rounded-full hover:bg-gray-100 transition-colors text-slate-500" id="theme-toggle" title="Toggle Theme (Not Implemented)">
+          <span class="material-icons-outlined">dark_mode</span>
+        </button>
       </div>
     </header>
 
@@ -218,11 +239,23 @@ const gridStyle = computed(() => {
         <div class="flex-1 min-h-0">
           <ChatContainer />
         </div>
-        <div class="h-[40%] min-h-[260px] border-t border-slate-200">
+        <div v-if="!artifactsPanelCollapsed" class="h-[40%] min-h-[260px] border-t border-slate-200">
           <WorkspaceViewer
             :sidebarState="artifactsSidebarState"
+            :panelCollapsed="artifactsPanelCollapsed"
             @update:sidebarState="setArtifactsSidebarState"
+            @update:panelCollapsed="setArtifactsPanelCollapsed"
           />
+        </div>
+        <div v-else class="h-12 border-t border-slate-200 flex items-center justify-center bg-white">
+          <button
+            class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-gray-50 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5"
+            type="button"
+            @click="setArtifactsPanelCollapsed(false)"
+          >
+            <span class="material-icons-outlined text-sm">chevron_left</span>
+            Expandir Artefactos
+          </button>
         </div>
       </div>
 
@@ -252,19 +285,30 @@ const gridStyle = computed(() => {
         </div>
 
         <div
-          class="min-h-0 cursor-col-resize bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center"
+          class="min-h-0 cursor-col-resize bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center relative"
           role="separator"
           aria-orientation="vertical"
           tabindex="0"
           @pointerdown="startDrag"
         >
           <div class="w-1 h-12 rounded bg-slate-300" />
+          <button
+            v-if="artifactsPanelCollapsed"
+            class="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 bg-white border border-slate-200 rounded-full shadow text-slate-500 hover:text-slate-700 hover:bg-gray-50"
+            type="button"
+            title="Expandir panel"
+            @click.stop="setArtifactsPanelCollapsed(false)"
+          >
+            <span class="material-icons-outlined text-lg">chevron_left</span>
+          </button>
         </div>
 
-        <div class="min-w-0 min-h-0 border-l border-slate-200 bg-white">
+        <div v-show="!artifactsPanelCollapsed" class="min-w-0 min-h-0 border-l border-slate-200 bg-white">
           <WorkspaceViewer
             :sidebarState="artifactsSidebarState"
+            :panelCollapsed="artifactsPanelCollapsed"
             @update:sidebarState="setArtifactsSidebarState"
+            @update:panelCollapsed="setArtifactsPanelCollapsed"
           />
         </div>
       </div>

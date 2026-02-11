@@ -35,7 +35,7 @@ describe('Sidebar', () => {
     })
 
     expect(wrapper.get('[data-testid="sessions-sidebar"]').attributes('style')).toContain('width: 50px')
-    expect(wrapper.text()).toContain('💬')
+    expect(wrapper.text()).toContain('chat_bubble_outline')
   })
 
   it('emits delete when clicking delete button', async () => {
