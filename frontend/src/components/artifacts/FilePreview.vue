@@ -228,10 +228,8 @@ onBeforeUnmount(() => {
         <a
           class="p-1.5 text-slate-400 hover:text-sky-500 hover:bg-gray-100 rounded transition-colors"
           :href="viewUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Abrir en nueva pestaña"
-          aria-label="Abrir en nueva pestaña"
+          title="Abrir archivo"
+          aria-label="Abrir archivo"
         >
           <span class="material-icons-outlined text-lg">open_in_new</span>
         </a>
@@ -249,8 +247,6 @@ onBeforeUnmount(() => {
       <a
         class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-gray-50 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors"
         :href="downloadUrl"
-        target="_blank"
-        rel="noopener noreferrer"
         aria-label="Descargar archivo"
       >
         <span class="material-icons-outlined text-sm">download</span>
