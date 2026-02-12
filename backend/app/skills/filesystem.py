@@ -90,7 +90,7 @@ def get_filesystem_tools(session_id: str):
     def read_file(filepath: str, max_bytes: int = 1_000_000) -> str:
         """
         Reads the content of a file from the session workspace.
-        Supports text, binary (as base64), and PDF text extraction.
+        Supports text, binary (as base64), PDF, and DOCX text/table extraction.
         
         Args:
             filepath (str): The path to the file to read.
@@ -102,6 +102,40 @@ def get_filesystem_tools(session_id: str):
         try:
             filename = Path(str(filepath)).name
             mime_type, _ = mimetypes.guess_type(filename)
+
+            if str(filepath).lower().endswith(".docx"):
+                try:
+                    import docx
+                except ImportError:
+                    return "Error reading DOCX: missing dependency python-docx"
+                
+                try:
+                    raw = workspace.read_bytes(filepath)
+                    doc = docx.Document(io.BytesIO(raw))
+                    
+                    content_parts = []
+                    content_parts.append("--- Document Content (Text) ---")
+                    content_parts.append("\n".join([p.text for p in doc.paragraphs if p.text.strip()]))
+                    
+                    if doc.tables:
+                        content_parts.append("\n--- Document Tables ---")
+                        for i, table in enumerate(doc.tables):
+                            content_parts.append(f"\n[Table {i+1}]")
+                            rows = []
+                            for row in table.rows:
+                                cells = [str(cell.text).strip().replace('\n', ' ') for cell in row.cells]
+                                rows.append("| " + " | ".join(cells) + " |")
+                            if rows:
+                                content_parts.append(rows[0])
+                                content_parts.append("| " + " | ".join(['---'] * len(table.rows[0].cells)) + " |")
+                                content_parts.extend(rows[1:])
+                    
+                    full_text = "\n".join(content_parts)
+                    if len(full_text.encode('utf-8')) > max_bytes:
+                        return full_text[:max_bytes] + "\n...[Content Truncated]"
+                    return full_text
+                except Exception as e:
+                    return f"Error parsing DOCX: {str(e)}"
 
             if (mime_type == "application/pdf") or str(filepath).lower().endswith(".pdf"):
                 try:

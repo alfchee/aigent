@@ -36,6 +36,7 @@ backend/workspace_data/
 backend/app/core/credentials/
 backend/navi_memory_db/
 navi_memory_db/
+backend/logs/
 
 # Node.js (Frontend)
 node_modules/
