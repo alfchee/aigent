@@ -7,6 +7,7 @@ from typing import List, Optional
 try:
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseDownload
+    from googleapiclient.errors import HttpError
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
     GOOGLE_API_AVAILABLE = True
 except ImportError:
@@ -31,6 +32,13 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREDS_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_service.json')
 OAUTH_CLIENT_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_oauth_client.json')
 OAUTH_TOKEN_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_oauth_token.json')
+
+_EXPORT_MIME_TYPES = {
+    "application/vnd.google-apps.document": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.google-apps.spreadsheet": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.google-apps.presentation": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.google-apps.drawing": "image/png",
+}
 
 def _check_dependencies():
     if not GOOGLE_API_AVAILABLE:
@@ -218,37 +226,34 @@ async def download_file_from_drive(file_id: str, file_name: str) -> str:
 
     try:
         loop = asyncio.get_event_loop()
-        # We need to pass session_id explicitly to the sync function or rely on context vars if they work across threads.
-        # get_session_id uses contextvars, which SHOULD work in run_in_executor in Python 3.7+ 
-        # but let's be safe and pass it or handle the workspace write in the main thread.
-        
-        # Strategy: Download content to memory (BytesIO) in thread, then write to workspace in main thread.
-        # This is safer for SessionWorkspace which might not be thread-safe or async.
-        
-        file_content = await loop.run_in_executor(None, _download_content_sync, file_id)
-        
-        # Save to session workspace
         workspace = SessionWorkspace(session_id)
-        # write_bytes expects bytes
-        workspace.write_bytes(file_name, file_content)
-        
+        target_path = workspace.safe_path(file_name)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        await loop.run_in_executor(None, _download_to_path_sync, file_id, target_path)
         return f"Archivo descargado exitosamente: {file_name}. Ahora puedes usarlo con 'execute_python'."
-        
+
+    except HttpError as e:
+        logger.exception(f"Error downloading file {file_id}")
+        return f"Error al descargar archivo: {str(e)}"
     except Exception as e:
         logger.exception(f"Error downloading file {file_id}")
         return f"Error al descargar archivo: {str(e)}"
 
-def _download_content_sync(file_id: str) -> bytes:
+def _download_to_path_sync(file_id: str, target_path) -> None:
     service = get_drive_service()
-    request = service.files().get_media(fileId=file_id)
-    
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while done is False:
-        status, done = downloader.next_chunk()
-    
-    return fh.getvalue()
+    file_meta = service.files().get(fileId=file_id, fields="mimeType,name").execute()
+    mime_type = file_meta.get("mimeType")
+    export_mime = _EXPORT_MIME_TYPES.get(mime_type)
+    if export_mime:
+        request = service.files().export_media(fileId=file_id, mimeType=export_mime)
+    else:
+        request = service.files().get_media(fileId=file_id)
+
+    with open(target_path, "wb") as handle:
+        downloader = MediaIoBaseDownload(handle, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
 
 # Export tools
 tools = [list_drive_files, search_drive, move_drive_file, download_file_from_drive]

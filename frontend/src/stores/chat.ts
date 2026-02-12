@@ -99,10 +99,16 @@ export const useChatStore = defineStore('chat', {
       this.error = null
       try {
         const model_name = (modelName || '').trim()
+        const memory_user_id = (localStorage.getItem('navibot_memory_user_id') || '').trim()
         const data = await fetchJson<ChatResponse>('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: trimmed, session_id: sessionId, model_name: model_name || undefined })
+          body: JSON.stringify({
+            message: trimmed,
+            session_id: sessionId,
+            model_name: model_name || undefined,
+            memory_user_id: memory_user_id || undefined
+          })
         })
         this.messages.push({ role: 'assistant', content: data.response || 'No recibí respuesta del agente.' })
         try {

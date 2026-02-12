@@ -50,10 +50,14 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     await channel_manager.stop_all()
+    # Clean up memory system
+    from app.core.memory_manager import cleanup_memory
+    cleanup_memory()
 
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
+    memory_user_id: str | None = None
     use_react_loop: bool = False  # Default to simple mode for API backward compatibility
     max_iterations: int = 10
     include_trace: bool = False  # Return reasoning trace in response
@@ -169,9 +173,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
+async def chat(request: ChatRequest, http_request: Request):
+    from app.core.runtime_context import reset_event_callback, reset_memory_user_id, reset_session_id, resolve_memory_user_id, set_event_callback, set_memory_user_id, set_session_id
+    from app.core.memory import recall_memory
     session_token = set_session_id(request.session_id)
+    header_memory_user_id = http_request.headers.get("x-memory-user-id")
+    memory_user_id = resolve_memory_user_id(request.memory_user_id, request.session_id, header_memory_user_id)
+    memory_token = set_memory_user_id(memory_user_id)
     callback_token = set_event_callback(None)
     try:
         settings = get_settings()
@@ -201,13 +209,16 @@ async def chat(request: ChatRequest):
         pre_history = bot.get_history(request.session_id)
         pre_len = len(pre_history) if pre_history else 0
 
-        # Save user message immediately (as structured content)
-        user_content = {"role": "user", "parts": [{"text": request.message}]}
+        user_message = request.message
+        # memory_user_id handling logic moved to tools
+        message_for_agent = user_message
+
+        user_content = {"role": "user", "parts": [{"text": user_message}]}
         save_chat_message(request.session_id, "user", user_content)
 
         if request.use_react_loop:
             try:
-                result = await bot.send_message_with_react(request.message, max_iterations=request.max_iterations)
+                result = await bot.send_message_with_react(message_for_agent, max_iterations=request.max_iterations)
             except Exception as e:
                 try:
                     from google.genai.errors import ClientError
@@ -260,11 +271,11 @@ async def chat(request: ChatRequest):
                     except Exception:
                         pass
                 await fallback_bot.start_chat(session_id=request.session_id, history=history)
-                result = await fallback_bot.send_message_with_react(request.message, max_iterations=request.max_iterations)
+                result = await fallback_bot.send_message_with_react(message_for_agent, max_iterations=request.max_iterations)
                 bot = fallback_bot
                 model_name = upgrade_target
 
-            response_text = result["response"]
+            response_text = result.get("response") or ""
             # save_chat_message call removed, handled by history sync below
             
             # Sync history
@@ -306,7 +317,7 @@ async def chat(request: ChatRequest):
             )
         else:
             try:
-                response_text = await bot.send_message(request.message)
+                response_text = await bot.send_message(message_for_agent)
             except Exception as e:
                 try:
                     from google.genai.errors import ClientError
@@ -345,6 +356,8 @@ async def chat(request: ChatRequest):
                     },
                 },
             )
+            if response_text is None:
+                response_text = ""
             return ChatResponse(response=response_text, model_name=model_name)
     except Exception as e:
         error_id = uuid.uuid4().hex
@@ -372,6 +385,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Internal Server Error ({error_id})")
     finally:
         reset_session_id(session_token)
+        reset_memory_user_id(memory_token)
         reset_event_callback(callback_token)
 
 @app.post("/api/chat/stream")
@@ -400,8 +414,11 @@ async def chat_stream(request: ChatRequest):
         # Start agent execution in background task
         async def run_agent():
             nonlocal final_result, task_error
-            from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
+            from app.core.runtime_context import reset_event_callback, reset_memory_user_id, reset_session_id, resolve_memory_user_id, set_event_callback, set_memory_user_id, set_session_id
+            from app.core.memory import recall_memory
             session_token = set_session_id(request.session_id)
+            memory_user_id = resolve_memory_user_id(request.memory_user_id, request.session_id, header_memory_user_id)
+            memory_token = set_memory_user_id(memory_user_id)
             callback_token = set_event_callback(event_callback)
 
             settings = get_settings()
@@ -422,12 +439,16 @@ async def chat_stream(request: ChatRequest):
             pre_len = len(pre_history) if pre_history else 0
             
             try:
-                user_content = {"role": "user", "parts": [{"text": request.message}]}
+                user_message = request.message
+                # memory_user_id handling logic moved to tools
+                message_for_agent = user_message
+
+                user_content = {"role": "user", "parts": [{"text": user_message}]}
                 save_chat_message(request.session_id, "user", user_content)
 
                 if request.use_react_loop:
                     final_result = await bot.send_message_with_react(
-                        request.message,
+                        message_for_agent,
                         max_iterations=request.max_iterations,
                         event_callback=event_callback
                     )
@@ -473,7 +494,7 @@ async def chat_stream(request: ChatRequest):
                         bot = bot_pool.get(upgrade_target)
                         await bot.start_chat(session_id=request.session_id, history=history)
                         final_result = await bot.send_message_with_react(
-                            request.message,
+                            message_for_agent,
                             max_iterations=request.max_iterations,
                             event_callback=event_callback
                         )
@@ -482,7 +503,7 @@ async def chat_stream(request: ChatRequest):
                             final_result["escalated_from"] = model_name
                 else:
                     # For simple mode, just send the message
-                    response_text = await bot.send_message(request.message)
+                    response_text = await bot.send_message(message_for_agent)
                     final_result = {"response": response_text, "model_name": model_name}
                 
                 # Sync history
@@ -515,6 +536,7 @@ async def chat_stream(request: ChatRequest):
                 task_error = e
             finally:
                 reset_session_id(session_token)
+                reset_memory_user_id(memory_token)
                 reset_event_callback(callback_token)
                 task_complete.set()
         
@@ -573,4 +595,11 @@ async def chat_stream(request: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8231, reload=True)
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8231,
+        reload=True,
+        reload_excludes=["workspace_data", "navi_memory_db", "logs", "workspace_data/**/*"],
+        reload_dirs=["app"],
+    )

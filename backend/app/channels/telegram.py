@@ -73,10 +73,11 @@ class TelegramChannel(BaseChannel):
             return
         user_text = update.message.text or ""
         chat_id = str(update.effective_chat.id)
+        user_id = str(update.effective_user.id) if update.effective_user else chat_id
         session_id = f"tg_{chat_id}"
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         try:
-            response_text = await execute_agent_task(user_text, session_id=session_id)
+            response_text = await execute_agent_task(user_text, session_id=session_id, memory_user_id=f"tg_user_{user_id}")
             if len(response_text) > 4000:
                 for x in range(0, len(response_text), 4000):
                     await update.message.reply_text(response_text[x:x + 4000])
