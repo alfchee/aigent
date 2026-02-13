@@ -152,6 +152,12 @@ onMounted(() => {
         >
           Volver
         </RouterLink>
+        <RouterLink
+          to="/scheduler"
+          class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          Scheduler
+        </RouterLink>
         <div class="text-sm font-semibold text-slate-800">Command Center</div>
       </div>
       <div class="flex items-center gap-2">
