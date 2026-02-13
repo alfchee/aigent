@@ -4,34 +4,32 @@ import logging
 import asyncio
 from typing import List, Optional
 
+# Imports from shared auth module
+from app.core.google_auth import (
+    get_google_credentials,
+    check_google_dependencies,
+    ensure_oauth_dependencies,
+    get_workspace_config,
+    CREDS_PATH,
+    OAUTH_CLIENT_PATH,
+    OAUTH_TOKEN_PATH,
+    ALL_SCOPES
+)
+
 try:
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseDownload
     from googleapiclient.errors import HttpError
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    GOOGLE_API_AVAILABLE = True
 except ImportError:
-    GOOGLE_API_AVAILABLE = False
-
-try:
-    from google.oauth2.credentials import Credentials as UserCredentials
-    from google.auth.transport.requests import Request
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    OAUTH_AVAILABLE = True
-except ImportError:
-    OAUTH_AVAILABLE = False
+    pass
 
 from app.core.runtime_context import get_session_id
 from app.core.filesystem import SessionWorkspace
-from app.core.config_manager import get_settings
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CREDS_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_service.json')
-OAUTH_CLIENT_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_oauth_client.json')
-OAUTH_TOKEN_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_oauth_token.json')
+SCOPES = ALL_SCOPES
 
 _EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.document": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -40,49 +38,13 @@ _EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.drawing": "image/png",
 }
 
-def _check_dependencies():
-    if not GOOGLE_API_AVAILABLE:
-        raise ImportError("The 'google-api-python-client' library is required but not installed.")
-
-def _get_workspace_config():
-    try:
-        settings = get_settings()
-        return settings.google_workspace_config or {}
-    except Exception:
-        return {}
-
-def _ensure_oauth_dependencies():
-    if not OAUTH_AVAILABLE:
-        raise ImportError("The 'google-auth-oauthlib' library is required but not installed.")
-
-def _save_oauth_token(creds: UserCredentials) -> None:
-    with open(OAUTH_TOKEN_PATH, "w", encoding="utf-8") as handle:
-        handle.write(creds.to_json())
-
-def _get_oauth_credentials(scopes: List[str]) -> Optional[UserCredentials]:
-    _ensure_oauth_dependencies()
-    if not os.path.exists(OAUTH_CLIENT_PATH):
-        raise FileNotFoundError(
-            f"No se encontró el archivo de credenciales OAuth en: {OAUTH_CLIENT_PATH}. "
-            "Por favor, coloca tu 'google_oauth_client.json' en esa ubicación."
-        )
-    creds: Optional[UserCredentials] = None
-    if os.path.exists(OAUTH_TOKEN_PATH):
-        creds = UserCredentials.from_authorized_user_file(OAUTH_TOKEN_PATH, scopes)
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        _save_oauth_token(creds)
-    if creds and creds.valid:
-        return creds
-    return None
-
 def get_drive_service():
-    _check_dependencies()
-    workspace_config = _get_workspace_config()
+    check_google_dependencies()
+    workspace_config = get_workspace_config()
     auth_mode = workspace_config.get("auth_mode", "service_account")
 
     if auth_mode == "oauth":
-        creds = _get_oauth_credentials(SCOPES)
+        creds = get_google_credentials(SCOPES)
         if not creds:
             raise RuntimeError(
                 "OAuth no configurado. Ejecuta get_google_oauth_authorization_url y luego set_google_oauth_token, o usa authorize_google_oauth_local_server."

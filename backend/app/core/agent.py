@@ -47,7 +47,7 @@ class NaviBot:
 
 
         # Register default skills
-        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory
+        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar
         
         for tool in scheduler.tools:
             self.register_tool(tool)
@@ -66,6 +66,8 @@ class NaviBot:
         for tool in google_drive.tools:
             self.register_tool(tool)
         for tool in memory.tools:
+            self.register_tool(tool)
+        for tool in calendar.tools:
             self.register_tool(tool)
 
     def register_tool(self, tool: Callable):
@@ -101,10 +103,14 @@ class NaviBot:
         return self._tool_reference
 
     def _build_system_instruction(self, tool_reference: str, extra_prompt: str | None = None) -> str:
+        from datetime import datetime
         extra = (extra_prompt or "").strip()
         # Sandwich structure: Personality -> Capabilities -> Search Policy -> Base Constraints
         parts = [part for part in [extra, tool_reference, SEARCH_POLICY, BASE_CONSTRAINTS] if part]
-        return "\n\n".join(parts).strip()
+        combined = "\n\n".join(parts).strip()
+        
+        current_dt = datetime.now().strftime("%Y-%m-%d %H:%M")
+        return combined.replace("{CURRENT_DATETIME}", current_dt)
 
     def _google_grounding_enabled(self) -> bool:
         value = os.getenv("ENABLE_GOOGLE_GROUNDING", "true").lower()

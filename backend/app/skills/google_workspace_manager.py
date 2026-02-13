@@ -6,15 +6,19 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 logger = logging.getLogger(__name__)
 
-SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
-]
+from app.core.google_auth import (
+    get_google_credentials,
+    get_authorization_url,
+    save_credentials_from_code,
+    ALL_SCOPES,
+    ensure_oauth_dependencies,
+    check_google_dependencies
+)
+
+SCOPES = ALL_SCOPES  # Alias for backward compatibility if needed within this file
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREDS_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_service.json')
-OAUTH_CLIENT_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_oauth_client.json')
-OAUTH_TOKEN_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_oauth_token.json')
 
 from app.core.config_manager import get_settings
 
@@ -28,8 +32,7 @@ except ImportError:
 
 try:
     from google.oauth2.credentials import Credentials as UserCredentials
-    from google.auth.transport.requests import Request
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    # Request and InstalledAppFlow imports moved to google_auth, but might be needed for type hinting or local checks
     OAUTH_AVAILABLE = True
 except ImportError:
     OAUTH_AVAILABLE = False
@@ -43,7 +46,7 @@ except ImportError:
 
 def _check_dependencies():
     if not GSPREAD_AVAILABLE:
-        raise ImportError("The 'gspread' and 'google-auth' libraries are required but not installed.")
+        raise ImportError("The 'gspread' library is required but not installed.")
 
 def _get_workspace_config() -> Dict[str, Any]:
     try:
@@ -52,102 +55,16 @@ def _get_workspace_config() -> Dict[str, Any]:
     except Exception:
         return {}
 
-def _ensure_oauth_dependencies():
-    if not OAUTH_AVAILABLE:
-        raise ImportError("The 'google-auth-oauthlib' library is required but not installed.")
-
-def _save_oauth_token(creds: UserCredentials) -> None:
-    with open(OAUTH_TOKEN_PATH, "w", encoding="utf-8") as handle:
-        handle.write(creds.to_json())
-
-def _get_oauth_credentials(scopes: List[str]) -> Optional[UserCredentials]:
-    _ensure_oauth_dependencies()
-    if not os.path.exists(OAUTH_CLIENT_PATH):
-        raise FileNotFoundError(
-            f"No se encontró el archivo de credenciales OAuth en: {OAUTH_CLIENT_PATH}. "
-            "Por favor, coloca tu 'google_oauth_client.json' en esa ubicación."
-        )
-    creds: Optional[UserCredentials] = None
-    if os.path.exists(OAUTH_TOKEN_PATH):
-        creds = UserCredentials.from_authorized_user_file(OAUTH_TOKEN_PATH, scopes)
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        _save_oauth_token(creds)
-    if creds and creds.valid:
-        return creds
-    return None
-
-def _build_oauth_authorization_url(scopes: List[str]) -> str:
-    _ensure_oauth_dependencies()
-    if not os.path.exists(OAUTH_CLIENT_PATH):
-        raise FileNotFoundError(
-            f"No se encontró el archivo de credenciales OAuth en: {OAUTH_CLIENT_PATH}. "
-            "Por favor, coloca tu 'google_oauth_client.json' en esa ubicación."
-        )
-    workspace_config = _get_workspace_config()
-    redirect_uri = workspace_config.get("oauth_redirect_uri")
-    flow = InstalledAppFlow.from_client_secrets_file(OAUTH_CLIENT_PATH, scopes=scopes)
-    if redirect_uri:
-        flow.redirect_uri = redirect_uri
-    url, _ = flow.authorization_url(access_type="offline", prompt="consent")
-    return url
-
-def _exchange_oauth_code(auth_code: str, scopes: List[str]) -> None:
-    _ensure_oauth_dependencies()
-    if not os.path.exists(OAUTH_CLIENT_PATH):
-        raise FileNotFoundError(
-            f"No se encontró el archivo de credenciales OAuth en: {OAUTH_CLIENT_PATH}. "
-            "Por favor, coloca tu 'google_oauth_client.json' en esa ubicación."
-        )
-    workspace_config = _get_workspace_config()
-    redirect_uri = workspace_config.get("oauth_redirect_uri")
-    flow = InstalledAppFlow.from_client_secrets_file(OAUTH_CLIENT_PATH, scopes=scopes)
-    if redirect_uri:
-        flow.redirect_uri = redirect_uri
-    flow.fetch_token(code=auth_code)
-    _save_oauth_token(flow.credentials)
-
-def _run_local_oauth_flow(scopes: List[str]) -> UserCredentials:
-    _ensure_oauth_dependencies()
-    if not os.path.exists(OAUTH_CLIENT_PATH):
-        raise FileNotFoundError(
-            f"No se encontró el archivo de credenciales OAuth en: {OAUTH_CLIENT_PATH}. "
-            "Por favor, coloca tu 'google_oauth_client.json' en esa ubicación."
-        )
-    workspace_config = _get_workspace_config()
-    redirect_uri = workspace_config.get("oauth_redirect_uri")
-    host = workspace_config.get("oauth_local_host", "localhost")
-    port_value = workspace_config.get("oauth_local_port", 8080)
-    try:
-        port = int(port_value)
-    except (TypeError, ValueError):
-        port = 8080
-    prompt_message = workspace_config.get("oauth_authorization_prompt_message") or "Por favor, visita esta URL para autorizar a NaviBot: {url}"
-    success_message = workspace_config.get("oauth_success_message") or "¡Éxito! Puedes cerrar esta ventana."
-    open_browser = workspace_config.get("oauth_open_browser", True)
-    flow = InstalledAppFlow.from_client_secrets_file(OAUTH_CLIENT_PATH, scopes=scopes)
-    if redirect_uri:
-        flow.redirect_uri = redirect_uri
-    creds = flow.run_local_server(
-        host=host,
-        port=port,
-        authorization_prompt_message=prompt_message,
-        success_message=success_message,
-        open_browser=open_browser
-    )
-    _save_oauth_token(creds)
-    return creds
-
 def get_sheets_client():
     _check_dependencies()
     workspace_config = _get_workspace_config()
     auth_mode = workspace_config.get("auth_mode", "service_account")
 
     if auth_mode == "oauth":
-        creds = _get_oauth_credentials(SCOPES)
+        creds = get_google_credentials(SCOPES)
         if not creds:
             raise RuntimeError(
-                "OAuth no configurado. Ejecuta get_google_oauth_authorization_url y luego set_google_oauth_token, o usa authorize_google_oauth_local_server."
+                "OAuth no configurado. Ejecuta get_google_oauth_authorization_url y luego set_google_oauth_token."
             )
         return gspread.authorize(creds)
 
@@ -361,25 +278,63 @@ async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[L
         return f"Error al actualizar datos: {str(e)}"
 
 async def get_google_oauth_authorization_url() -> str:
+    """
+    Genera y devuelve la URL de autorización OAuth2 para Google Workspace.
+    Usa esto cuando necesites pedir al usuario que se autentique.
+    """
     try:
-        url = _build_oauth_authorization_url(SCOPES)
-        return f"Autoriza aquí: [Abrir URL OAuth]({url})\n\nURL: {url}"
+        url = get_authorization_url(SCOPES)
+        return (
+            f"Autoriza aquí: [Abrir URL OAuth]({url})\n\n"
+            f"URL (copia y pega si el enlace no funciona): `{url}`\n\n"
+            "**INSTRUCCIONES:**\n"
+            "1. Haz clic en el enlace y autoriza la aplicación.\n"
+            "2. Al finalizar, serás redirigido automáticamente y la autenticación se completará sola.\n"
+            "3. **Si ves un error de 'No se puede conectar'** en `localhost:8080`, copia la URL de la barra de direcciones y pégala aquí usando `set_google_oauth_token` como respaldo."
+        )
     except Exception as e:
         return f"Error al generar URL OAuth: {str(e)}"
 
 async def set_google_oauth_token(auth_code: str) -> str:
+    """
+    Guarda el token de OAuth2 proporcionado por el usuario después de la autorización.
+    Args:
+        auth_code: El código de verificación obtenido de la URL de autorización.
+    """
     try:
-        _exchange_oauth_code(auth_code, SCOPES)
-        return "Token OAuth guardado correctamente."
+        # Limpieza básica por si el usuario pega la URL completa o tiene espacios
+        clean_code = auth_code.strip()
+        if "code=" in clean_code:
+            # Extraer solo el código si viene en formato URL
+            try:
+                from urllib.parse import parse_qs, urlparse
+                # Si es una URL completa
+                if "?" in clean_code:
+                    parsed = urlparse(clean_code)
+                    query = parse_qs(parsed.query)
+                    clean_code = query.get("code", [clean_code])[0]
+                else:
+                    # Si es solo el query string o parte de él
+                    # Hack simple: split por code= y tomar lo siguiente hasta & o final
+                    part = clean_code.split("code=")[1]
+                    clean_code = part.split("&")[0]
+            except Exception:
+                pass # Fallback to original input if parsing fails
+                
+        save_credentials_from_code(clean_code, SCOPES)
+        return "Token OAuth guardado correctamente. Ahora puedes usar las herramientas de Google Workspace (Drive, Calendar, Sheets)."
     except Exception as e:
         return f"Error al guardar token OAuth: {str(e)}"
 
 async def authorize_google_oauth_local_server() -> str:
+    """
+    OBSOLETO: Utiliza el flujo manual con get_google_oauth_authorization_url.
+    Esta función ahora solo devuelve la URL para evitar bloqueos.
+    """
     try:
-        _run_local_oauth_flow(SCOPES)
-        return "OAuth completado correctamente con servidor local."
+        return await get_google_oauth_authorization_url() + "\n\nNota: El modo de servidor local ha sido reemplazado por el flujo manual para asegurar que veas este mensaje. Por favor usa la URL de arriba y luego copia el código de autorización usando 'set_google_oauth_token'."
     except Exception as e:
-        return f"Error al completar OAuth local: {str(e)}"
+        return f"Error al iniciar flujo OAuth: {str(e)}"
 
 tools = [
     create_google_spreadsheet,
