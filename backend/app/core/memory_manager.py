@@ -77,7 +77,7 @@ class AgentMemory:
             traceback.print_exc()
             self._closed = True
 
-    def add_interaction(self, user_id: str, text: str):
+    def add_interaction(self, user_id: str, text: str, metadata: dict = None):
         """
         Store a text snippet in memory.
         Since we removed mem0's LLM extraction, we store the raw text directly.
@@ -91,9 +91,13 @@ class AgentMemory:
             mem_id = str(uuid.uuid4())
             timestamp = str(time.time())
             
+            base_metadata = {"user_id": user_id, "timestamp": timestamp, "type": "fact"}
+            if metadata:
+                base_metadata.update(metadata)
+            
             self.collection.add(
                 documents=[text],
-                metadatas=[{"user_id": user_id, "timestamp": timestamp, "type": "fact"}],
+                metadatas=[base_metadata],
                 ids=[mem_id]
             )
             print(f"✅ Memory stored for user {user_id}: {text[:50]}...")
@@ -102,34 +106,43 @@ class AgentMemory:
             print(f"⚠️  Failed to add memory: {e}")
             return False
 
-    def get_relevant_context(self, user_id: str, query: str) -> str:
+    def search_memory(self, user_id: str, query: str, n_results: int = 3) -> list[str]:
         """
         Search for relevant memories using semantic search.
+        Returns a list of matching text segments.
         """
         if self._closed or self.collection is None:
-            return ""
+            return []
             
         try:
             # Query ChromaDB
             # We filter by user_id to ensure privacy/separation
             results = self.collection.query(
                 query_texts=[query],
-                n_results=3,
+                n_results=n_results,
                 where={"user_id": user_id}
             )
             
             # ChromaDB returns lists of lists (one list per query)
             documents = results['documents'][0] if results['documents'] else []
-            
-            if not documents:
-                return ""
-            
-            formatted = "\n".join([f"- {doc}" for doc in documents])
-            return formatted
+            return documents
             
         except Exception as e:
             print(f"⚠️  Failed to search memory: {e}")
+            return []
+
+    def get_relevant_context(self, user_id: str, query: str) -> str:
+        """
+        Search for relevant memories using semantic search.
+        Returns a formatted string for LLM context.
+        """
+        documents = self.search_memory(user_id, query, n_results=3)
+        
+        if not documents:
             return ""
+        
+        formatted = "\n".join([f"- {doc}" for doc in documents])
+        return formatted
 
     def get_all_user_facts(self, user_id: str):
         """
