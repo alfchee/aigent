@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import sys
 import os
 import asyncio
+from pathlib import Path
 
 # Ensure backend path is in sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -84,28 +85,20 @@ class TestGoogleDrive(unittest.IsolatedAsyncioTestCase):
         # Setup mocks
         mock_get_session.return_value = "test_session"
         mock_workspace = MagicMock()
+        mock_workspace.safe_path.return_value = Path("/tmp/test.txt")
         mock_workspace_cls.return_value = mock_workspace
         
         mock_service = MagicMock()
         mock_get_service.return_value = mock_service
         
-        # Mock the download process
-        mock_files = mock_service.files.return_value
-        mock_get_media = mock_files.get_media.return_value
-        
-        # Mock the downloader object logic inside _download_content_sync
-        # Since we are mocking the sync function call via run_in_executor in the real code,
-        # we can mock _download_content_sync directly OR mock the API calls it makes.
-        # Let's mock _download_content_sync to avoid complex MediaIoBaseDownload mocking
-        with patch('app.skills.google_drive._download_content_sync') as mock_download_sync:
-            mock_download_sync.return_value = b"file content"
+        with patch('app.skills.google_drive._download_to_path_sync') as mock_download_sync:
             
             # Execute
             result = await google_drive.download_file_from_drive('file_id', 'test.txt')
             
             # Verify
             self.assertIn("descargado exitosamente", result)
-            mock_workspace.write_bytes.assert_called_with('test.txt', b"file content")
+            mock_download_sync.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()

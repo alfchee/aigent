@@ -24,4 +24,6 @@ tenacity
 google-api-python-client
 python-telegram-bot
 cryptography
-
+chromadb
+sentence-transformers
+mem0ai

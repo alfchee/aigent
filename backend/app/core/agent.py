@@ -47,7 +47,7 @@ class NaviBot:
 
 
         # Register default skills
-        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive
+        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar
         
         for tool in scheduler.tools:
             self.register_tool(tool)
@@ -64,6 +64,10 @@ class NaviBot:
         for tool in google_workspace_manager.tools:
             self.register_tool(tool)
         for tool in google_drive.tools:
+            self.register_tool(tool)
+        for tool in memory.tools:
+            self.register_tool(tool)
+        for tool in calendar.tools:
             self.register_tool(tool)
 
     def register_tool(self, tool: Callable):
@@ -99,10 +103,14 @@ class NaviBot:
         return self._tool_reference
 
     def _build_system_instruction(self, tool_reference: str, extra_prompt: str | None = None) -> str:
+        from datetime import datetime
         extra = (extra_prompt or "").strip()
         # Sandwich structure: Personality -> Capabilities -> Search Policy -> Base Constraints
         parts = [part for part in [extra, tool_reference, SEARCH_POLICY, BASE_CONSTRAINTS] if part]
-        return "\n\n".join(parts).strip()
+        combined = "\n\n".join(parts).strip()
+        
+        current_dt = datetime.now().strftime("%Y-%m-%d %H:%M")
+        return combined.replace("{CURRENT_DATETIME}", current_dt)
 
     def _google_grounding_enabled(self) -> bool:
         value = os.getenv("ENABLE_GOOGLE_GROUNDING", "true").lower()
@@ -165,7 +173,8 @@ class NaviBot:
         await self.ensure_session(session_id)
         
         response = await self._chat_sessions[session_id].send_message(message)
-        return response.text
+        text = getattr(response, "text", None)
+        return text if isinstance(text, str) else ""
 
     async def ensure_session(self, session_id: str):
         """Ensures a chat session exists, loading from history if needed."""
@@ -228,25 +237,29 @@ class NaviBot:
         return await react_loop.execute(message)
 
 
-async def execute_agent_task(user_text: str, session_id: str) -> str:
+async def execute_agent_task(user_text: str, session_id: str, memory_user_id: str | None = None) -> str:
     """
     Executes an agent task for a given session.
     Used by external integrations like Telegram.
     """
-    from app.core.runtime_context import set_session_id
+    from app.core.runtime_context import reset_memory_user_id, reset_session_id, resolve_memory_user_id, set_memory_user_id, set_session_id
+    from app.core.memory import recall_memory
     
     # Set the session context
-    set_session_id(session_id)
-    
-    # Initialize the agent
-    agent = NaviBot()
-    
-    # Ensure session exists
-    await agent.ensure_session(session_id)
-    
-    # Execute the task
-    result = await agent.send_message_with_react(user_text)
-    
-    # Return the response text
-    return result.get("response", "")
-
+    session_token = set_session_id(session_id)
+    memory_token = set_memory_user_id(resolve_memory_user_id(memory_user_id, session_id))
+    try:
+        # Initialize the agent
+        agent = NaviBot()
+        
+        # Ensure session exists
+        await agent.ensure_session(session_id)
+        
+        # Execute the task
+        result = await agent.send_message_with_react(user_text)
+        
+        # Return the response text
+        return result.get("response", "")
+    finally:
+        reset_session_id(session_token)
+        reset_memory_user_id(memory_token)

@@ -1,8 +1,11 @@
+import asyncio
+import fcntl
 import os
 import time
 from typing import Any
 
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 from app.channels.base import BaseChannel
@@ -57,6 +60,7 @@ class TelegramChannel(BaseChannel):
         self.token = (settings or {}).get("token") or os.getenv("TELEGRAM_TOKEN")
         self.auto_send_artifacts = bool(settings.get("auto_send_artifacts", True))
         self.app = ApplicationBuilder().token(self.token).build()
+        self._lock_file = None
         self._setup_handlers()
 
     def _setup_handlers(self) -> None:
@@ -73,10 +77,11 @@ class TelegramChannel(BaseChannel):
             return
         user_text = update.message.text or ""
         chat_id = str(update.effective_chat.id)
+        user_id = str(update.effective_user.id) if update.effective_user else chat_id
         session_id = f"tg_{chat_id}"
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         try:
-            response_text = await execute_agent_task(user_text, session_id=session_id)
+            response_text = await execute_agent_task(user_text, session_id=session_id, memory_user_id=f"tg_user_{user_id}")
             if len(response_text) > 4000:
                 for x in range(0, len(response_text), 4000):
                     await update.message.reply_text(response_text[x:x + 4000])
@@ -129,14 +134,67 @@ class TelegramChannel(BaseChannel):
                     await context.bot.send_document(chat_id=chat_id, document=doc, caption=f"📂 Generado: {f}")
 
     async def start(self) -> None:
-        await self.app.initialize()
-        await self.app.start()
-        await self.app.updater.start_polling()
+        import uuid
+        instance_id = str(uuid.uuid4())[:8]
+        pid = os.getpid()
+        print(f"[{pid}] TelegramChannel {instance_id}: Attempting to acquire lock...")
+        
+        lock_path = os.path.abspath(os.getenv("NAVIBOT_TELEGRAM_LOCK_PATH", "/tmp/navibot_telegram.lock"))
+        max_lock_wait = float(os.getenv("NAVIBOT_TELEGRAM_LOCK_WAIT_SECONDS", "15"))
+        self._lock_file = open(lock_path, "w")
+        deadline = time.monotonic() + max(0.0, max_lock_wait)
+        while True:
+            try:
+                fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                print(f"[{pid}] TelegramChannel {instance_id}: Lock acquired.")
+                break
+            except BlockingIOError as e:
+                if time.monotonic() >= deadline:
+                    self._lock_file.close()
+                    self._lock_file = None
+                    print(f"[{pid}] TelegramChannel {instance_id}: Failed to acquire lock (timeout).")
+                    raise RuntimeError("telegram polling already active") from e
+                await asyncio.sleep(0.5)
+        try:
+            await self.app.initialize()
+            await self.app.start()
+            try:
+                print(f"[{pid}] TelegramChannel {instance_id}: Starting polling...")
+                await self.app.updater.start_polling(drop_pending_updates=True)
+                print(f"[{pid}] TelegramChannel {instance_id}: Polling started successfully.")
+            except Conflict as e:
+                print(f"[{pid}] TelegramChannel {instance_id}: Conflict detected during start_polling!")
+                raise RuntimeError("telegram polling already active") from e
+        except Exception:
+            try:
+                fcntl.flock(self._lock_file, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                self._lock_file.close()
+            except Exception:
+                pass
+            self._lock_file = None
+            raise
 
     async def stop(self) -> None:
+        pid = os.getpid()
+        print(f"[{pid}] TelegramChannel: Stopping...")
         await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()
+        if self._lock_file:
+            try:
+                fcntl.flock(self._lock_file, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                self._lock_file.close()
+            except Exception:
+                pass
+            self._lock_file = None
+            print(f"[{pid}] TelegramChannel: Lock released.")
+
 
     async def send_message(self, recipient_id: str, message: str) -> None:
         await self.app.bot.send_message(chat_id=recipient_id, text=message)
