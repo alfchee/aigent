@@ -37,6 +37,7 @@ backend/app/core/credentials/
 backend/navi_memory_db/
 navi_memory_db/
 backend/logs/
+backend/app/settings/active_mcp.json
 
 # Node.js (Frontend)
 node_modules/

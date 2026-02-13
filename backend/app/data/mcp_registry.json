@@ -1,0 +1,23 @@
+{
+  "filesystem": {
+    "name": "Local Filesystem",
+    "description": "Permite al agente leer y escribir archivos en carpetas específicas.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "{path}"],
+    "params": ["path"]
+  },
+  "github": {
+    "name": "GitHub Integration",
+    "description": "Buscar repositorios, leer commits y gestionar issues.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "env_vars": ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+  },
+  "postgres": {
+    "name": "PostgreSQL Database",
+    "description": "Acceso de lectura/escritura a base de datos SQL.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-postgres", "{connection_string}"],
+    "params": ["connection_string"]
+  }
+}

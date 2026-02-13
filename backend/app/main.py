@@ -9,6 +9,7 @@ from app.api.sessions import router as sessions_router
 from app.api.code_execution import router as code_execution_router
 from app.api.settings import router as settings_router
 from app.api.channels import router as channels_router
+from app.api.mcp import router as mcp_router
 from app.channels.manager import channel_manager
 from app.core.bot_pool import bot_pool
 from app.core.config_manager import get_settings
@@ -84,6 +85,7 @@ app.include_router(sessions_router)
 app.include_router(code_execution_router)
 app.include_router(settings_router)
 app.include_router(channels_router)
+app.include_router(mcp_router)
 
 def _truncate_text(value: str, limit: int = 500) -> str:
     if len(value) <= limit:
