@@ -28,11 +28,11 @@ class LocalEmbeddingFunction(chromadb.EmbeddingFunction):
             print(f"❌ Failed to load embedding model: {e}")
             raise
 
-    def __call__(self, input):
+    def __call__(self, texts):
         # Handle both string and list of strings
-        if isinstance(input, str):
-            input = [input]
-        embeddings = self.model.encode(input)
+        if isinstance(texts, str):
+            texts = [texts]
+        embeddings = self.model.encode(texts)
         # Convert numpy array to list for ChromaDB
         return embeddings.tolist()
 

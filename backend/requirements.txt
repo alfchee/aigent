@@ -27,5 +27,3 @@ cryptography
 chromadb
 sentence-transformers
 mem0ai
-chromadb
-sentence-transformers

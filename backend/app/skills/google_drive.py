@@ -22,6 +22,8 @@ try:
     from googleapiclient.errors import HttpError
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 except ImportError:
+    class HttpError(Exception):
+        pass
     pass
 
 from app.core.runtime_context import get_session_id

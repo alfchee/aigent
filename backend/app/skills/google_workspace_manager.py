@@ -43,6 +43,8 @@ try:
     GOOGLE_API_AVAILABLE = True
 except ImportError:
     GOOGLE_API_AVAILABLE = False
+    class HttpError(Exception):
+        pass
 
 def _check_dependencies():
     if not GSPREAD_AVAILABLE:
