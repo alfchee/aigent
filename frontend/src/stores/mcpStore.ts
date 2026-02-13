@@ -9,6 +9,7 @@ export interface McpServer {
   params: Record<string, any>
   env_vars: Record<string, string>
   status: string
+  server_id?: string
 }
 
 export interface McpMarketplaceItem {
@@ -18,6 +19,12 @@ export interface McpMarketplaceItem {
   args: string[]
   params?: string[]
   env_vars?: string[]
+}
+
+export interface McpConnectionResult {
+  success: boolean
+  message: string
+  tools_count?: number
 }
 
 export const useMcpStore = defineStore('mcp', {
@@ -33,7 +40,7 @@ export const useMcpStore = defineStore('mcp', {
       this.loading = true
       this.error = null
       try {
-        const data = await fetchJson('/api/mcp/servers')
+        const data = await fetchJson<McpServer[]>('/api/mcp/servers')
         this.servers = data
       } catch (e: any) {
         this.error = e.message || 'Error fetching servers'
@@ -44,7 +51,7 @@ export const useMcpStore = defineStore('mcp', {
 
     async fetchMarketplace() {
       try {
-        const data = await fetchJson('/api/mcp/marketplace')
+        const data = await fetchJson<Record<string, McpMarketplaceItem>>('/api/mcp/marketplace')
         this.marketplace = data
       } catch (e: any) {
         console.error('Error fetching marketplace:', e)
@@ -56,6 +63,9 @@ export const useMcpStore = defineStore('mcp', {
       try {
         await fetchJson('/api/mcp/servers', {
           method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
           body: JSON.stringify(server)
         })
         await this.fetchServers()
@@ -82,10 +92,13 @@ export const useMcpStore = defineStore('mcp', {
       }
     },
 
-    async testConnection(serverId: string, params: any, envVars: any) {
+    async testConnection(serverId: string, params: any, envVars: any): Promise<McpConnectionResult> {
       try {
-        return await fetchJson('/api/mcp/test-connection', {
+        return await fetchJson<McpConnectionResult>('/api/mcp/test-connection', {
           method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
           body: JSON.stringify({
             server_id: serverId,
             params: params,

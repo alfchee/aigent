@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Body, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing import Dict, Any, Optional, List
 import json
 import os
@@ -10,16 +10,19 @@ router = APIRouter()
 class McpServerConfig(BaseModel):
     server_id: str
     enabled: bool = True
-    params: Dict[str, Any] = {}
-    env_vars: Dict[str, str] = {}
+    params: Optional[Dict[str, Any]] = {}
+    env_vars: Optional[Dict[str, str]] = {}
     # Optional fields for custom servers if needed later
     command: Optional[str] = None
     args: Optional[List[str]] = None
 
 class TestConnectionRequest(BaseModel):
     server_id: str
-    params: Dict[str, Any] = {}
-    env_vars: Dict[str, str] = {}
+    params: Optional[Dict[str, Any]] = {}
+    env_vars: Optional[Dict[str, str]] = {}
+
+    class Config:
+        arbitrary_types_allowed = True
 
 def _get_paths():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -68,16 +71,27 @@ def get_servers():
     return servers
 
 @router.post("/api/mcp/servers")
-def save_server(server: McpServerConfig):
+def save_server(payload: Any = Body(...)):
     """Añade o actualiza la configuración de un servidor MCP."""
+    if isinstance(payload, (str, bytes, bytearray)):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid JSON body")
+    try:
+        server = McpServerConfig.model_validate(payload)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
     paths = _get_paths()
     config = _load_json(paths["config"])
+    params = server.params if server.params is not None else {}
+    env_vars = server.env_vars if server.env_vars is not None else {}
     
     # Update config
     config[server.server_id] = {
         "enabled": server.enabled,
-        "params": server.params,
-        "env_vars": server.env_vars
+        "params": params,
+        "env_vars": env_vars
     }
     
     # If custom command provided, save it too (future proofing)
@@ -103,19 +117,26 @@ def delete_server(server_id: str):
     raise HTTPException(status_code=404, detail="Server not found")
 
 @router.post("/api/mcp/test-connection")
-async def test_connection(request: TestConnectionRequest):
+async def test_connection(payload: Any = Body(...)):
     """Prueba la conexión con un servidor MCP."""
+    if isinstance(payload, (str, bytes, bytearray)):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            raise HTTPException(status_code=422, detail="Invalid JSON body")
+    try:
+        request = TestConnectionRequest.model_validate(payload)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
     paths = _get_paths()
     registry = _load_json(paths["registry"])
-    
-    # Create a temporary manager
     manager = McpManager()
     
-    # Prepare settings for test
-    settings = {
-        "params": request.params,
-        "env_vars": request.env_vars
-    }
+    # Ensure params/env_vars are dicts even if None provided
+    params = request.params if request.params is not None else {}
+    env_vars = request.env_vars if request.env_vars is not None else {}
     
+    settings = {"params": params, "env_vars": env_vars}
     result = await manager.test_connection(request.server_id, settings, registry)
+    await manager.cleanup()
     return result
