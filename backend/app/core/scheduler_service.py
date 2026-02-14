@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import time
+import traceback
 import uuid
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -92,6 +93,7 @@ async def execute_agent_task(
     status = "success"
     response_text = ""
     error_text = ""
+    error_trace = ""
     try:
         session_token = set_session_id(session_id)
         callback_token = set_event_callback(None)
@@ -131,7 +133,8 @@ async def execute_agent_task(
             
     except Exception as e:
         status = "error"
-        error_text = str(e)
+        error_text = f"{type(e).__name__}: {e}"
+        error_trace = traceback.format_exc()
         print(f"\n{'='*60}")
         print(f"Error executing task: {e}")
         print(f"{'='*60}\n")
@@ -146,6 +149,7 @@ async def execute_agent_task(
             "status": status,
             "response": _truncate_text(response_text),
             "error": _truncate_text(error_text),
+            "error_trace": _truncate_text(error_trace, 1600),
             "started_at": datetime.fromtimestamp(start_time).isoformat(),
             "finished_at": datetime.fromtimestamp(finished_at).isoformat(),
             "duration_seconds": round(finished_at - start_time, 3)

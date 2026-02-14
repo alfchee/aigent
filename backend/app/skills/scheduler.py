@@ -1,3 +1,5 @@
+import json
+
 from app.core import scheduler_service
 
 def start_scheduler():
@@ -42,4 +44,15 @@ def schedule_cron_task(prompt: str, cron: str, session_id: str = "default", use_
     """
     return scheduler_service.schedule_cron_task(prompt, cron, session_id, use_react_loop, max_iterations)
 
-tools = [schedule_task, schedule_interval_task, schedule_cron_task]
+def list_job_logs(job_id: str | None = None, limit: int = 200) -> str:
+    logs = scheduler_service.list_logs(job_id=job_id, limit=limit)
+    return json.dumps({"job_id": job_id, "logs": logs}, ensure_ascii=False)
+
+
+def get_last_job_result(job_id: str) -> str:
+    logs = scheduler_service.list_logs(job_id=job_id, limit=1)
+    last = logs[-1] if logs else None
+    return json.dumps({"job_id": job_id, "last": last}, ensure_ascii=False)
+
+
+tools = [schedule_task, schedule_interval_task, schedule_cron_task, list_job_logs, get_last_job_result]

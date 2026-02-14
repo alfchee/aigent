@@ -51,7 +51,7 @@ class NaviBot:
 
 
         # Register default skills
-        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar
+        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar, telegram
         
         for tool in scheduler.tools:
             self.register_tool(tool)
@@ -72,6 +72,8 @@ class NaviBot:
         for tool in memory.tools:
             self.register_tool(tool)
         for tool in calendar.tools:
+            self.register_tool(tool)
+        for tool in telegram.tools:
             self.register_tool(tool)
 
     def register_tool(self, tool: Callable):
