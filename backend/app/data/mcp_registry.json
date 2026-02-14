@@ -1,0 +1,37 @@
+{
+  "filesystem": {
+    "name": "Local Filesystem",
+    "description": "Permite al agente leer y escribir archivos en carpetas específicas.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "{path}"],
+    "params": ["path"]
+  },
+  "github": {
+    "name": "GitHub Integration",
+    "description": "Buscar repositorios, leer commits y gestionar issues.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "env_vars": ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+  },
+  "postgres": {
+    "name": "PostgreSQL Database",
+    "description": "Acceso de lectura/escritura a base de datos SQL.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-postgres", "{connection_string}"],
+    "params": ["connection_string"]
+  },
+  "slack": {
+    "name": "Slack Integration",
+    "description": "Interactúa con canales y usuarios de Slack.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-slack"],
+    "env_vars": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"]
+  },
+  "jira": {
+    "name": "Jira Cloud Integration",
+    "description": "Gestiona proyectos, issues y comentarios en Jira Cloud.",
+    "command": "npx",
+    "args": ["-y", "@aot-tech/jira-mcp-server"],
+    "env_vars": ["JIRA_API_TOKEN", "JIRA_BASE_URL", "JIRA_USER_EMAIL", "JIRA_TYPE"]
+  }
+}

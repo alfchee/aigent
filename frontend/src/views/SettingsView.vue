@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useModelSettingsStore } from '../stores/modelSettings'
+import McpConfig from '../components/settings/McpConfig.vue'
 
 const store = useModelSettingsStore()
 
@@ -151,6 +152,12 @@ onMounted(() => {
         >
           Volver
         </RouterLink>
+        <RouterLink
+          to="/scheduler"
+          class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+        >
+          Scheduler
+        </RouterLink>
         <div class="text-sm font-semibold text-slate-800">Command Center</div>
       </div>
       <div class="flex items-center gap-2">
@@ -181,7 +188,7 @@ onMounted(() => {
         <!-- Tabs -->
         <div class="flex border-b border-slate-200 space-x-1 overflow-x-auto">
           <button
-            v-for="tab in ['general', 'personality', 'limits', 'advanced']"
+            v-for="tab in ['general', 'personality', 'limits', 'mcp', 'advanced']"
             :key="tab"
             @click="activeTab = tab"
             class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap capitalize"
@@ -325,6 +332,11 @@ onMounted(() => {
                   <p class="text-xs text-slate-500">Cuántas veces reintentar una operación fallida antes de rendirse.</p>
                 </div>
              </div>
+          </div>
+
+          <!-- MCP TAB -->
+          <div v-if="activeTab === 'mcp'">
+             <McpConfig />
           </div>
 
           <!-- ADVANCED TAB -->
