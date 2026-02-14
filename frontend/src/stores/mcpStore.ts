@@ -4,6 +4,7 @@ import { fetchJson } from '../lib/api'
 export interface McpServer {
   id: string
   name: string
+  description?: string
   type: string
   enabled: boolean
   params: Record<string, any>
@@ -19,12 +20,23 @@ export interface McpMarketplaceItem {
   args: string[]
   params?: string[]
   env_vars?: string[]
+  source?: string
 }
 
 export interface McpConnectionResult {
   success: boolean
   message: string
   tools_count?: number
+}
+
+export interface McpServerDefinition {
+  server_id: string
+  name: string
+  description: string
+  command: string
+  args: string[]
+  params?: string[]
+  env_vars?: string[]
 }
 
 export const useMcpStore = defineStore('mcp', {
@@ -77,6 +89,40 @@ export const useMcpStore = defineStore('mcp', {
       }
     },
 
+    async importMarketplace(sourceUrl: string) {
+      this.loading = true
+      try {
+        await fetchJson('/api/mcp/marketplace/import', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ source_url: sourceUrl })
+        })
+        await this.fetchMarketplace()
+      } catch (e: any) {
+        this.error = e.message || 'Error importing marketplace'
+        throw e
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async deleteCustomDefinition(serverId: string) {
+      this.loading = true
+      try {
+        await fetchJson(`/api/mcp/marketplace/custom/${serverId}`, {
+          method: 'DELETE'
+        })
+        await this.fetchMarketplace()
+      } catch (e: any) {
+        this.error = e.message || 'Error deleting definition'
+        throw e
+      } finally {
+        this.loading = false
+      }
+    },
+
     async deleteServer(serverId: string) {
       this.loading = true
       try {
@@ -92,7 +138,12 @@ export const useMcpStore = defineStore('mcp', {
       }
     },
 
-    async testConnection(serverId: string, params: any, envVars: any): Promise<McpConnectionResult> {
+    async testConnection(
+      serverId: string,
+      params: any,
+      envVars: any,
+      definition?: McpServerDefinition
+    ): Promise<McpConnectionResult> {
       try {
         return await fetchJson<McpConnectionResult>('/api/mcp/test-connection', {
           method: 'POST',
@@ -102,7 +153,8 @@ export const useMcpStore = defineStore('mcp', {
           body: JSON.stringify({
             server_id: serverId,
             params: params,
-            env_vars: envVars
+            env_vars: envVars,
+            definition
           })
         })
       } catch (e: any) {

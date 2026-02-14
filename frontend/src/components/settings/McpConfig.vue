@@ -25,6 +25,31 @@
       </div>
     </div>
 
+    <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div class="space-y-1">
+                <div class="text-sm font-semibold text-slate-800">Importar marketplace</div>
+                <div class="text-xs text-slate-500">Agrega una URL pública con definiciones MCP.</div>
+            </div>
+            <div class="flex flex-col gap-2 md:flex-row md:items-center md:w-2/3">
+                <input
+                    v-model="importUrl"
+                    type="text"
+                    class="w-full md:flex-1 p-2.5 border border-slate-200 rounded-lg text-sm"
+                    placeholder="https://ejemplo.com/mcp_registry.json"
+                />
+                <button
+                    @click="importMarketplace"
+                    :disabled="!importUrl || importLoading"
+                    class="px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg disabled:opacity-50"
+                >
+                    {{ importLoading ? 'Importando…' : 'Importar' }}
+                </button>
+            </div>
+        </div>
+        <div v-if="importError" class="mt-3 text-xs text-red-600">{{ importError }}</div>
+    </div>
+
     <div v-if="store.loading && !store.servers.length" class="text-center py-12">
         <div class="animate-spin h-8 w-8 border-4 border-sky-500 border-t-transparent rounded-full mx-auto mb-2"></div>
         <p class="text-slate-500">Cargando servidores...</p>
@@ -64,6 +89,9 @@ const store = useMcpStore()
 const showModal = ref(false)
 const editingServer = ref<McpServer | undefined>(undefined)
 const selectedIds = ref<string[]>([])
+const importUrl = ref('')
+const importLoading = ref(false)
+const importError = ref<string | null>(null)
 
 onMounted(() => {
     store.fetchServers()
@@ -120,5 +148,19 @@ async function bulkDelete() {
     // Execute deletions in parallel
     await Promise.all(selectedIds.value.map(id => store.deleteServer(id)))
     selectedIds.value = []
+}
+
+async function importMarketplace() {
+    if (!importUrl.value.trim()) return
+    importLoading.value = true
+    importError.value = null
+    try {
+        await store.importMarketplace(importUrl.value.trim())
+        importUrl.value = ''
+    } catch (e: any) {
+        importError.value = e.message || 'Error importando marketplace'
+    } finally {
+        importLoading.value = false
+    }
 }
 </script>

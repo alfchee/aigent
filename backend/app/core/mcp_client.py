@@ -1,7 +1,8 @@
 import asyncio
-import json
 import os
 from typing import List, Dict, Any, Optional
+
+from app.core.mcp_config import get_active_config_runtime, get_registry_merged
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -22,28 +23,13 @@ class McpManager:
         self._shutdown_events: Dict[str, asyncio.Event] = {}
 
     async def load_servers(self): 
-        """Lee active_mcp.json e inicia los servidores configurados.""" 
-        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        config_path = os.path.join(root, "app/settings/active_mcp.json")
-        registry_path = os.path.join(root, "app/data/mcp_registry.json")
-        
-        if not os.path.exists(config_path): 
-            return 
-
+        """Carga la configuración de MCP desde la base de datos e inicia los servidores.""" 
         try:
-            with open(config_path, 'r') as f: 
-                config = json.load(f)
-                
-            if not os.path.exists(registry_path):
-                print(f"Warning: Registry not found at {registry_path}")
-                return
-                
-            with open(registry_path, 'r') as f:
-                registry = json.load(f)
-
-            for server_id, settings in config.items(): 
+            config = get_active_config_runtime()
+            registry = get_registry_merged()
+            servers = config.get("servers", {})
+            for server_id, settings in servers.items(): 
                 if settings.get('enabled'): 
-                    # Only connect if not already connected
                     if server_id not in self.active_sessions:
                         await self.connect_server(server_id, settings, registry)
         except Exception as e:
@@ -75,16 +61,19 @@ class McpManager:
 
     async def connect_server(self, server_id: str, settings: dict, registry: dict): 
         # 1. Resolver el comando desde el Registry 
-        definition = registry.get(server_id) 
+        definition = registry.get(server_id) or {}
         
         if not definition: 
-            print(f"Warning: Server definition for {server_id} not found in registry")
-            return 
+            if 'command' in settings:
+                definition = settings
+            else:
+                print(f"Warning: Server definition for {server_id} not found in registry")
+                return 
 
         # 2. Preparar argumentos y variables de entorno 
         cmd = definition['command'] 
         args = []
-        for arg in definition['args']:
+        for arg in definition.get('args', []):
             # Replace placeholders like {path} or {connection_string}
             formatted_arg = arg
             params = settings.get('params', {})
