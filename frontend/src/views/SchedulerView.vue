@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { useSchedulerStore, type SchedulerJob, type SchedulerTrigger } from '../stores/schedulerStore'
@@ -11,8 +11,23 @@ const selectedJobId = ref<string | null>(null)
 
 const jobs = computed(() => store.jobs)
 const logs = computed(() => store.logs)
-const loading = computed(() => store.loading)
 const error = computed(() => store.error)
+const jobsSectionLoading = computed(() => store.jobsSectionLoading)
+const logsSectionLoading = computed(() => store.logsSectionLoading)
+const isDev = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV
+
+// Virtual scrolling state avoids full re-rendering on each fetch.
+const jobsContainer = ref<HTMLElement | null>(null)
+const logsContainer = ref<HTMLElement | null>(null)
+const jobsScrollTop = ref(0)
+const logsScrollTop = ref(0)
+const jobsViewportHeight = ref(360)
+const logsViewportHeight = ref(360)
+const jobRowHeight = 72
+const logRowHeight = 64
+const overscan = 6
+const lastJobsRenderMs = ref<number | null>(null)
+const lastLogsRenderMs = ref<number | null>(null)
 
 const filteredJobs = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -29,6 +44,32 @@ const filteredJobs = computed(() => {
       job.prompt.toLowerCase().includes(q)
     )
   })
+})
+
+const jobsStartIndex = computed(() => Math.max(0, Math.floor(jobsScrollTop.value / jobRowHeight) - overscan))
+const jobsVisibleCount = computed(() =>
+  Math.ceil(jobsViewportHeight.value / jobRowHeight) + overscan * 2
+)
+const visibleJobs = computed(() =>
+  filteredJobs.value.slice(jobsStartIndex.value, jobsStartIndex.value + jobsVisibleCount.value)
+)
+const jobsTopPadding = computed(() => jobsStartIndex.value * jobRowHeight)
+const jobsBottomPadding = computed(() => {
+  const remaining = filteredJobs.value.length - (jobsStartIndex.value + jobsVisibleCount.value)
+  return Math.max(0, remaining * jobRowHeight)
+})
+
+const logsStartIndex = computed(() => Math.max(0, Math.floor(logsScrollTop.value / logRowHeight) - overscan))
+const logsVisibleCount = computed(() =>
+  Math.ceil(logsViewportHeight.value / logRowHeight) + overscan * 2
+)
+const visibleLogs = computed(() =>
+  logs.value.slice(logsStartIndex.value, logsStartIndex.value + logsVisibleCount.value)
+)
+const logsTopPadding = computed(() => logsStartIndex.value * logRowHeight)
+const logsBottomPadding = computed(() => {
+  const remaining = logs.value.length - (logsStartIndex.value + logsVisibleCount.value)
+  return Math.max(0, remaining * logRowHeight)
 })
 
 function formatTrigger(trigger: SchedulerTrigger) {
@@ -78,15 +119,74 @@ async function deleteJob(job: SchedulerJob) {
 }
 
 let pollTimer: number | null = null
+let resizeTimer: number | null = null
+
+function updateViewports() {
+  if (jobsContainer.value) jobsViewportHeight.value = jobsContainer.value.clientHeight
+  if (logsContainer.value) logsViewportHeight.value = logsContainer.value.clientHeight
+}
+
+function onJobsScroll() {
+  jobsScrollTop.value = jobsContainer.value?.scrollTop || 0
+}
+
+function onLogsScroll() {
+  logsScrollTop.value = logsContainer.value?.scrollTop || 0
+}
+
+watch(
+  () => store.jobs,
+  async () => {
+    const start = performance.now()
+    await nextTick()
+    updateViewports()
+    const durationMs = performance.now() - start
+    const improvementPct =
+      lastJobsRenderMs.value !== null ? ((lastJobsRenderMs.value - durationMs) / lastJobsRenderMs.value) * 100 : null
+    if (isDev) {
+      console.debug('[scheduler] jobs render update', {
+        durationMs: Number(durationMs.toFixed(2)),
+        improvementPct: improvementPct !== null ? Number(improvementPct.toFixed(2)) : null
+      })
+    }
+    lastJobsRenderMs.value = durationMs
+  },
+  { deep: true }
+)
+
+watch(
+  () => store.logs,
+  async () => {
+    const start = performance.now()
+    await nextTick()
+    updateViewports()
+    const durationMs = performance.now() - start
+    const improvementPct =
+      lastLogsRenderMs.value !== null ? ((lastLogsRenderMs.value - durationMs) / lastLogsRenderMs.value) * 100 : null
+    if (isDev) {
+      console.debug('[scheduler] logs render update', {
+        durationMs: Number(durationMs.toFixed(2)),
+        improvementPct: improvementPct !== null ? Number(improvementPct.toFixed(2)) : null
+      })
+    }
+    lastLogsRenderMs.value = durationMs
+  },
+  { deep: true }
+)
+
 onMounted(async () => {
   await refreshAll()
+  await nextTick()
+  updateViewports()
   pollTimer = window.setInterval(() => {
     refreshAll()
   }, 5000)
+  resizeTimer = window.setInterval(updateViewports, 1000)
 })
 
 onBeforeUnmount(() => {
   if (pollTimer) window.clearInterval(pollTimer)
+  if (resizeTimer) window.clearInterval(resizeTimer)
 })
 </script>
 
@@ -112,7 +212,7 @@ onBeforeUnmount(() => {
     </header>
 
     <main class="flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full space-y-6">
-      <div v-if="error" class="text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-4">
+      <div v-show="error" class="text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-4">
         {{ error }}
       </div>
 
@@ -137,10 +237,15 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="loading" class="text-sm text-slate-500">Cargando jobs…</div>
+        <div v-show="jobsSectionLoading" class="space-y-2">
+          <div class="h-6 bg-slate-100 rounded animate-pulse"></div>
+          <div class="h-6 bg-slate-100 rounded animate-pulse"></div>
+          <div class="h-6 bg-slate-100 rounded animate-pulse"></div>
+        </div>
 
-        <div v-else class="overflow-auto border border-slate-200 rounded-lg">
-          <table class="min-w-full text-xs text-slate-700">
+        <transition name="fade">
+          <div v-show="!jobsSectionLoading" ref="jobsContainer" class="overflow-auto border border-slate-200 rounded-lg h-[420px]" @scroll="onJobsScroll">
+            <table class="min-w-full text-xs text-slate-700">
             <thead class="bg-slate-100 text-slate-700 uppercase tracking-wider">
               <tr>
                 <th class="text-left px-3 py-2">Job</th>
@@ -152,8 +257,11 @@ onBeforeUnmount(() => {
               </tr>
             </thead>
             <tbody>
+              <tr v-show="jobsTopPadding > 0" aria-hidden="true">
+                <td :style="{ height: `${jobsTopPadding}px` }" colspan="6"></td>
+              </tr>
               <tr
-                v-for="job in filteredJobs"
+                v-for="job in visibleJobs"
                 :key="job.id"
                 class="odd:bg-white even:bg-slate-50 hover:bg-slate-100 cursor-pointer"
                 @click="selectJob(job)"
@@ -199,14 +307,18 @@ onBeforeUnmount(() => {
                   </div>
                 </td>
               </tr>
-              <tr v-if="filteredJobs.length === 0">
+              <tr v-show="jobsBottomPadding > 0" aria-hidden="true">
+                <td :style="{ height: `${jobsBottomPadding}px` }" colspan="6"></td>
+              </tr>
+              <tr v-show="filteredJobs.length === 0">
                 <td colspan="6" class="px-3 py-6 text-center text-slate-500 text-sm">
                   No hay jobs programados
                 </td>
               </tr>
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        </transition>
       </section>
 
       <section class="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
@@ -224,8 +336,15 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <div class="overflow-auto border border-slate-200 rounded-lg">
-          <table class="min-w-full text-xs text-slate-700">
+        <div v-show="logsSectionLoading" class="space-y-2">
+          <div class="h-6 bg-slate-100 rounded animate-pulse"></div>
+          <div class="h-6 bg-slate-100 rounded animate-pulse"></div>
+          <div class="h-6 bg-slate-100 rounded animate-pulse"></div>
+        </div>
+
+        <transition name="fade">
+          <div v-show="!logsSectionLoading" ref="logsContainer" class="overflow-auto border border-slate-200 rounded-lg h-[420px]" @scroll="onLogsScroll">
+            <table class="min-w-full text-xs text-slate-700">
             <thead class="bg-slate-100 text-slate-700 uppercase tracking-wider">
               <tr>
                 <th class="text-left px-3 py-2">Estado</th>
@@ -235,7 +354,10 @@ onBeforeUnmount(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="log in logs" :key="`${log.started_at}-${log.job_id}`" class="odd:bg-white even:bg-slate-50">
+              <tr v-show="logsTopPadding > 0" aria-hidden="true">
+                <td :style="{ height: `${logsTopPadding}px` }" colspan="4"></td>
+              </tr>
+              <tr v-for="log in visibleLogs" :key="`${log.started_at}-${log.job_id}`" class="odd:bg-white even:bg-slate-50">
                 <td class="px-3 py-2">
                   <span
                     class="text-[10px] font-semibold px-2 py-1 rounded"
@@ -251,15 +373,31 @@ onBeforeUnmount(() => {
                   <div class="text-[10px] text-slate-500">{{ log.prompt }}</div>
                 </td>
               </tr>
-              <tr v-if="logs.length === 0">
+              <tr v-show="logsBottomPadding > 0" aria-hidden="true">
+                <td :style="{ height: `${logsBottomPadding}px` }" colspan="4"></td>
+              </tr>
+              <tr v-show="logs.length === 0">
                 <td colspan="4" class="px-3 py-6 text-center text-slate-500 text-sm">
                   No hay ejecuciones registradas
                 </td>
               </tr>
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        </transition>
       </section>
     </main>
   </div>
 </template>
+
+<style scoped>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>
