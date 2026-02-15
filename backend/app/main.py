@@ -9,6 +9,8 @@ from app.api.sessions import router as sessions_router
 from app.api.code_execution import router as code_execution_router
 from app.api.settings import router as settings_router
 from app.api.channels import router as channels_router
+from app.api.mcp import router as mcp_router
+from app.api.scheduler import router as scheduler_router
 from app.channels.manager import channel_manager
 from app.core.bot_pool import bot_pool
 from app.core.config_manager import get_settings
@@ -23,12 +25,27 @@ import uuid
 
 from app.core.logging import setup_logging, notify_alert
 from app.core.runtime_context import reset_request_id, set_request_id
+from contextlib import asynccontextmanager
 
 setup_logging()
 
 orchestrator = ModelOrchestrator()
 
-app = FastAPI(title="NaviBot API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    init_db()
+    start_scheduler()
+    await channel_manager.start_all()
+    yield
+    # Shutdown
+    await channel_manager.stop_all()
+    await bot_pool.close_all()
+    # Clean up memory system
+    from app.core.memory_manager import cleanup_memory
+    cleanup_memory()
+
+app = FastAPI(title="NaviBot API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,21 +55,6 @@ app.add_middleware(
 )
 
 logger = logging.getLogger("navibot.api")
-
-# Start Scheduler on startup
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-    start_scheduler()
-    await channel_manager.start_all()
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await channel_manager.stop_all()
-    # Clean up memory system
-    from app.core.memory_manager import cleanup_memory
-    cleanup_memory()
 
 class ChatRequest(BaseModel):
     message: str
@@ -84,6 +86,8 @@ app.include_router(sessions_router)
 app.include_router(code_execution_router)
 app.include_router(settings_router)
 app.include_router(channels_router)
+app.include_router(mcp_router)
+app.include_router(scheduler_router)
 
 def _truncate_text(value: str, limit: int = 500) -> str:
     if len(value) <= limit:

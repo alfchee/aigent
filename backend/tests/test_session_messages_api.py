@@ -126,15 +126,18 @@ class TestSessionMessagesApi(unittest.TestCase):
 
         ws = self.fs.SessionWorkspace(session_id)
         ws.write_text("hello.txt", "hola")
-        self.assertTrue((self.fs.BASE_WORKSPACE / session_id / "hello.txt").exists())
+        # Check using safe_path because workspace structure changed (no longer at BASE/session_id)
+        self.assertTrue(ws.safe_path("hello.txt").exists())
 
         p = self.persistence
         p.save_chat_message(session_id, "user", {"role": "user", "parts": [{"text": "hola"}]})
 
-        r = self.client.delete(f"/api/sessions/{session_id}")
+        # Call delete with purge=True to ensure DB records and files are removed
+        r = self.client.delete(f"/api/sessions/{session_id}?purge=true")
         self.assertEqual(r.status_code, 200)
 
-        self.assertFalse((self.fs.BASE_WORKSPACE / session_id).exists())
+        # After purge, the workspace root should be gone
+        self.assertFalse(ws.root.exists())
 
         with p.db_session() as db:
             left = db.query(p.ChatMessage).filter(p.ChatMessage.session_id == session_id).all()

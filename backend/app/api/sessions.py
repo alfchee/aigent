@@ -1,5 +1,7 @@
+import json
 import os
 import re
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -67,22 +69,49 @@ async def _generate_title_with_gemini(seed: str) -> Optional[str]:
         return None
 
 
-@router.get("")
-def list_sessions():
+def _session_status(meta_json: Optional[str]) -> dict[str, Optional[str]]:
     try:
+        payload = json.loads(meta_json) if meta_json else {}
+    except Exception:
+        payload = {}
+    workspace = payload.get("workspace") if isinstance(payload.get("workspace"), dict) else {}
+    status = workspace.get("status")
+    archived_at = workspace.get("archived_at")
+    return {
+        "status": status if isinstance(status, str) else "active",
+        "archived_at": archived_at if isinstance(archived_at, str) else None,
+    }
+
+
+@router.get("")
+def list_sessions(include_archived: bool = False):
+    try:
+        try:
+            session_fs.auto_archive_inactive_sessions(int(os.getenv("NAVIBOT_ARCHIVE_AFTER_DAYS", "7")))
+        except Exception:
+            pass
+        try:
+            session_fs.cleanup_archived_workspaces(int(os.getenv("NAVIBOT_ARCHIVE_RETENTION_DAYS", "30")))
+        except Exception:
+            pass
         with db_session() as db:
             rows = db.query(SessionRecord).order_by(desc(SessionRecord.updated_at)).limit(200).all()
-        return {
-            "sessions": [
+        items = []
+        for r in rows:
+            status = _session_status(r.meta_json)
+            if status["status"] == "archived" and not include_archived:
+                continue
+            items.append(
                 {
                     "id": r.id,
                     "title": r.title or "Nueva Conversación",
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                     "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                    "status": status["status"],
+                    "archived_at": status["archived_at"],
                 }
-                for r in rows
-            ]
-        }
+            )
+        return {"sessions": items}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database error while listing sessions: {str(e)}")
 
@@ -100,6 +129,7 @@ def create_session(payload: CreateSessionRequest):
                 if payload.title and payload.title.strip():
                     existing.title = payload.title.strip()[:80]
                     existing.updated_at = datetime.now(tz=timezone.utc)
+        session_fs.get_workspace_info(session_id)
         return {"id": session_id}
     except HTTPException:
         raise
@@ -128,27 +158,66 @@ def update_session(session_id: str, payload: UpdateSessionRequest):
 
 
 @router.delete("/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, purge: bool = False):
     sid = _validate_session_id(session_id)
     try:
-        with db_session() as db:
-            db.query(ChatMessage).filter(ChatMessage.session_id == sid).delete(synchronize_session=False)
-            db.query(ToolCall).filter(ToolCall.session_id == sid).delete(synchronize_session=False)
-            db.query(SessionRecord).filter(SessionRecord.id == sid).delete(synchronize_session=False)
+        if purge:
+            with db_session() as db:
+                db.query(ChatMessage).filter(ChatMessage.session_id == sid).delete(synchronize_session=False)
+                db.query(ToolCall).filter(ToolCall.session_id == sid).delete(synchronize_session=False)
+                db.query(SessionRecord).filter(SessionRecord.id == sid).delete(synchronize_session=False)
+            try:
+                info = session_fs.get_workspace_info(sid)
+                ws_dir = Path(info["root"]).resolve()
+                import shutil
 
-        ws_dir = (session_fs.BASE_WORKSPACE / sid).resolve()
-        try:
-            import shutil
-
-            shutil.rmtree(ws_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-        return {"status": "deleted"}
+                shutil.rmtree(ws_dir, ignore_errors=True)
+            except Exception:
+                pass
+            return {"status": "purged"}
+        session_fs.archive_session_workspace(sid)
+        return {"status": "archived"}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database error while deleting session: {str(e)}")
+
+
+@router.get("/{session_id}/workspace")
+def get_session_workspace(session_id: str):
+    sid = _validate_session_id(session_id)
+    try:
+        return session_fs.get_workspace_info(sid)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Error loading workspace info: {str(e)}")
+
+
+@router.post("/{session_id}/archive")
+def archive_session(session_id: str):
+    sid = _validate_session_id(session_id)
+    try:
+        return session_fs.archive_session_workspace(sid)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Error archiving session: {str(e)}")
+
+
+@router.post("/{session_id}/restore")
+def restore_session(session_id: str):
+    sid = _validate_session_id(session_id)
+    try:
+        return session_fs.restore_session_workspace(sid)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Error restoring session: {str(e)}")
+
+
+@router.post("/maintenance")
+def run_session_maintenance():
+    try:
+        archived = session_fs.auto_archive_inactive_sessions(int(os.getenv("NAVIBOT_ARCHIVE_AFTER_DAYS", "7")))
+        cleaned = session_fs.cleanup_archived_workspaces(int(os.getenv("NAVIBOT_ARCHIVE_RETENTION_DAYS", "30")))
+        return {"archived": archived, "cleaned": cleaned}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Error running maintenance: {str(e)}")
 
 
 @router.get("/{session_id}/messages")

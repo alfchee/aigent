@@ -5,7 +5,9 @@ from google.genai import types
 from typing import List, Callable, Any, Dict, Optional
 from dotenv import load_dotenv
 
-from app.core.persistence import load_chat_history, wrap_tool
+from app.core.persistence import load_chat_history
+from app.core.persistence_wrapper import wrap_tool
+from app.core.mcp_client import McpManager
 
 load_dotenv()
 
@@ -44,10 +46,12 @@ class NaviBot:
         self.model_name = model_name
         self._chat_sessions: Dict[str, Any] = {}
         self._tool_reference: Optional[str] = None
+        self.mcp_manager = McpManager()
+        self._mcp_loaded = False
 
 
         # Register default skills
-        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar
+        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar, telegram
         
         for tool in scheduler.tools:
             self.register_tool(tool)
@@ -69,10 +73,23 @@ class NaviBot:
             self.register_tool(tool)
         for tool in calendar.tools:
             self.register_tool(tool)
+        for tool in telegram.tools:
+            self.register_tool(tool)
 
     def register_tool(self, tool: Callable):
         """Registers a tool (function) to be used by the agent."""
         self.tools.append(wrap_tool(tool))
+
+    async def reload_mcp(self):
+        """Forces a reload of MCP servers based on current config."""
+        if self._mcp_loaded:
+            await self.mcp_manager.sync_servers()
+
+    async def close(self):
+        """Closes the bot and cleans up resources (MCP servers)."""
+        if self._mcp_loaded:
+            await self.mcp_manager.cleanup()
+            self._mcp_loaded = False
 
     def _load_tool_reference(self) -> str:
         if self._tool_reference is not None:
@@ -122,7 +139,7 @@ class NaviBot:
     async def start_chat(self, session_id: str, history: List[Dict[str, Any]] = None):
         """Starts a new chat session with the configured tools."""
         from app.skills.filesystem import get_filesystem_tools
-        from app.core.persistence import wrap_tool
+        from google.genai import types
 
         if history is None:
             history = load_chat_history(session_id)
@@ -130,20 +147,102 @@ class NaviBot:
         # Tools config
         tool_config = None
         
+        # Prepare tool definitions
+        native_tools = []
+        mcp_declarations = []
+        
+        # We need a map for manual execution if AFC is disabled or for mixed usage
+        self._mcp_wrappers = {}
+        # Session tools map for execution (Native + MCP)
+        self._session_tools = {}
+
         # 1. Get Global Tools
-        current_tools = self.tools.copy() if self.tools else []
+        if self.tools:
+            native_tools.extend(self.tools)
         
         # 2. Get Session-Specific Tools (Filesystem)
         fs_tools = get_filesystem_tools(session_id)
         for tool in fs_tools:
-            current_tools.append(wrap_tool(tool))
+            native_tools.append(wrap_tool(tool))
+        
+        # Add native tools to session map
+        for t in native_tools:
+            self._session_tools[t.__name__] = t
+
+        # 3. Get MCP Tools
+        if not self._mcp_loaded:
+             await self.mcp_manager.load_servers()
+             self._mcp_loaded = True
+        
+        mcp_tools = await self.mcp_manager.get_all_tools()
+        
+        def create_mcp_wrapper(t_name, t_desc):
+            async def _mcp_wrapper(**kwargs):
+                return await self.mcp_manager.call_tool(t_name, kwargs)
+            # Sanitize name for Python/Gemini compatibility
+            safe_name = t_name.replace("-", "_").replace(".", "_")
+            _mcp_wrapper.__name__ = safe_name
+            _mcp_wrapper.__doc__ = t_desc
+            return _mcp_wrapper
+
+        for tool_def in mcp_tools:
+            wrapper = create_mcp_wrapper(tool_def["name"], tool_def["description"])
+            safe_name = wrapper.__name__
             
-        tools_payload = current_tools
+            # Store wrapper for execution
+            self._mcp_wrappers[safe_name] = wrapper
+            self._session_tools[safe_name] = wrapper
+
+            
+            # Create Manual FunctionDeclaration using raw schema
+            # This bypasses SDK introspection issues
+            try:
+                # Ensure parameters is a dict
+                params = tool_def.get("inputSchema", {}).copy() # Copy to avoid modifying original
+                if not isinstance(params, dict):
+                    params = {}
+                
+                # Clean up schema if necessary
+                # Remove $schema field which causes Pydantic validation errors in Gemini SDK
+                def clean_schema(s):
+                    if isinstance(s, dict):
+                        if "$schema" in s:
+                            del s["$schema"]
+                        if "additionalProperties" in s:
+                            del s["additionalProperties"]
+                        for k, v in s.items():
+                            clean_schema(v)
+                    elif isinstance(s, list):
+                        for item in s:
+                            clean_schema(item)
+                    return s
+
+                params = clean_schema(params)
+                
+                decl = types.FunctionDeclaration(
+                    name=safe_name,
+                    description=tool_def.get("description", ""),
+                    parameters=params
+                )
+                mcp_declarations.append(decl)
+            except Exception as e:
+                print(f"Warning: Could not create declaration for {tool_def['name']}: {e}")
+
+        # Construct Tools List
+        # We pass native tools (callables) AND a Tool object containing MCP declarations
+        final_tools = []
+        if native_tools:
+            final_tools.extend(native_tools)
+        
+        if mcp_declarations:
+            final_tools.append(types.Tool(function_declarations=mcp_declarations))
+
+        tools_payload = final_tools
         if self._google_grounding_enabled():
             grounding_mode = self._google_grounding_mode()
             if grounding_mode == "only":
                 tools_payload = [{"google_search_retrieval": {}}]
-            elif grounding_mode == "auto" and not current_tools:
+            elif grounding_mode == "auto" and not final_tools:
                 tools_payload = [{"google_search_retrieval": {}}]
 
         if tools_payload:
@@ -151,12 +250,23 @@ class NaviBot:
             from app.core.config_manager import get_settings
 
             system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt)
+            
+            # Disable automatic function calling to handle MCP tools manually
+            # This ensures we can route calls to our wrappers correctly
             tool_config = types.GenerateContentConfig(
                 tools=tools_payload,
                 system_instruction=system_instruction if system_instruction else None,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                    disable=False
+                    disable=True
                 )
+            )
+        else:
+             # Handle case with no tools but system instruction
+             tool_reference = self._load_tool_reference()
+             from app.core.config_manager import get_settings
+             system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt)
+             tool_config = types.GenerateContentConfig(
+                system_instruction=system_instruction if system_instruction else None
             )
 
         # Create async chat session
@@ -168,11 +278,70 @@ class NaviBot:
 
     async def send_message(self, message: str) -> str:
         from app.core.runtime_context import get_session_id
+        import asyncio
 
         session_id = get_session_id()
         await self.ensure_session(session_id)
         
-        response = await self._chat_sessions[session_id].send_message(message)
+        chat = self._chat_sessions[session_id]
+        
+        # Initial message
+        response = await chat.send_message(message)
+        
+        # Manual ReAct Loop
+        max_turns = 10
+        for _ in range(max_turns):
+            if not response.candidates or not response.candidates[0].content.parts:
+                break
+            
+            function_calls = []
+            for part in response.candidates[0].content.parts:
+                if part.function_call:
+                    function_calls.append(part.function_call)
+            
+            if not function_calls:
+                break
+            
+            tool_outputs = []
+            for fc in function_calls:
+                tool_name = fc.name
+                tool_args = fc.args
+                
+                print(f"[Agent] Calling tool: {tool_name}")
+                
+                result = None
+                try:
+                    if tool_name in self._session_tools:
+                        func = self._session_tools[tool_name]
+                        if asyncio.iscoroutinefunction(func):
+                            result = await func(**tool_args)
+                        else:
+                            result = func(**tool_args)
+                    else:
+                        result = f"Error: Tool '{tool_name}' not found."
+                except Exception as e:
+                    result = f"Error executing {tool_name}: {str(e)}"
+                    print(f"[Agent] Tool execution error: {e}")
+                
+                # Create FunctionResponse
+                # Note: result must be a dict or convertible to Struct
+                if not isinstance(result, dict):
+                     result = {"result": str(result)}
+                
+                tool_outputs.append(
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name=tool_name,
+                            response=result
+                        )
+                    )
+                )
+            
+            if tool_outputs:
+                response = await chat.send_message(tool_outputs)
+            else:
+                break
+
         text = getattr(response, "text", None)
         return text if isinstance(text, str) else ""
 

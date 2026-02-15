@@ -1,32 +1,49 @@
 import asyncio
+import importlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
- 
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
- 
+
+import app.core.persistence as persistence
 import app.core.filesystem as filesystem
-from app.api.files import router as files_router
+import app.api.files as files_pkg
+import app.api.workspace as workspace_pkg
+import app.skills.filesystem as filesystem_skill
 from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
-from app.skills import filesystem as filesystem_skill
+
+
+def setup_env(tmp_dir):
+    db_path = Path(tmp_dir) / "test.db"
+    os.environ["NAVIBOT_DB_URL"] = f"sqlite:///{db_path}"
+    os.environ["NAVIBOT_WORKSPACE_DIR"] = tmp_dir
+    
+    importlib.reload(persistence)
+    persistence.init_db()
+    importlib.reload(filesystem)
+    importlib.reload(files_pkg)
+    importlib.reload(workspace_pkg)
+    importlib.reload(filesystem_skill)
 
 
 class TestSessionWorkspace(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        filesystem.BASE_WORKSPACE = Path(self.tmp.name)
- 
+        setup_env(self.tmp.name)
+
     def tearDown(self):
         self.tmp.cleanup()
- 
+
     def test_path_traversal_blocked(self):
         ws = filesystem.SessionWorkspace("s1")
         ws.write_text("a.txt", "ok")
         with self.assertRaises(ValueError):
             ws.write_text("../evil.txt", "nope")
- 
+
     def test_list_files_metadata(self):
         ws = filesystem.SessionWorkspace("s1")
         ws.write_text("dir/hello.txt", "hola")
@@ -35,19 +52,20 @@ class TestSessionWorkspace(unittest.TestCase):
         self.assertEqual(files[0]["path"], "dir/hello.txt")
         self.assertIn("size_bytes", files[0])
         self.assertIn("modified_at", files[0])
- 
- 
+
+
 class TestFileApi(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        filesystem.BASE_WORKSPACE = Path(self.tmp.name)
+        setup_env(self.tmp.name)
+        
         app = FastAPI()
-        app.include_router(files_router)
+        app.include_router(files_pkg.router)
         self.client = TestClient(app)
- 
+
     def tearDown(self):
         self.tmp.cleanup()
- 
+
     def test_upload_and_list_and_get(self):
         session_id = "s1"
         r = self.client.post(
@@ -57,20 +75,19 @@ class TestFileApi(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 200)
         saved_path = r.json()["saved"]["path"]
- 
+
         r = self.client.get(f"/api/files/{session_id}")
         self.assertEqual(r.status_code, 200)
         paths = [f["path"] for f in r.json()["files"]]
         self.assertIn(saved_path, paths)
- 
+
         r = self.client.get(f"/api/files/{session_id}/{saved_path}")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.content, b"hola")
- 
+
     def test_workspace_alias_list_and_get(self):
-        from app.api.workspace import router as workspace_router
         app = FastAPI()
-        app.include_router(workspace_router)
+        app.include_router(workspace_pkg.router)
         client = TestClient(app)
         session_id = "s1"
         ws = filesystem.SessionWorkspace(session_id)
@@ -85,17 +102,18 @@ class TestFileApi(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"hola", r.content)
 
- 
+
 class TestToolEvents(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        filesystem.BASE_WORKSPACE = Path(self.tmp.name)
+        setup_env(self.tmp.name)
+        
         self.session_token = set_session_id("s1")
         self.events = []
- 
+
         async def cb(event_type: str, data: dict):
             self.events.append((event_type, data))
- 
+
         self.cb_token = set_event_callback(cb)
  
     async def asyncTearDown(self):
@@ -121,7 +139,7 @@ class TestToolEvents(unittest.IsolatedAsyncioTestCase):
 class TestChatSessionIsolation(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        filesystem.BASE_WORKSPACE = Path(self.tmp.name)
+        setup_env(self.tmp.name)
 
     async def asyncTearDown(self):
         self.tmp.cleanup()

@@ -202,6 +202,12 @@ class ChannelManager:
             upsert_channel_config(channel_id, {"enabled": False, "settings": {}})
         return {"status": "disabled", "channel_id": channel_id}
 
+    async def send_message(self, channel_id: str, recipient_id: str, message: str) -> None:
+        channel = self.active_channels.get(channel_id)
+        if channel is None:
+            raise ValueError("channel no activo")
+        await channel.send_message(recipient_id, message)
+
     async def start_all(self) -> None:
         await self.load_from_settings()
 
