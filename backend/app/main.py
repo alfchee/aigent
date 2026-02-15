@@ -25,12 +25,27 @@ import uuid
 
 from app.core.logging import setup_logging, notify_alert
 from app.core.runtime_context import reset_request_id, set_request_id
+from contextlib import asynccontextmanager
 
 setup_logging()
 
 orchestrator = ModelOrchestrator()
 
-app = FastAPI(title="NaviBot API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    init_db()
+    start_scheduler()
+    await channel_manager.start_all()
+    yield
+    # Shutdown
+    await channel_manager.stop_all()
+    await bot_pool.close_all()
+    # Clean up memory system
+    from app.core.memory_manager import cleanup_memory
+    cleanup_memory()
+
+app = FastAPI(title="NaviBot API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,22 +55,6 @@ app.add_middleware(
 )
 
 logger = logging.getLogger("navibot.api")
-
-# Start Scheduler on startup
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-    start_scheduler()
-    await channel_manager.start_all()
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await channel_manager.stop_all()
-    await bot_pool.close_all()
-    # Clean up memory system
-    from app.core.memory_manager import cleanup_memory
-    cleanup_memory()
 
 class ChatRequest(BaseModel):
     message: str
