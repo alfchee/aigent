@@ -1,4 +1,6 @@
+import importlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,9 +8,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import app.core.persistence as persistence
 import app.core.filesystem as filesystem
-from app.api.code_execution import router as code_execution_router
-from app.api.files import router as files_router
+import app.core.code_execution_service as code_execution_service
+import app.api.code_execution as code_execution_pkg
+import app.api.files as files_pkg
 
 
 def _has_module(name: str) -> bool:
@@ -23,10 +27,25 @@ def _has_module(name: str) -> bool:
 class TestCodeExecutionApi(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        filesystem.BASE_WORKSPACE = Path(self.tmp.name)
+        
+        # Configure environment for this test
+        db_path = Path(self.tmp.name) / "test.db"
+        os.environ["NAVIBOT_DB_URL"] = f"sqlite:///{db_path}"
+        os.environ["NAVIBOT_WORKSPACE_DIR"] = self.tmp.name
+
+        # Reload modules to pick up new configuration
+        importlib.reload(persistence)
+        persistence.init_db()
+        
+        importlib.reload(filesystem)
+        importlib.reload(code_execution_service)
+        importlib.reload(code_execution_pkg)
+        importlib.reload(files_pkg)
+
+        # Create app with reloaded routers
         app = FastAPI()
-        app.include_router(code_execution_router)
-        app.include_router(files_router)
+        app.include_router(code_execution_pkg.router)
+        app.include_router(files_pkg.router)
         self.client = TestClient(app)
 
     def tearDown(self):
