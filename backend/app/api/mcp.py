@@ -7,6 +7,7 @@ import re
 import time
 import httpx
 from app.core.mcp_client import McpManager
+from app.core.bot_pool import bot_pool
 from app.core.mcp_config import (
     delete_registry_entry,
     delete_server_config,
@@ -141,6 +142,9 @@ def _validate_config(settings: McpServerConfigRequest, definition: dict[str, Any
             has_value = bool(env_vars.get(env)) or bool(os.environ.get(env))
             if not has_value:
                 raise HTTPException(status_code=422, detail=f"Falta la variable de entorno {env}")
+    else:
+        # If disabling, we don't strictly validate missing params/env vars
+        pass
 
 
 @router.get("/api/mcp/marketplace")
@@ -220,7 +224,7 @@ def get_servers():
 
 
 @router.post("/api/mcp/servers")
-def save_server(payload: Any = Body(...)):
+async def save_server(payload: Any = Body(...)):
     if isinstance(payload, (str, bytes, bytearray)):
         try:
             payload = json.loads(payload)
@@ -249,15 +253,17 @@ def save_server(payload: Any = Body(...)):
             {"enabled": server.enabled, "params": params, "env_vars": env_vars},
             keep_masked=True,
         )
+        await bot_pool.reload_all_mcp()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"status": "success", "message": f"Server {server.server_id} saved."}
 
 
 @router.delete("/api/mcp/servers/{server_id}")
-def delete_server(server_id: str):
+async def delete_server(server_id: str):
     deleted = delete_server_config(server_id)
     if deleted:
+        await bot_pool.reload_all_mcp()
         return {"status": "success", "message": f"Server {server_id} removed."}
     raise HTTPException(status_code=404, detail="Server not found")
 

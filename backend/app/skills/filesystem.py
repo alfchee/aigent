@@ -4,7 +4,7 @@ import json
 import mimetypes
 from pathlib import Path
 
-from app.core.filesystem import SessionWorkspace
+from app.core.filesystem import SessionWorkspace, cleanup_artifacts, delete_artifact, restore_artifact
 from app.core.runtime_context import emit_event
 
 
@@ -201,5 +201,57 @@ def get_filesystem_tools(session_id: str):
         except Exception as e:
             return f"Error listing files: {str(e)}"
 
-    return [create_file, read_file, update_file, list_files]
+    def delete_file(filepath: str, reason: str = "", actor: str = "agent") -> str:
+        try:
+            result = delete_artifact(session_id, filepath, actor=actor, reason=reason, allow_archived=False)
+            emit_event(
+                "artifact",
+                {
+                    "session_id": session_id,
+                    "op": "delete",
+                    "path": result.get("path"),
+                    "trash_id": result.get("trash_id"),
+                    "freed_bytes": result.get("freed_bytes"),
+                    "restore_until": result.get("restore_until"),
+                },
+            )
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            return f"Error deleting file: {str(e)}"
 
+    def restore_file(trash_id: str, actor: str = "agent") -> str:
+        try:
+            result = restore_artifact(session_id, trash_id, actor=actor, allow_archived=False)
+            emit_event(
+                "artifact",
+                {
+                    "session_id": session_id,
+                    "op": "restore",
+                    "path": result.get("path"),
+                    "trash_id": trash_id,
+                    "size_bytes": result.get("size_bytes"),
+                },
+            )
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            return f"Error restoring file: {str(e)}"
+
+    def cleanup_files(criteria_json: str, actor: str = "agent", dry_run: bool = False) -> str:
+        try:
+            criteria = json.loads(criteria_json) if criteria_json else {}
+            result = cleanup_artifacts(session_id, criteria, actor=actor, allow_archived=False, dry_run=dry_run)
+            emit_event(
+                "artifact",
+                {
+                    "session_id": session_id,
+                    "op": "cleanup",
+                    "count": result.get("count"),
+                    "freed_bytes": result.get("freed_bytes"),
+                    "dry_run": dry_run,
+                },
+            )
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            return f"Error cleaning files: {str(e)}"
+
+    return [create_file, read_file, update_file, list_files, delete_file, restore_file, cleanup_files]

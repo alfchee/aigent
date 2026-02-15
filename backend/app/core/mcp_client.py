@@ -24,16 +24,50 @@ class McpManager:
 
     async def load_servers(self): 
         """Carga la configuración de MCP desde la base de datos e inicia los servidores.""" 
+        await self.sync_servers()
+
+    async def sync_servers(self):
+        """Sincroniza los servidores activos con la configuración actual."""
         try:
             config = get_active_config_runtime()
             registry = get_registry_merged()
             servers = config.get("servers", {})
+            
+            # 1. Detener servidores que ya no están habilitados o configurados
+            active_ids = list(self.active_sessions.keys())
+            for server_id in active_ids:
+                if server_id not in servers or not servers[server_id].get('enabled'):
+                    await self.stop_server(server_id)
+            
+            # 2. Iniciar servidores habilitados que no están corriendo
             for server_id, settings in servers.items(): 
                 if settings.get('enabled'): 
+                    # TODO: Detectar cambios de config para reiniciar?
                     if server_id not in self.active_sessions:
                         await self.connect_server(server_id, settings, registry)
         except Exception as e:
-            print(f"Error loading MCP servers: {e}")
+            print(f"Error syncing MCP servers: {e}")
+
+    async def stop_server(self, server_id: str):
+        """Detiene un servidor MCP específico."""
+        if server_id in self._shutdown_events:
+            self._shutdown_events[server_id].set()
+            # Esperar a que termine la tarea
+            if server_id in self._server_tasks:
+                try:
+                    await asyncio.wait_for(self._server_tasks[server_id], timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+            
+            # Limpieza adicional si es necesario
+            if server_id in self.active_sessions:
+                del self.active_sessions[server_id]
+            if server_id in self._shutdown_events:
+                del self._shutdown_events[server_id]
+            if server_id in self._server_tasks:
+                del self._server_tasks[server_id]
+            
+            print(f"🛑 MCP Server detenido: {server_id}")
 
     async def _run_server_task(self, name: str, params: StdioServerParameters, ready_event: asyncio.Event):
         """Runs the MCP client session in a dedicated task."""
@@ -88,6 +122,7 @@ class McpManager:
             
         env = os.environ.copy() 
         if 'env_vars' in definition: 
+            missing_envs = []
             for env_var in definition['env_vars']:
                 # Allow overriding via settings, or fallback to os.environ, or fail?
                 # Usually env vars like TOKENS are in os.environ or settings (if secure).
@@ -95,10 +130,15 @@ class McpManager:
                 # "Usuario ingresa el token y da Guardar -> active_mcp.json"
                 # So we check settings['env_vars'] first, then os.environ
                 val = settings.get('env_vars', {}).get(env_var) or os.environ.get(env_var)
+                if isinstance(val, str) and env_var.endswith("_BASE_URL") and not val.startswith(("http://", "https://")):
+                    val = f"https://{val.strip()}"
                 if val:
                     env[env_var] = val
                 else:
-                    print(f"Warning: Env var {env_var} missing for {server_id}")
+                    missing_envs.append(env_var)
+            if missing_envs:
+                print(f"Missing env vars for {server_id}: {', '.join(missing_envs)}")
+                return
 
         # 3. Iniciar conexión STDIO 
         if stdio_client is None:
@@ -210,13 +250,17 @@ class McpManager:
             
             env = os.environ.copy()
             if 'env_vars' in definition:
+                missing_envs = []
                 for env_var in definition['env_vars']:
                     val = settings.get('env_vars', {}).get(env_var) or os.environ.get(env_var)
+                    if isinstance(val, str) and env_var.endswith("_BASE_URL") and not val.startswith(("http://", "https://")):
+                        val = f"https://{val.strip()}"
                     if val:
                         env[env_var] = val
                     else:
-                        # Si es prueba, tal vez fallar si falta variable
-                        pass 
+                        missing_envs.append(env_var)
+                if missing_envs:
+                    return {"success": False, "message": f"Faltan env vars: {', '.join(missing_envs)}"}
 
             # 3. Iniciar conexión STDIO temporal
             if stdio_client is None:

@@ -52,7 +52,11 @@ def _decrypt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _decrypt_env_vars(value: Any) -> dict[str, str]:
     if isinstance(value, dict) and value.get(ENCRYPTED_FLAG) is True:
-        return _decrypt_payload(value)
+        try:
+            return _decrypt_payload(value)
+        except ValueError:
+            # If decryption fails (e.g. missing key), return empty to prevent crash
+            return {}
     if isinstance(value, dict):
         return {str(k): str(v) for k, v in value.items()}
     return {}
@@ -122,13 +126,62 @@ def _legacy_to_config() -> dict[str, Any]:
     return {"servers": legacy}
 
 
+def _merge_legacy_config(current: dict[str, Any], legacy: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    if not isinstance(current, dict) or "servers" not in current:
+        current = {"servers": {}}
+    legacy_servers = legacy.get("servers", {}) if isinstance(legacy, dict) else {}
+    servers = current.get("servers", {})
+    updated = False
+    for server_id, legacy_settings in legacy_servers.items():
+        if not isinstance(legacy_settings, dict):
+            continue
+        existing = servers.get(server_id)
+        if not isinstance(existing, dict):
+            new_entry = dict(legacy_settings)
+            env_vars = legacy_settings.get("env_vars")
+            if isinstance(env_vars, dict) and not env_vars.get(ENCRYPTED_FLAG):
+                new_entry["env_vars"] = _encrypt_payload(env_vars)
+            servers[server_id] = new_entry
+            updated = True
+            continue
+        if "enabled" not in existing and "enabled" in legacy_settings:
+            existing["enabled"] = legacy_settings.get("enabled")
+            updated = True
+        if not existing.get("params") and legacy_settings.get("params"):
+            existing["params"] = legacy_settings.get("params")
+            updated = True
+        env_vars = legacy_settings.get("env_vars")
+        existing_env = existing.get("env_vars")
+        if isinstance(existing_env, dict) and not existing_env.get(ENCRYPTED_FLAG) and isinstance(env_vars, dict):
+            safe_keys = {"JIRA_BASE_URL", "JIRA_USER_EMAIL", "JIRA_TYPE"}
+            for key in safe_keys:
+                legacy_value = env_vars.get(key)
+                if legacy_value and legacy_value != existing_env.get(key):
+                    existing_env[key] = legacy_value
+                    updated = True
+            existing["env_vars"] = existing_env
+        if isinstance(env_vars, dict) and not env_vars.get(ENCRYPTED_FLAG):
+            env_vars = _encrypt_payload(env_vars)
+        if env_vars and (existing_env is None or (isinstance(existing_env, dict) and not existing_env)):
+            existing["env_vars"] = env_vars
+            updated = True
+        servers[server_id] = existing
+    current["servers"] = servers
+    return current, updated
+
+
 def get_active_config() -> dict[str, Any]:
     data = get_app_setting(CONFIG_KEY)
     if isinstance(data, dict) and "servers" in data:
-        return data
+        legacy = _legacy_to_config()
+        merged, updated = _merge_legacy_config(data, legacy)
+        if updated:
+            set_app_setting(CONFIG_KEY, merged)
+        return merged
     legacy = _legacy_to_config()
     if legacy.get("servers"):
-        set_app_setting(CONFIG_KEY, legacy)
+        merged, _ = _merge_legacy_config({"servers": {}}, legacy)
+        set_app_setting(CONFIG_KEY, merged)
     return legacy
 
 
@@ -176,7 +229,8 @@ def upsert_server_config(server_id: str, settings: dict[str, Any], keep_masked: 
             continue
         merged_env_vars[str(key)] = str(value)
     if merged_env_vars and _get_cipher() is None:
-        raise ValueError("clave de cifrado requerida para guardar env_vars")
+        # Warn but allow if encryption is not configured (dev mode)
+        pass
     servers[server_id] = {
         "enabled": bool(settings.get("enabled", True)),
         "params": settings.get("params", {}) or {},

@@ -7,6 +7,8 @@ export type SessionListItem = {
   title: string
   created_at: string | null
   updated_at: string | null
+  status?: 'active' | 'archived' | 'purged'
+  archived_at?: string | null
 }
 
 type ListSessionsResponse = {
@@ -25,16 +27,25 @@ type AutotitleResponse = {
 export const useSessionsStore = defineStore('sessions', {
   state: () => ({
     sessions: [] as SessionListItem[],
+    archivedSessions: [] as SessionListItem[],
     loading: false as boolean,
     error: null as string | null
   }),
   actions: {
-    async fetchSessions() {
+    async fetchSessions(options?: { includeArchived?: boolean }) {
       this.loading = true
       this.error = null
       try {
-        const data = await fetchJson<ListSessionsResponse>('/api/sessions')
-        this.sessions = data.sessions || []
+        const includeArchived = Boolean(options?.includeArchived)
+        const url = includeArchived ? '/api/sessions?include_archived=true' : '/api/sessions'
+        const data = await fetchJson<ListSessionsResponse>(url)
+        const items = data.sessions || []
+        const active = items.filter((s) => s.status !== 'archived')
+        const archived = items.filter((s) => s.status === 'archived')
+        this.sessions = active
+        if (includeArchived) {
+          this.archivedSessions = archived
+        }
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)
       } finally {
@@ -72,4 +83,3 @@ export const useSessionsStore = defineStore('sessions', {
     }
   }
 })
-

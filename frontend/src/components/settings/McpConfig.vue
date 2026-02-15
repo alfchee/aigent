@@ -55,20 +55,22 @@
         <p class="text-slate-500">Cargando servidores...</p>
     </div>
     
-    <div v-else-if="store.error" class="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200">
-        {{ store.error }}
-    </div>
+    <div v-else>
+        <div v-if="store.error" class="mb-4 p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 flex justify-between items-center">
+            <span>{{ store.error }}</span>
+            <button @click="store.error = null" class="text-red-800 hover:text-red-900">&times;</button>
+        </div>
 
-    <McpList 
-        v-else 
-        :servers="store.servers" 
-        :selectedIds="selectedIds"
-        @edit="openModal" 
-        @delete="confirmDelete"
-        @toggle="toggleServer"
-        @toggle-select="toggleSelection"
-        @toggle-all="toggleAll"
-    />
+        <McpList 
+            :servers="store.servers" 
+            :selectedIds="selectedIds"
+            @edit="openModal" 
+            @delete="confirmDelete"
+            @toggle="toggleServer"
+            @toggle-select="toggleSelection"
+            @toggle-all="toggleAll"
+        />
+    </div>
 
     <McpServerModal 
         :show="showModal"
@@ -80,7 +82,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onErrorCaptured } from 'vue'
 import { useMcpStore, type McpServer } from '../../stores/mcpStore'
 import McpList from './mcp/McpList.vue'
 import McpServerModal from './mcp/McpServerModal.vue'
@@ -92,6 +94,13 @@ const selectedIds = ref<string[]>([])
 const importUrl = ref('')
 const importLoading = ref(false)
 const importError = ref<string | null>(null)
+
+// Error Boundary
+onErrorCaptured((err) => {
+    console.error('McpConfig Error Boundary:', err)
+    store.error = 'Ocurrió un error inesperado en la interfaz. Por favor recarga la página.'
+    return false // Prevent propagation
+})
 
 onMounted(() => {
     store.fetchServers()
@@ -119,11 +128,15 @@ async function confirmDelete(server: McpServer) {
 }
 
 async function toggleServer(server: McpServer) {
-    await store.saveServer({
-        ...server,
-        server_id: server.id, // Ensure ID is passed
-        enabled: !server.enabled
-    })
+    try {
+        await store.saveServer({
+            ...server,
+            server_id: server.id, // Ensure ID is passed
+            enabled: !server.enabled
+        })
+    } catch (e: any) {
+        store.error = e.message || 'Error al cambiar estado del servidor'
+    }
 }
 
 function toggleSelection(id: string) {

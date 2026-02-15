@@ -52,6 +52,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     await channel_manager.stop_all()
+    await bot_pool.close_all()
     # Clean up memory system
     from app.core.memory_manager import cleanup_memory
     cleanup_memory()

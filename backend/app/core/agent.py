@@ -80,6 +80,17 @@ class NaviBot:
         """Registers a tool (function) to be used by the agent."""
         self.tools.append(wrap_tool(tool))
 
+    async def reload_mcp(self):
+        """Forces a reload of MCP servers based on current config."""
+        if self._mcp_loaded:
+            await self.mcp_manager.sync_servers()
+
+    async def close(self):
+        """Closes the bot and cleans up resources (MCP servers)."""
+        if self._mcp_loaded:
+            await self.mcp_manager.cleanup()
+            self._mcp_loaded = False
+
     def _load_tool_reference(self) -> str:
         if self._tool_reference is not None:
             return self._tool_reference
@@ -128,7 +139,6 @@ class NaviBot:
     async def start_chat(self, session_id: str, history: List[Dict[str, Any]] = None):
         """Starts a new chat session with the configured tools."""
         from app.skills.filesystem import get_filesystem_tools
-        from app.core.signature_utils import create_signature_from_schema
         from google.genai import types
 
         if history is None:

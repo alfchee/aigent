@@ -13,14 +13,17 @@ router = APIRouter()
  
  
 @router.get("/api/files/{session_id}")
-async def list_session_files(session_id: str, directory: str = "/"):
-    ws = SessionWorkspace(session_id)
-    return {"session_id": session_id, "files": ws.list_files(directory)}
+async def list_session_files(session_id: str, directory: str = "/", allow_archived: bool = False):
+    try:
+        ws = SessionWorkspace(session_id, allow_archived=allow_archived)
+        return {"session_id": session_id, "files": ws.list_files(directory)}
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
  
  
 @router.get("/api/files/{session_id}/{filepath:path}")
-async def get_session_file(session_id: str, filepath: str, download: bool = False):
-    ws = SessionWorkspace(session_id)
+async def get_session_file(session_id: str, filepath: str, download: bool = False, allow_archived: bool = False):
+    ws = SessionWorkspace(session_id, allow_archived=allow_archived)
     try:
         target = ws._safe_path(filepath)
     except ValueError as e:

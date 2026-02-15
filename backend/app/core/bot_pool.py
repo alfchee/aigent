@@ -21,5 +21,29 @@ class BotPool:
             self._bots[name] = bot
             return bot
 
+    async def reload_all_mcp(self):
+        """Reloads MCP configuration for all active bots."""
+        # We need a snapshot of bots to avoid lock issues during async ops
+        with self._lock:
+            bots = list(self._bots.values())
+        
+        for bot in bots:
+            try:
+                await bot.reload_mcp()
+            except Exception as e:
+                print(f"Error reloading MCP for bot {bot.model_name}: {e}")
+
+    async def close_all(self):
+        """Closes all bots and releases resources."""
+        with self._lock:
+            bots = list(self._bots.values())
+            self._bots.clear()
+        
+        for bot in bots:
+            try:
+                await bot.close()
+            except Exception as e:
+                print(f"Error closing bot {bot.model_name}: {e}")
+
 
 bot_pool = BotPool()

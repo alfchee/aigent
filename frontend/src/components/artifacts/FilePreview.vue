@@ -9,6 +9,7 @@ import type { ArtifactFileEntry } from '../../stores/artifacts'
 
 const props = defineProps<{
   sessionId: string
+  allowArchived?: boolean
   file: ArtifactFileEntry
 }>()
 
@@ -53,10 +54,16 @@ function encodePathSegments(p: string) {
 
 const downloadUrl = computed(() => {
   const base = `/api/files/${encodeURIComponent(props.sessionId)}/${encodePathSegments(props.file.path)}`
-  return `${base}?download=true`
+  const params = new URLSearchParams()
+  params.set('download', 'true')
+  if (props.allowArchived) params.set('allow_archived', 'true')
+  return `${base}?${params.toString()}`
 })
 
-const viewUrl = computed(() => `/api/files/${encodeURIComponent(props.sessionId)}/${encodePathSegments(props.file.path)}`)
+const viewUrl = computed(() => {
+  const base = `/api/files/${encodeURIComponent(props.sessionId)}/${encodePathSegments(props.file.path)}`
+  return props.allowArchived ? `${base}?allow_archived=true` : base
+})
 
 const isImage = computed(() => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext.value))
 const isHtml = computed(() => ['html', 'htm'].includes(ext.value))
