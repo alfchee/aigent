@@ -1,6 +1,7 @@
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 import logging
+from langchain_core.tools import tool
 from app.core.google_auth import get_google_credentials, ALL_SCOPES
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ def get_calendar_service():
         return None
     return build('calendar', 'v3', credentials=creds)
 
+@tool
 async def list_upcoming_events(max_results: int = 5):
     """
     Lista los próximos eventos de tu calendario principal.
@@ -65,6 +67,7 @@ async def list_upcoming_events(max_results: int = 5):
         logger.error(f"Error listing events: {e}")
         return f"Error al consultar eventos: {str(e)}"
 
+@tool
 async def create_calendar_event(summary: str, start_iso: str, end_iso: str, description: str = ""):
     """
     Crea un evento en el calendario.
@@ -108,6 +111,7 @@ async def create_calendar_event(summary: str, start_iso: str, end_iso: str, desc
         logger.error(f"Error creating event: {e}")
         return f"❌ Error creando evento: {str(e)}"
 
+@tool
 async def update_calendar_event(
     event_id: str,
     summary: Optional[str] = None,
@@ -184,6 +188,7 @@ async def update_calendar_event(
         logger.error(f"Unexpected error updating event: {e}")
         return f"❌ Error inesperado al actualizar evento: {str(e)}"
 
+@tool
 async def delete_calendar_event(event_id: str) -> str:
     """
     Elimina un evento del calendario.
@@ -209,5 +214,3 @@ async def delete_calendar_event(event_id: str) -> str:
     except Exception as e:
         logger.error(f"Unexpected error deleting event: {e}")
         return f"❌ Error inesperado al eliminar evento: {str(e)}"
-
-tools = [list_upcoming_events, create_calendar_event, update_calendar_event, delete_calendar_event]

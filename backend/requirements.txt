@@ -28,3 +28,6 @@ chromadb
 sentence-transformers
 mem0ai
 mcp
+langchain
+langgraph
+langchain-google-genai

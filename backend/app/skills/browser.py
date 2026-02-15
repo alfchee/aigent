@@ -1,6 +1,7 @@
 from playwright.async_api import async_playwright
 import asyncio
 import json
+from langchain_core.tools import tool
 
 from app.core.filesystem import SessionWorkspace
 from app.core.runtime_context import get_session_id, emit_event
@@ -29,6 +30,7 @@ async def ensure_browser():
     if not ctx["page"]:
         ctx["page"] = await ctx["browser"].new_page()
 
+@tool
 async def navigate(url: str):
     """Navigates the browser to the specified URL."""
     try:
@@ -40,6 +42,7 @@ async def navigate(url: str):
     except Exception as e:
         return f"Error navigating: {str(e)}"
 
+@tool
 async def get_page_content():
     """Returns the text content of the current page."""
     try:
@@ -52,6 +55,7 @@ async def get_page_content():
     except Exception as e:
         return f"Error getting content: {str(e)}"
 
+@tool
 async def screenshot(filename: str = "screenshot.png"):
     """Takes a screenshot of the current page."""
     try:
@@ -66,6 +70,7 @@ async def screenshot(filename: str = "screenshot.png"):
     except Exception as e:
         return f"Error taking screenshot: {str(e)}"
 
+@tool
 async def close_browser():
     """Closes the browser session."""
     global _playwright
@@ -83,5 +88,3 @@ async def close_browser():
         await _playwright.stop()
         _playwright = None
     return "Browser closed."
-
-tools = [navigate, get_page_content, screenshot, close_browser]
