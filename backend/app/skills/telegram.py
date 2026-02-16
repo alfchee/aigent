@@ -3,6 +3,16 @@ from app.channels.manager import channel_manager
 
 
 async def send_telegram_message(recipient_id: str, message: str) -> str:
+    """
+    Envía un mensaje a un usuario de Telegram.
+    
+    Args:
+        recipient_id: ID del usuario de Telegram.
+        message: El mensaje a enviar.
+        
+    Returns:
+        String indicando el resultado.
+    """
     if not isinstance(recipient_id, str) or not recipient_id.strip():
         return "recipient_id requerido"
     if not isinstance(message, str) or not message.strip():

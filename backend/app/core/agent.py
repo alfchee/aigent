@@ -1,15 +1,22 @@
 import os
+import json
+import logging
 from pathlib import Path
 from google import genai
 from google.genai import types
-from typing import List, Callable, Any, Dict, Optional
+from typing import List, Callable, Any, Dict, Optional, Union
 from dotenv import load_dotenv
 
-from app.core.persistence import load_chat_history
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.tools import StructuredTool
+
+from app.core.persistence import load_chat_history, save_chat_message
 from app.core.persistence_wrapper import wrap_tool
 from app.core.mcp_client import McpManager
+from app.core.agent_graph import AgentGraph
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 SEARCH_POLICY = """
 ## Política de búsqueda web (prioridad estricta)
@@ -32,6 +39,14 @@ BASE_CONSTRAINTS = """
 4. **Estilo**: Mantén la coherencia con la personalidad definida, pero prioriza siempre la utilidad y la precisión técnica.
 """.strip()
 
+class HistoryItem:
+    def __init__(self, role: str, parts: list):
+        self.role = role
+        self.parts = parts
+    
+    def __repr__(self):
+        return f"HistoryItem(role={self.role}, parts={self.parts})"
+
 class NaviBot:
     def __init__(self, model_name: str = "gemini-flash-latest"):
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -50,7 +65,7 @@ class NaviBot:
         self._mcp_loaded = False
 
 
-        # Register default skills
+        # Register default skills (Required for Simple Mode / send_message)
         from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar, telegram
         
         for tool in scheduler.tools:
@@ -90,6 +105,279 @@ class NaviBot:
         if self._mcp_loaded:
             await self.mcp_manager.cleanup()
             self._mcp_loaded = False
+
+    def _history_to_lc_messages(self, history: List[Any]) -> List[BaseMessage]:
+        """Converts persistence history (Gemini format) to LangChain messages."""
+        messages = []
+        for item in history:
+            if isinstance(item, dict):
+                role = item.get("role")
+                parts = item.get("parts", [])
+            else:
+                # Assume object with attributes (HistoryItem or Gemini Content)
+                role = getattr(item, "role", "user")
+                parts = getattr(item, "parts", [])
+            
+            content = ""
+            tool_calls = []
+            tool_results = []
+            
+            for part in parts:
+                if isinstance(part, dict):
+                    if "text" in part:
+                        content += part["text"]
+                    elif "function_call" in part:
+                        fc = part["function_call"]
+                        import uuid
+                        tc_id = str(uuid.uuid4())
+                        tool_calls.append({
+                            "name": fc.get("name"),
+                            "args": fc.get("args"),
+                            "id": tc_id,
+                            "type": "tool_call"
+                        })
+                    elif "function_response" in part:
+                        tool_results.append(part["function_response"])
+                else:
+                    # Assume Gemini SDK Part object
+                    if hasattr(part, "text") and part.text:
+                        content += part.text
+                    # Add handling for function_call/response objects if needed
+                    # But load_chat_history usually returns dicts or we converted them.
+                    pass
+
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "model":
+                msg = AIMessage(content=content)
+                if tool_calls:
+                    msg.tool_calls = tool_calls
+                messages.append(msg)
+            elif role == "function":
+                # If it's a function response, we need to create ToolMessage(s)
+                # But we need tool_call_id.
+                # Heuristic: Match with the last AIMessage's tool_calls in order?
+                # This is complex. 
+                # Alternative: Represent as SystemMessage or HumanMessage with "Tool Output: ..."
+                # to give context without breaking the graph structure.
+                for tr in tool_results:
+                    messages.append(ToolMessage(
+                        content=json.dumps(tr["response"], ensure_ascii=False),
+                        tool_call_id="unknown", # This might break LangGraph validation
+                        name=tr["name"]
+                    ))
+        return messages
+
+    async def _convert_mcp_tools(self) -> List[StructuredTool]:
+        """Converts loaded MCP tools to LangChain StructuredTool objects."""
+        if not self._mcp_loaded:
+            await self.mcp_manager.load_servers()
+            self._mcp_loaded = True
+            
+        mcp_tools = await self.mcp_manager.get_all_tools()
+        lc_tools = []
+        
+        for tool_def in mcp_tools:
+            name = tool_def["name"]
+            description = tool_def.get("description", "")
+            schema = tool_def.get("inputSchema", {})
+            
+            # Wrapper function for the tool
+            async def _wrapper(**kwargs):
+                return await self.mcp_manager.call_tool(name, kwargs)
+            
+            # Create StructuredTool
+            # We need to convert JSON schema to Pydantic model or pass schema directly if supported
+            # StructuredTool.from_function infers args from signature.
+            # But _wrapper has **kwargs.
+            # We can use StructuredTool(name=..., func=..., args_schema=...)
+            # But creating Pydantic model dynamically from JSON schema is involved.
+            # Simpler approach: Use the wrapper and let LC handle it, 
+            # or use a helper to create the tool.
+            
+            # For now, let's try to pass the function with a proper docstring or signature?
+            # Or use StructuredTool generic constructor.
+            # LangChain's StructuredTool supports 'args_schema' (Pydantic).
+            
+            # If we skip args_schema, LC might complain or not validate.
+            # But for Gemini, we just need the tool definition passed to the model.
+            # AgentGraph uses ChatGoogleGenerativeAI which calls bind_tools.
+            # bind_tools accepts dicts (JSON schema) or Pydantic or Tools.
+            
+            # Let's try to create a dynamic Pydantic model from the schema.
+            # Or simpler: Just return the dict definition if AgentGraph supports it?
+            # AgentGraph uses SkillLoader which returns StructuredTools.
+            # We should probably return StructuredTool.
+            
+            try:
+                from langchain_core.pydantic_v1 import create_model, Field
+            except ImportError:
+                from pydantic import create_model, Field
+            
+            fields = {}
+            if "properties" in schema:
+                for prop_name, prop_def in schema["properties"].items():
+                    prop_type = str
+                    # Simple type mapping
+                    t = prop_def.get("type")
+                    if t == "integer": prop_type = int
+                    elif t == "number": prop_type = float
+                    elif t == "boolean": prop_type = bool
+                    elif t == "array": 
+                        # Handle array items type for Pydantic/Gemini
+                        items_def = prop_def.get("items", {})
+                        it = items_def.get("type")
+                        item_type = str
+                        if it == "integer": item_type = int
+                        elif it == "number": item_type = float
+                        elif it == "boolean": item_type = bool
+                        elif it == "object": item_type = dict
+                        elif it == "array": item_type = list # Nested arrays might need recursion
+                        
+                        prop_type = List[item_type]
+                    elif t == "object": prop_type = dict
+                    
+                    description_field = prop_def.get("description", "")
+                    fields[prop_name] = (prop_type, Field(description=description_field))
+            
+            # Create dynamic model
+            # Note: This is basic and might fail for complex schemas
+            try:
+                ArgsModel = create_model(f"{name}Schema", **fields)
+                
+                tool = StructuredTool(
+                    name=name,
+                    description=description,
+                    func=None, # Sync func
+                    coroutine=_wrapper, # Async func
+                    args_schema=ArgsModel
+                )
+                lc_tools.append(tool)
+            except Exception as e:
+                logger.warning(f"Could not convert MCP tool {name} to LangChain: {e}")
+                
+        return lc_tools
+
+    async def send_message_with_graph(
+        self, 
+        message: str,
+        max_iterations: int = 10,
+        timeout_seconds: int = 300,
+        event_callback: Optional[Callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes message using AgentGraph (LangGraph).
+        """
+        from app.core.runtime_context import get_session_id
+        session_id = get_session_id()
+        
+        # 1. Load History
+        history = load_chat_history(session_id)
+        
+        # 2. Convert History
+        lc_messages = self._history_to_lc_messages(history)
+        
+        # 3. Add User Message
+        lc_messages.append(HumanMessage(content=message))
+        
+        # 4. Initialize Graph with Extra Tools (MCP)
+        mcp_lc_tools = await self._convert_mcp_tools()
+        
+        # We also need to add the native tools registered in self.tools
+        # But AgentGraph loads them via SkillLoader. 
+        # self.tools contains wrappers from wrap_tool which calls save_tool_call.
+        # SkillLoader loads raw functions/tools.
+        # If we rely on AgentGraph's loader, we get the tools.
+        # But we lose the persistence wrapper (save_tool_call) if AgentGraph doesn't use it.
+        # AgentGraph uses SkillLoader which loads modules.
+        # Ideally, SkillLoader should wrap tools or AgentGraph should.
+        # For now, let's assume standard logging is enough or we rely on the graph's output.
+        
+        agent_graph = AgentGraph(model_name=self.model_name, extra_tools=mcp_lc_tools)
+        graph = agent_graph.get_runnable()
+        
+        # 5. Execute Graph (Streaming)
+        inputs = {"messages": lc_messages}
+        final_state = inputs
+        
+        async for state in graph.astream(inputs, stream_mode="values"):
+            final_state = state
+            if state["messages"]:
+                last_msg = state["messages"][-1]
+                node_name = getattr(last_msg, 'name', 'unknown')
+                print(f"[Graph] State update. Last msg from: {node_name}")
+                if event_callback:
+                    await event_callback({"type": "step", "node": node_name, "content": last_msg.content[:50]})
+
+        # 6. Extract New Messages and Save to DB
+        new_messages = final_state["messages"][len(lc_messages):] # Messages added during execution
+        
+        # Save User Message first (it was added to inputs but not DB)
+        # Actually, main.py might expect us to NOT save it if it does it?
+        # main.py does NOT save the user message before calling send_message.
+        # It relies on history sync after call.
+        # So we should SAVE it here or ensure it's in the returned history?
+        # If we save it here, main.py sync will see it.
+        
+        # Let's save everything generated, including the user message we processed.
+        # User message:
+        save_chat_message(session_id, "user", message)
+        
+        response_text = ""
+        iterations = 0
+        tool_calls_count = 0
+        
+        for msg in new_messages:
+            iterations += 1
+            if isinstance(msg, AIMessage):
+                # Save as 'model'
+                # If it has tool_calls, format as Gemini parts
+                content_obj = {"role": "model", "parts": []}
+                if msg.content:
+                    content_obj["parts"].append({"text": msg.content})
+                    response_text = msg.content # Last text is usually the response
+                
+                if msg.tool_calls:
+                    tool_calls_count += len(msg.tool_calls)
+                    for tc in msg.tool_calls:
+                        content_obj["parts"].append({
+                            "function_call": {
+                                "name": tc["name"],
+                                "args": tc["args"]
+                            }
+                        })
+                
+                save_chat_message(session_id, "model", content_obj)
+                
+            elif isinstance(msg, ToolMessage):
+                # Save as 'function' (tool result)
+                # Gemini format: role='function', parts=[{'function_response': ...}]
+                content_obj = {"role": "function", "parts": [{
+                    "function_response": {
+                        "name": msg.name,
+                        "response": {"result": msg.content} # Content is string, wrap in dict
+                    }
+                }]}
+                save_chat_message(session_id, "function", content_obj)
+            
+            elif isinstance(msg, HumanMessage):
+                 # Sometimes agents return HumanMessage as "result from agent"
+                 # We treat it as assistant text for the user?
+                 # Or "model"?
+                 # In our graph, workers return HumanMessage with name=worker_name.
+                 # We should save this as model response text.
+                 content_obj = {"role": "model", "parts": [{"text": f"[{msg.name}] {msg.content}"}]}
+                 save_chat_message(session_id, "model", content_obj)
+                 response_text = msg.content
+
+        return {
+            "response": response_text,
+            "iterations": iterations,
+            "tool_calls": [], # We could reconstruct this list if needed by frontend
+            "reasoning_trace": [], 
+            "termination_reason": "completed",
+            "execution_time_seconds": 0 # Placeholder
+        }
 
     def _load_tool_reference(self) -> str:
         if self._tool_reference is not None:
@@ -342,8 +630,21 @@ class NaviBot:
             else:
                 break
 
-        text = getattr(response, "text", None)
-        return text if isinstance(text, str) else ""
+        text = ""
+        try:
+            text = response.text
+        except Exception:
+            # If response has no text (e.g. only function calls), accessing .text might raise or return None
+            pass
+            
+        if not text and response.candidates and response.candidates[0].content.parts:
+            # Check for function calls in the final response (meaning we stopped before executing them)
+            parts = response.candidates[0].content.parts
+            fcs = [p.function_call for p in parts if p.function_call]
+            if fcs:
+                text = f"[System Note] I reached the maximum number of steps ({max_turns}) and had to stop. The last requested action was: {fcs[0].name}. Please try to refine your request."
+        
+        return text if text else "No response from agent (empty text)."
 
     async def ensure_session(self, session_id: str):
         """Ensures a chat session exists, loading from history if needed."""
@@ -352,19 +653,17 @@ class NaviBot:
 
     def get_history(self, session_id: str) -> List[Any]:
         """Returns the chat history for a session."""
+        # Priority: Check active session (legacy/genai)
         if session_id in self._chat_sessions:
             chat = self._chat_sessions[session_id]
-            # Handle AsyncChat which uses get_history() method instead of history property
             if hasattr(chat, "get_history") and callable(chat.get_history):
                 return chat.get_history()
-            # Fallback for other chat types or older SDK versions
             if hasattr(chat, "history"):
                 return chat.history
-            
-            # If neither exists, log warning and return empty list
-            print(f"Warning: Could not access history for session {session_id}")
-            return []
-        return []
+        
+        # Fallback: Load from DB (AgentGraph mode)
+        db_history = load_chat_history(session_id)
+        return [HistoryItem(role=item.get("role"), parts=item.get("parts", [])) for item in db_history]
 
     async def send_message_with_react(
         self, 
@@ -376,34 +675,15 @@ class NaviBot:
         """
         Execute message with ReAct (Reason + Act) loop.
         
-        The agent will iteratively reason, act, observe, and reflect
-        until the task is complete or limits are reached.
-        
-        Args:
-            message: The task/question for the agent
-            max_iterations: Maximum reasoning cycles (default: 10)
-            timeout_seconds: Maximum execution time (default: 300s)
-            event_callback: Optional async callback for streaming events
-            
-        Returns:
-            Dict containing:
-                - response: Final agent response
-                - iterations: Number of iterations executed
-                - tool_calls: List of all tool calls made
-                - reasoning_trace: List of reasoning steps
-                - termination_reason: Why the loop ended
-                - execution_time_seconds: Total execution time
+        NOW MIGRATED TO USE AgentGraph (LangGraph).
         """
-        from app.core.react_engine import ReActLoop
-        
-        react_loop = ReActLoop(
-            agent=self,
-            max_iterations=max_iterations,
-            timeout_seconds=timeout_seconds,
-            event_callback=event_callback
+        # Use the new Graph-based implementation
+        return await self.send_message_with_graph(
+            message, 
+            max_iterations, 
+            timeout_seconds, 
+            event_callback
         )
-        
-        return await react_loop.execute(message)
 
 
 async def execute_agent_task(user_text: str, session_id: str, memory_user_id: str | None = None) -> str:

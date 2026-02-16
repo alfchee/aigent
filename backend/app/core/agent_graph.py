@@ -19,13 +19,44 @@ load_dotenv()
 # Configurar logging
 logger = logging.getLogger(__name__)
 
+# Prompts de Sistema para cada Trabajador
+WORKER_PROMPTS = {
+    "WebNavigator": (
+        "Eres un especialista en navegación web. Tu objetivo es buscar información, "
+        "leer contenido de páginas y sintetizar respuestas precisas.\n"
+        "Instrucciones:\n"
+        "- Utiliza 'search' para encontrar fuentes relevantes.\n"
+        "- Utiliza 'browser' para navegar y extraer contenido detallado cuando sea necesario.\n"
+        "- Si la información es extensa, resume los puntos clave.\n"
+        "- Cita las fuentes (URLs) de donde obtuviste la información."
+    ),
+    "CalendarManager": (
+        "Eres el gestor de calendario y agenda. Tu responsabilidad es organizar el tiempo del usuario.\n"
+        "Instrucciones:\n"
+        "- Siempre verifica la fecha y hora actual antes de agendar o consultar eventos relativos (como 'mañana').\n"
+        "- Usa formato ISO 8601 (YYYY-MM-DDTHH:MM:SS) para las fechas.\n"
+        "- Al listar eventos, sé claro y ordenado.\n"
+        "- Si hay conflictos de horario, avisa al usuario."
+    ),
+    "GeneralAssistant": (
+        "Eres un asistente general versátil. Te encargas de tareas del sistema, ejecución de código, "
+        "gestión de archivos y memoria.\n"
+        "Instrucciones:\n"
+        "- Si te piden ejecutar código, usa las herramientas de 'code_execution'.\n"
+        "- Para manipular archivos, usa las herramientas de 'workspace'.\n"
+        "- Si necesitas recordar algo para el futuro, usa las herramientas de 'memory'.\n"
+        "- Sé proactivo y busca la solución más eficiente."
+    )
+}
+
 class AgentGraph:
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None):
         """
         Inicializa el Grafo Multi-Agente con Supervisor.
         """
         self.model_name = model_name
         self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.extra_tools = extra_tools or []
         
         if not self.api_key:
             logger.warning("GOOGLE_API_KEY not found. AgentGraph may fail to initialize correctly.")
@@ -34,6 +65,10 @@ class AgentGraph:
         self.loader = SkillLoader()
         self.skills_map = self.loader.load_skills_map()
         
+        # Inyectar herramientas extra en un módulo virtual 'extra_tools'
+        if self.extra_tools:
+            self.skills_map["extra_tools"] = self.extra_tools
+
         # 2. Configurar Modelo
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
@@ -47,7 +82,7 @@ class AgentGraph:
         self.worker_skills = {
             "WebNavigator": ["browser", "search", "reader"],
             "CalendarManager": ["calendar", "scheduler"],
-            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "memory", "telegram"] 
+            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "memory", "telegram", "extra_tools"] 
             # GeneralAssistant se lleva el resto o lo que definamos
         }
 
@@ -110,7 +145,10 @@ class AgentGraph:
             # Nota: create_react_agent devuelve un CompiledGraph.
             # Lo envolvemos en una función nodo.
             
-            worker_agent = create_react_agent(self.llm, worker_tools)
+            # Obtener prompt del sistema
+            system_prompt = WORKER_PROMPTS.get(worker_name, "Eres un asistente útil.")
+            
+            worker_agent = create_react_agent(self.llm, worker_tools, prompt=system_prompt)
             
             # Definir la función del nodo
             # Usamos functools.partial para capturar worker_agent en el closure correctamente

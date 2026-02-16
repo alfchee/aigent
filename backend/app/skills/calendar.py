@@ -106,7 +106,7 @@ async def create_calendar_event(summary: str, start_iso: str, end_iso: str, desc
         }
 
         event = service.events().insert(calendarId='primary', body=event_body).execute()
-        return f"✅ Evento creado con éxito: {event.get('htmlLink')}"
+        return f"Evento creado: {event.get('htmlLink')}"
     except Exception as e:
         logger.error(f"Error creating event: {e}")
         return f"❌ Error creando evento: {str(e)}"
@@ -214,3 +214,5 @@ async def delete_calendar_event(event_id: str) -> str:
     except Exception as e:
         logger.error(f"Unexpected error deleting event: {e}")
         return f"❌ Error inesperado al eliminar evento: {str(e)}"
+
+tools = [list_upcoming_events, create_calendar_event, update_calendar_event, delete_calendar_event]

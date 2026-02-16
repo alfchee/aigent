@@ -88,3 +88,5 @@ async def close_browser():
         await _playwright.stop()
         _playwright = None
     return "Browser closed."
+
+tools = [navigate, get_page_content, screenshot, close_browser]
