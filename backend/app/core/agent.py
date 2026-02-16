@@ -39,6 +39,26 @@ BASE_CONSTRAINTS = """
 4. **Estilo**: Mantén la coherencia con la personalidad definida, pero prioriza siempre la utilidad y la precisión técnica.
 """.strip()
 
+TOOL_RESPONSE_LIMIT = int(os.getenv("NAVIBOT_TOOL_RESPONSE_LIMIT", "20000"))
+
+def _truncate_text(value: str, limit: int) -> str:
+    if value is None:
+        return ""
+    if len(value) <= limit:
+        return value
+    return value[:limit] + "...[truncated]"
+
+def _prepare_tool_response(result: Any, limit: int) -> dict:
+    if isinstance(result, dict):
+        try:
+            payload = json.dumps(result, ensure_ascii=False)
+        except Exception:
+            payload = str(result)
+        if len(payload) <= limit:
+            return result
+        return {"result": _truncate_text(payload, limit)}
+    return {"result": _truncate_text(str(result), limit)}
+
 class HistoryItem:
     def __init__(self, role: str, parts: list):
         self.role = role
@@ -125,7 +145,12 @@ class NaviBot:
             for part in parts:
                 if isinstance(part, dict):
                     if "text" in part:
-                        content += part["text"]
+                        text = part.get("text")
+                        if text is None:
+                            text = ""
+                        elif not isinstance(text, str):
+                            text = str(text)
+                        content += text
                     elif "function_call" in part:
                         fc = part["function_call"]
                         import uuid
@@ -140,8 +165,13 @@ class NaviBot:
                         tool_results.append(part["function_response"])
                 else:
                     # Assume Gemini SDK Part object
-                    if hasattr(part, "text") and part.text:
-                        content += part.text
+                    if hasattr(part, "text"):
+                        text = part.text
+                        if text is None:
+                            text = ""
+                        elif not isinstance(text, str):
+                            text = str(text)
+                        content += text
                     # Add handling for function_call/response objects if needed
                     # But load_chat_history usually returns dicts or we converted them.
                     pass
@@ -407,11 +437,17 @@ class NaviBot:
         self._tool_reference = "\n".join(collected).strip()
         return self._tool_reference
 
-    def _build_system_instruction(self, tool_reference: str, extra_prompt: str | None = None) -> str:
+    def _build_system_instruction(self, tool_reference: str, extra_prompt: str | None = None, user_facts: str | None = None) -> str:
         from datetime import datetime
         extra = (extra_prompt or "").strip()
-        # Sandwich structure: Personality -> Capabilities -> Search Policy -> Base Constraints
-        parts = [part for part in [extra, tool_reference, SEARCH_POLICY, BASE_CONSTRAINTS] if part]
+        
+        # Format user facts
+        facts_section = ""
+        if user_facts:
+            facts_section = f"## User Facts (Long Term Memory)\n{user_facts}"
+
+        # Sandwich structure: Personality -> User Facts -> Capabilities -> Search Policy -> Base Constraints
+        parts = [part for part in [extra, facts_section, tool_reference, SEARCH_POLICY, BASE_CONSTRAINTS] if part]
         combined = "\n\n".join(parts).strip()
         
         current_dt = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -533,11 +569,25 @@ class NaviBot:
             elif grounding_mode == "auto" and not final_tools:
                 tools_payload = [{"google_search_retrieval": {}}]
 
+        # Load User Facts for System Prompt (Common for both branches)
+        user_facts_str = None
+        try:
+            from app.core.runtime_context import resolve_memory_user_id
+            from app.core.memory_manager import get_agent_memory
+            
+            # Resolve memory user ID from session
+            mem_uid = resolve_memory_user_id(None, session_id)
+            facts = get_agent_memory().get_all_user_facts(mem_uid)
+            if facts:
+                user_facts_str = "\n".join([f"- {f}" for f in facts])
+        except Exception as e:
+            print(f"Warning: Failed to load user facts: {e}")
+
         if tools_payload:
             tool_reference = self._load_tool_reference()
             from app.core.config_manager import get_settings
-
-            system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt)
+            
+            system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt, user_facts=user_facts_str)
             
             # Disable automatic function calling to handle MCP tools manually
             # This ensures we can route calls to our wrappers correctly
@@ -552,7 +602,7 @@ class NaviBot:
              # Handle case with no tools but system instruction
              tool_reference = self._load_tool_reference()
              from app.core.config_manager import get_settings
-             system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt)
+             system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt, user_facts=user_facts_str)
              tool_config = types.GenerateContentConfig(
                 system_instruction=system_instruction if system_instruction else None
             )
@@ -611,10 +661,7 @@ class NaviBot:
                     result = f"Error executing {tool_name}: {str(e)}"
                     print(f"[Agent] Tool execution error: {e}")
                 
-                # Create FunctionResponse
-                # Note: result must be a dict or convertible to Struct
-                if not isinstance(result, dict):
-                     result = {"result": str(result)}
+                result = _prepare_tool_response(result, TOOL_RESPONSE_LIMIT)
                 
                 tool_outputs.append(
                     types.Part(

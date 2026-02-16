@@ -18,6 +18,7 @@ class McpManager:
         self.active_sessions: Dict[str, ClientSession] = {} 
         self.tools_cache = [] 
         self.tool_lookup: Dict[str, tuple] = {} # prefixed_name -> (server_id, original_name) 
+        self.tool_definitions: Dict[str, Dict[str, Any]] = {}
         
         self._server_tasks: Dict[str, asyncio.Task] = {}
         self._shutdown_events: Dict[str, asyncio.Event] = {}
@@ -168,6 +169,7 @@ class McpManager:
         """Recupera herramientas de TODOS los servidores conectados.""" 
         all_tools = [] 
         self.tool_lookup.clear()
+        self.tool_definitions.clear()
         for name, session in self.active_sessions.items(): 
             try:
                 result = await session.list_tools() 
@@ -183,6 +185,7 @@ class McpManager:
                         "origin_session": session, # Guardamos ref para saber a quién llamar 
                         "original_name": tool.name 
                     } 
+                    self.tool_definitions[prefixed_name] = tool_def
                     all_tools.append(tool_def) 
             except Exception as e:
                 print(f"Error listing tools for {name}: {e}")
@@ -191,6 +194,17 @@ class McpManager:
     async def call_tool(self, tool_name: str, arguments: dict): 
         """Enruta la llamada al servidor MCP correcto.""" 
         
+        if not isinstance(arguments, dict):
+            arguments = {}
+        tool_def = self.tool_definitions.get(tool_name)
+        if tool_def:
+            schema = tool_def.get("inputSchema") or {}
+            required = schema.get("required") if isinstance(schema, dict) else None
+            if isinstance(required, list):
+                missing = [name for name in required if arguments.get(name) is None]
+                if missing:
+                    return f"Error: Missing required argument(s): {', '.join(missing)}"
+
         if tool_name in self.tool_lookup:
             server_id, real_tool_name = self.tool_lookup[tool_name]
         else:
@@ -303,3 +317,5 @@ class McpManager:
         self.active_sessions.clear()
         self._server_tasks.clear()
         self._shutdown_events.clear()
+        self.tool_lookup.clear()
+        self.tool_definitions.clear()

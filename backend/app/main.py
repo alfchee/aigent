@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from pydantic import BaseModel
 from app.api.files import router as files_router
 from app.api.artifacts import router as artifacts_router
@@ -21,6 +23,7 @@ from app.skills.scheduler import start_scheduler
 import asyncio
 import logging
 import time
+import re
 import uuid
 
 from app.core.logging import setup_logging, notify_alert
@@ -46,6 +49,13 @@ async def lifespan(app: FastAPI):
     cleanup_memory()
 
 app = FastAPI(title="NaviBot API", version="0.1.0", lifespan=lifespan)
+
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+FRONTEND_INDEX = FRONTEND_DIST / "index.html"
+FRONTEND_ASSETS = FRONTEND_DIST / "assets"
+
+def _frontend_enabled() -> bool:
+    return FRONTEND_INDEX.exists()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -77,6 +87,8 @@ class ChatResponse(BaseModel):
 
 @app.get("/")
 async def root():
+    if _frontend_enabled():
+        return FileResponse(FRONTEND_INDEX)
     return {"message": "NaviBot Backend is running", "status": "ok"}
 
 app.include_router(files_router)
@@ -88,6 +100,19 @@ app.include_router(settings_router)
 app.include_router(channels_router)
 app.include_router(mcp_router)
 app.include_router(scheduler_router)
+if FRONTEND_ASSETS.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS)), name="assets")
+
+@app.get("/{full_path:path}")
+async def frontend_fallback(full_path: str):
+    if not _frontend_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    target = FRONTEND_DIST / full_path
+    if target.exists() and target.is_file():
+        return FileResponse(target)
+    return FileResponse(FRONTEND_INDEX)
 
 def _truncate_text(value: str, limit: int = 500) -> str:
     if len(value) <= limit:
@@ -105,6 +130,52 @@ def _parse_json_body(body: bytes) -> dict | None:
         return data
     except Exception:
         return None
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    try:
+        from google.genai.errors import ClientError
+
+        return isinstance(exc, ClientError) and getattr(exc, "status_code", None) == 429
+    except Exception:
+        return False
+
+
+def _extract_retry_delay_seconds(exc: Exception) -> int | None:
+    delay = None
+    try:
+        response_json = getattr(exc, "response_json", None)
+        if isinstance(response_json, dict):
+            error_obj = response_json.get("error")
+            if isinstance(error_obj, dict):
+                details = error_obj.get("details")
+                if isinstance(details, list):
+                    for item in details:
+                        if not isinstance(item, dict):
+                            continue
+                        retry_delay = item.get("retryDelay")
+                        if isinstance(retry_delay, str) and retry_delay.endswith("s"):
+                            delay = int(float(retry_delay[:-1]))
+                            break
+    except Exception:
+        delay = None
+    if delay is None:
+        match = re.search(r"retryDelay['\"]?:\s*'?(\\d+(?:\\.\\d+)?)s", str(exc))
+        if match:
+            delay = int(float(match.group(1)))
+    return delay
+
+
+async def _run_with_rate_limit_retry(fn, *args, **kwargs):
+    try:
+        return await fn(*args, **kwargs)
+    except Exception as e:
+        if _is_rate_limit_error(e):
+            retry_delay = _extract_retry_delay_seconds(e)
+            wait_seconds = retry_delay if retry_delay is not None else 30
+            await asyncio.sleep(min(wait_seconds, 60))
+            return await fn(*args, **kwargs)
+        raise
 
 
 @app.middleware("http")
@@ -222,7 +293,11 @@ async def chat(request: ChatRequest, http_request: Request):
 
         if request.use_react_loop:
             try:
-                result = await bot.send_message_with_react(message_for_agent, max_iterations=request.max_iterations)
+                result = await _run_with_rate_limit_retry(
+                    bot.send_message_with_react,
+                    message_for_agent,
+                    max_iterations=request.max_iterations
+                )
             except Exception as e:
                 try:
                     from google.genai.errors import ClientError
@@ -275,7 +350,11 @@ async def chat(request: ChatRequest, http_request: Request):
                     except Exception:
                         pass
                 await fallback_bot.start_chat(session_id=request.session_id, history=history)
-                result = await fallback_bot.send_message_with_react(message_for_agent, max_iterations=request.max_iterations)
+                result = await _run_with_rate_limit_retry(
+                    fallback_bot.send_message_with_react,
+                    message_for_agent,
+                    max_iterations=request.max_iterations
+                )
                 bot = fallback_bot
                 model_name = upgrade_target
 
@@ -321,7 +400,7 @@ async def chat(request: ChatRequest, http_request: Request):
             )
         else:
             try:
-                response_text = await bot.send_message(message_for_agent)
+                response_text = await _run_with_rate_limit_retry(bot.send_message, message_for_agent)
             except Exception as e:
                 try:
                     from google.genai.errors import ClientError
@@ -364,6 +443,25 @@ async def chat(request: ChatRequest, http_request: Request):
                 response_text = ""
             return ChatResponse(response=response_text, model_name=model_name)
     except Exception as e:
+        if _is_rate_limit_error(e):
+            retry_delay = _extract_retry_delay_seconds(e)
+            retry_delay = retry_delay if retry_delay is not None else 30
+            logger.warning(
+                "chat_request_rate_limited",
+                extra={
+                    "event": "chat_request_rate_limited",
+                    "payload": {
+                        "session_id": request.session_id,
+                        "model_name": getattr(request, "model_name", None),
+                        "retry_after_seconds": retry_delay,
+                    },
+                },
+            )
+            raise HTTPException(
+                status_code=429,
+                detail={"message": "Rate limit exceeded", "retry_after_seconds": retry_delay},
+                headers={"Retry-After": str(retry_delay)},
+            )
         error_id = uuid.uuid4().hex
         logger.exception(
             "chat_request_error",

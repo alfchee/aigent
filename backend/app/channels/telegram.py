@@ -135,6 +135,9 @@ class TelegramChannel(BaseChannel):
 
     async def start(self) -> None:
         import uuid
+        polling_enabled = os.getenv("NAVIBOT_TELEGRAM_POLLING_ENABLED", "true").lower() not in {"0", "false", "no"}
+        if not polling_enabled:
+            raise RuntimeError("telegram polling disabled via NAVIBOT_TELEGRAM_POLLING_ENABLED")
         instance_id = str(uuid.uuid4())[:8]
         pid = os.getpid()
         print(f"[{pid}] TelegramChannel {instance_id}: Attempting to acquire lock...")

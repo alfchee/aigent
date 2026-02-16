@@ -1,5 +1,6 @@
 import os
 import time
+import re
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -22,6 +23,23 @@ FALLBACK_MODELS = [
 ]
 
 ALLOWED_MODELS = set(FAST_MODELS + FALLBACK_MODELS)
+MODEL_NAME_RE = re.compile(r"^gemini-[a-z0-9][a-z0-9\.-]*$", re.IGNORECASE)
+
+
+def _normalize_model_name(model_name: str) -> str:
+    value = (model_name or "").strip()
+    if value.startswith("models/"):
+        value = value[7:]
+    return value
+
+
+def _is_allowed_model(model_name: str) -> bool:
+    value = _normalize_model_name(model_name)
+    if not value:
+        return False
+    if value in ALLOWED_MODELS:
+        return True
+    return bool(MODEL_NAME_RE.match(value))
 
 
 class ModelConfig(BaseModel):
@@ -225,11 +243,17 @@ def _load_from_db(base: AppSettings) -> AppSettings:
 
 
 def _is_valid_current_model(model_name: str) -> bool:
-    return (model_name or "").strip() in FAST_MODELS
+    value = _normalize_model_name(model_name)
+    if value in FAST_MODELS:
+        return True
+    return _is_allowed_model(value)
 
 
 def _is_valid_fallback_model(model_name: str) -> bool:
-    return (model_name or "").strip() in FALLBACK_MODELS
+    value = _normalize_model_name(model_name)
+    if value in FALLBACK_MODELS:
+        return True
+    return _is_allowed_model(value)
 
 
 def _repair_db_settings_if_needed(defaults: AppSettings) -> None:
@@ -284,13 +308,13 @@ def update_settings(payload: dict[str, Any]) -> AppSettings:
             payload.pop(key, None)
 
     if "current_model" in payload:
-        value = str(payload["current_model"] or "").strip()
+        value = _normalize_model_name(str(payload["current_model"] or ""))
         if value and not _is_valid_current_model(value):
             raise ValueError("current_model inválido")
         if value:
             set_app_setting("current_model", value)
     if "fallback_model" in payload:
-        value = str(payload["fallback_model"] or "").strip()
+        value = _normalize_model_name(str(payload["fallback_model"] or ""))
         if value and not _is_valid_fallback_model(value):
             raise ValueError("fallback_model inválido")
         if value:
@@ -323,23 +347,23 @@ def get_session_model(session_id: str) -> Optional[str]:
     value = get_session_model_setting(session_id)
     if not value:
         return None
-    name = value.strip()
-    if not name or name not in ALLOWED_MODELS:
+    name = _normalize_model_name(value)
+    if not name or not _is_allowed_model(name):
         return None
     return name
 
 
 def set_session_model(session_id: str, model_name: str) -> None:
-    name = (model_name or "").strip()
-    if name not in ALLOWED_MODELS:
+    name = _normalize_model_name(model_name)
+    if not _is_allowed_model(name):
         raise ValueError("model_name inválido")
     set_session_model_setting(session_id=session_id, model_name=name)
 
 
 def resolve_model(session_id: str, requested_model: Optional[str] = None) -> str:
-    explicit = (requested_model or "").strip()
+    explicit = _normalize_model_name(requested_model or "")
     if explicit:
-        if explicit not in ALLOWED_MODELS:
+        if not _is_allowed_model(explicit):
             raise ValueError("model_name inválido")
         return explicit
     session_value = get_session_model(session_id)
