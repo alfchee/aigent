@@ -86,7 +86,7 @@ class NaviBot:
 
 
         # Register default skills (Required for Simple Mode / send_message)
-        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar, telegram
+        from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar, telegram, image_generation
         
         for tool in scheduler.tools:
             self.register_tool(tool)
@@ -109,6 +109,8 @@ class NaviBot:
         for tool in calendar.tools:
             self.register_tool(tool)
         for tool in telegram.tools:
+            self.register_tool(tool)
+        for tool in image_generation.tools:
             self.register_tool(tool)
 
     def register_tool(self, tool: Callable):

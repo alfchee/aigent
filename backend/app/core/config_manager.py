@@ -68,15 +68,26 @@ class LimitsConfig(BaseModel):
     max_retries: int = 1
 
 
+class RoleConfig(BaseModel):
+    supervisor_model: str = "gemini-2.5-pro"
+    search_worker_model: str = "gemini-2.0-flash"
+    code_worker_model: str = "gemini-2.0-flash"
+    voice_worker_model: str = "gemini-flash-latest"
+    scheduled_worker_model: str = "gemini-flash-latest"
+    image_worker_model: str = "gemini-2.5-flash-image"
+
+
 class AppSettings(BaseModel):
     current_model: str = "gemini-flash-latest"
     fallback_model: str = "gemini-2.5-pro"
     auto_escalate: bool = True
+    emergency_mode: bool = False
     system_prompt: str = ""
     models: dict[str, ModelConfig] = Field(default_factory=dict)
     
     # New configurations
     routing_config: RoutingConfig = Field(default_factory=RoutingConfig)
+    role_config: RoleConfig = Field(default_factory=RoleConfig)
     limits_config: LimitsConfig = Field(default_factory=LimitsConfig)
     google_workspace_config: dict[str, Any] = Field(default_factory=dict)
     
@@ -177,6 +188,9 @@ IMPORTANTE SOBRE TU MEMORIA:
                 name="gemini-3-pro-preview", temperature=0.7, top_p=0.95, max_output_tokens=8192
             ),
             "gemini-2.5-pro": ModelConfig(name="gemini-2.5-pro", temperature=0.7, top_p=0.95, max_output_tokens=8192),
+            "gemini-2.5-flash-image": ModelConfig(
+                name="gemini-2.5-flash-image", temperature=0.7, top_p=0.95, max_output_tokens=8192
+            ),
         },
         routing_config=routing_defaults,
         limits_config=limits_defaults,
@@ -213,7 +227,9 @@ def _load_from_db(base: AppSettings) -> AppSettings:
     
     # New settings
     routing_config_data = get_app_setting("routing_config")
+    role_config_data = get_app_setting("role_config")
     limits_config_data = get_app_setting("limits_config")
+    emergency_mode = get_app_setting("emergency_mode")
     google_workspace_config_data = get_app_setting("google_workspace_config")
     model_routing_json_data = get_app_setting("model_routing_json")
 
@@ -224,11 +240,15 @@ def _load_from_db(base: AppSettings) -> AppSettings:
         updates["fallback_model"] = fallback_model.strip()
     if auto_escalate is not None:
         updates["auto_escalate"] = _coerce_bool(auto_escalate, base.auto_escalate)
+    if emergency_mode is not None:
+        updates["emergency_mode"] = _coerce_bool(emergency_mode, base.emergency_mode)
     if isinstance(system_prompt, str):
         updates["system_prompt"] = system_prompt
         
     if isinstance(routing_config_data, dict):
         updates["routing_config"] = RoutingConfig(**routing_config_data)
+    if isinstance(role_config_data, dict):
+        updates["role_config"] = RoleConfig(**role_config_data)
     if isinstance(limits_config_data, dict):
         updates["limits_config"] = LimitsConfig(**limits_config_data)
     if isinstance(google_workspace_config_data, dict):
@@ -301,7 +321,8 @@ def get_settings(force_reload: bool = False) -> AppSettings:
 def update_settings(payload: dict[str, Any]) -> AppSettings:
     allowed_keys = {
         "current_model", "fallback_model", "auto_escalate", "system_prompt",
-        "routing_config", "limits_config", "model_routing_json", "google_workspace_config"
+        "routing_config", "role_config", "emergency_mode", "limits_config", 
+        "model_routing_json", "google_workspace_config"
     }
     for key in list(payload.keys()):
         if key not in allowed_keys:
@@ -321,11 +342,15 @@ def update_settings(payload: dict[str, Any]) -> AppSettings:
             set_app_setting("fallback_model", value)
     if "auto_escalate" in payload:
         set_app_setting("auto_escalate", bool(payload["auto_escalate"]))
+    if "emergency_mode" in payload:
+        set_app_setting("emergency_mode", bool(payload["emergency_mode"]))
     if "system_prompt" in payload:
         set_app_setting("system_prompt", str(payload["system_prompt"] or ""))
         
     if "limits_config" in payload:
         set_app_setting("limits_config", payload["limits_config"])
+    if "role_config" in payload:
+        set_app_setting("role_config", payload["role_config"])
         
     if "google_workspace_config" in payload:
         set_app_setting("google_workspace_config", payload["google_workspace_config"])

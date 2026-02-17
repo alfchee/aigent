@@ -330,3 +330,15 @@ def list_logs(job_id: str | None = None, limit: int = 200):
     if job_id:
         logs = [log for log in logs if log.get("job_id") == job_id]
     return logs[-limit:]
+
+def delete_job(job_id: str):
+    """
+    Elimina una tarea programada por su ID.
+    """
+    sched = get_scheduler()
+    try:
+        sched.remove_job(job_id)
+        return True
+    except Exception as e:
+        print(f"Error removing job {job_id}: {e}")
+        return False

@@ -30,8 +30,10 @@ class UpdateSettingsRequest(BaseModel):
     current_model: str | None = None
     fallback_model: str | None = None
     auto_escalate: bool | None = None
+    emergency_mode: bool | None = None
     system_prompt: str | None = None
     routing_config: dict[str, Any] | None = None
+    role_config: dict[str, Any] | None = None
     limits_config: dict[str, Any] | None = None
     model_routing_json: dict[str, Any] | None = None
 
@@ -54,10 +56,12 @@ def get_app_settings():
             "current_model": s.current_model,
             "fallback_model": s.fallback_model,
             "auto_escalate": s.auto_escalate,
+            "emergency_mode": s.emergency_mode,
             "system_prompt": s.system_prompt,
             "models": list(s.models.keys()),
             "tiers": {"fast": FAST_MODELS, "fallback": FALLBACK_MODELS},
             "routing_config": s.routing_config.model_dump(),
+            "role_config": s.role_config.model_dump(),
             "limits_config": s.limits_config.model_dump(),
             "model_routing_json": s.model_routing_json,
         },
@@ -76,10 +80,12 @@ def put_app_settings(payload: UpdateSettingsRequest):
             "current_model": updated.current_model,
             "fallback_model": updated.fallback_model,
             "auto_escalate": updated.auto_escalate,
+            "emergency_mode": updated.emergency_mode,
             "system_prompt": updated.system_prompt,
             "models": list(updated.models.keys()),
             "tiers": {"fast": FAST_MODELS, "fallback": FALLBACK_MODELS},
             "routing_config": updated.routing_config.model_dump(),
+            "role_config": updated.role_config.model_dump(),
             "limits_config": updated.limits_config.model_dump(),
             "model_routing_json": updated.model_routing_json,
         },

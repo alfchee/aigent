@@ -15,7 +15,17 @@ const activeTab = ref('general')
 const currentModel = ref('')
 const fallbackModel = ref('')
 const autoEscalate = ref(true)
+const emergencyMode = ref(false)
 const systemPrompt = ref('')
+
+const roleConfig = ref({
+  supervisor_model: '',
+  search_worker_model: '',
+  code_worker_model: '',
+  voice_worker_model: '',
+  scheduled_worker_model: '',
+  image_worker_model: ''
+})
 
 // Limits
 const executionTimeout = ref(300)
@@ -55,7 +65,13 @@ async function load() {
     currentModel.value = store.currentModel
     fallbackModel.value = store.fallbackModel
     autoEscalate.value = store.autoEscalate
+    emergencyMode.value = store.emergencyMode
     systemPrompt.value = store.systemPrompt
+    
+    // Roles
+    if (store.roleConfig) {
+      roleConfig.value = { ...store.roleConfig }
+    }
     
     // Limits
     if (store.limitsConfig) {
@@ -83,6 +99,19 @@ watch(jsonContent, (newVal) => {
   }
 })
 
+function resetRoles() {
+  if (confirm('¿Estás seguro de que quieres restaurar la configuración de roles por defecto?')) {
+    roleConfig.value = {
+      supervisor_model: 'gemini-2.5-pro',
+      search_worker_model: 'gemini-2.0-flash',
+      code_worker_model: 'gemini-2.0-flash',
+      voice_worker_model: 'gemini-flash-latest',
+      scheduled_worker_model: 'gemini-flash-latest',
+      image_worker_model: 'gemini-2.5-flash-image'
+    }
+  }
+}
+
 async function save() {
   if (!canSave.value) return
   saving.value = true
@@ -94,7 +123,9 @@ async function save() {
       current_model: currentModel.value,
       fallback_model: fallbackModel.value,
       auto_escalate: autoEscalate.value,
+      emergency_mode: emergencyMode.value,
       system_prompt: systemPrompt.value,
+      role_config: { ...roleConfig.value },
       limits_config: {
         execution_timeout_seconds: Number(executionTimeout.value),
         max_search_results: Number(maxSearchResults.value),
@@ -120,7 +151,13 @@ async function save() {
     currentModel.value = store.currentModel
     fallbackModel.value = store.fallbackModel
     autoEscalate.value = store.autoEscalate
+    emergencyMode.value = store.emergencyMode
     systemPrompt.value = store.systemPrompt
+    
+    if (store.roleConfig) {
+      roleConfig.value = { ...store.roleConfig }
+    }
+    
     if (store.limitsConfig) {
       executionTimeout.value = store.limitsConfig.execution_timeout_seconds ?? 300
       maxSearchResults.value = store.limitsConfig.max_search_results ?? 5
@@ -188,7 +225,7 @@ onMounted(() => {
         <!-- Tabs -->
         <div class="flex border-b border-slate-200 space-x-1 overflow-x-auto">
           <button
-            v-for="tab in ['general', 'personality', 'limits', 'mcp', 'advanced']"
+            v-for="tab in ['general', 'roles', 'personality', 'limits', 'mcp', 'advanced']"
             :key="tab"
             @click="activeTab = tab"
             class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap capitalize"
@@ -267,6 +304,149 @@ onMounted(() => {
                     <span class="text-xs font-bold px-2 py-1 rounded" :class="providers.brave ? 'bg-emerald-200 text-emerald-800' : 'bg-slate-200 text-slate-500'">{{ providers.brave ? 'ACTIVO' : 'INACTIVO' }}</span>
                  </div>
               </div>
+            </section>
+          </div>
+
+          <!-- ROLES TAB -->
+          <div v-if="activeTab === 'roles'" class="p-6 space-y-8">
+            <section class="space-y-4">
+               <div class="flex items-center justify-between">
+                  <h3 class="text-base font-semibold text-slate-800 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                    Orquestación Granular de Roles
+                  </h3>
+                  
+                  <div class="flex items-center gap-2">
+                      <button 
+                        @click="resetRoles"
+                        class="text-xs text-slate-500 hover:text-slate-700 underline mr-2"
+                        title="Restaurar configuración de roles por defecto"
+                      >
+                        Restaurar Defaults
+                      </button>
+
+                      <span class="text-xs font-medium text-slate-500 uppercase tracking-wider">Modo Emergencia</span>
+                     <button 
+                        @click="emergencyMode = !emergencyMode"
+                        class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                        :class="emergencyMode ? 'bg-red-600' : 'bg-slate-200'"
+                     >
+                        <span class="sr-only">Activar modo emergencia</span>
+                        <span
+                           class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"
+                           :class="emergencyMode ? 'translate-x-6' : 'translate-x-1'"
+                        />
+                     </button>
+                  </div>
+               </div>
+               
+               <div v-if="emergencyMode" class="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3 animate-pulse">
+                  <svg class="w-5 h-5 text-red-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                  <div>
+                     <h4 class="text-sm font-bold text-red-800">Modo de Emergencia Activo</h4>
+                     <p class="text-xs text-red-700 mt-1">
+                        Todos los roles "Pro" han sido degradados a modelos "Flash" para conservar tokens y evitar límites de tasa. 
+                        La configuración de roles a continuación será ignorada temporalmente a favor de modelos eficientes.
+                     </p>
+                  </div>
+               </div>
+               
+               <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <!-- Supervisor -->
+                  <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-3">
+                     <div class="flex items-center justify-between">
+                        <label class="block text-sm font-bold text-slate-800">Cerebro (Supervisor)</label>
+                        <span class="text-xs px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium">Lógica y Decisión</span>
+                     </div>
+                     <select
+                        v-model="roleConfig.supervisor_model"
+                        class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                        :disabled="emergencyMode"
+                     >
+                        <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                     </select>
+                     <p class="text-xs text-slate-500">Encargado de planificar, tomar decisiones finales y orquestar a los otros agentes. Se recomienda un modelo potente (Pro).</p>
+                  </div>
+
+                  <!-- Search Worker -->
+                  <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-3">
+                     <div class="flex items-center justify-between">
+                        <label class="block text-sm font-bold text-slate-800">Ojos (Search Worker)</label>
+                        <span class="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">Investigación</span>
+                     </div>
+                     <select
+                        v-model="roleConfig.search_worker_model"
+                        class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                        :disabled="emergencyMode"
+                     >
+                        <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                     </select>
+                     <p class="text-xs text-slate-500">Procesa grandes cantidades de texto web y HTML. Se recomienda un modelo rápido y con gran contexto (Flash).</p>
+                  </div>
+
+                  <!-- Code Worker -->
+                  <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-3">
+                     <div class="flex items-center justify-between">
+                        <label class="block text-sm font-bold text-slate-800">Manos (Code/File Worker)</label>
+                        <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">Ejecución</span>
+                     </div>
+                     <select
+                        v-model="roleConfig.code_worker_model"
+                        class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                        :disabled="emergencyMode"
+                     >
+                        <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                     </select>
+                     <p class="text-xs text-slate-500">Ejecuta scripts Python y manipula archivos. Requiere velocidad y precisión sintáctica.</p>
+                  </div>
+
+                  <!-- Scheduled Worker -->
+                  <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-3">
+                     <div class="flex items-center justify-between">
+                        <label class="block text-sm font-bold text-slate-800">Reloj (Scheduled Worker)</label>
+                        <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Monitoreo</span>
+                     </div>
+                     <select
+                        v-model="roleConfig.scheduled_worker_model"
+                        class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                        :disabled="emergencyMode"
+                     >
+                        <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                     </select>
+                     <p class="text-xs text-slate-500">Ejecuta tareas periódicas en segundo plano. Debe ser muy económico (Flash).</p>
+                  </div>
+
+                  <!-- Voice Worker -->
+                  <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-3">
+                     <div class="flex items-center justify-between">
+                        <label class="block text-sm font-bold text-slate-800">Voz (TTS/Output)</label>
+                        <span class="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">Audio</span>
+                     </div>
+                     <select
+                        v-model="roleConfig.voice_worker_model"
+                        class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                        :disabled="emergencyMode"
+                     >
+                        <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                     </select>
+                     <p class="text-xs text-slate-500">Modelo especializado en síntesis de voz o respuestas verbales.</p>
+                  </div>
+
+                  <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-3">
+                     <div class="flex items-center justify-between">
+                        <label class="block text-sm font-bold text-slate-800">Imagen (Image Generator)</label>
+                        <span class="text-xs px-2 py-0.5 rounded bg-rose-100 text-rose-700 font-medium">Imagen</span>
+                     </div>
+                     <select
+                        v-model="roleConfig.image_worker_model"
+                        class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                        :disabled="emergencyMode"
+                     >
+                        <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                     </select>
+                     <p class="text-xs text-slate-500">Generación de imágenes a partir de texto con alta eficiencia.</p>
+                  </div>
+               </div>
             </section>
           </div>
 

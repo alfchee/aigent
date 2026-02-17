@@ -6,11 +6,11 @@ from langchain_core.output_parsers.openai_functions import JsonOutputFunctionsPa
 from langchain_core.utils.function_calling import convert_to_openai_function
 
 # Definir los trabajadores disponibles
-WORKERS = ["WebNavigator", "CalendarManager", "GeneralAssistant"]
+WORKERS = ["WebNavigator", "CalendarManager", "GeneralAssistant", "ImageGenerator"]
 
 # Definir el esquema de salida del Supervisor
 class RouteResponse(TypedDict):
-    next: Literal["WebNavigator", "CalendarManager", "GeneralAssistant", "FINISH"]
+    next: Literal["WebNavigator", "CalendarManager", "GeneralAssistant", "ImageGenerator", "FINISH"]
 
 system_prompt = (
     "Eres un supervisor encargado de gestionar una conversación entre los"

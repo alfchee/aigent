@@ -56,12 +56,19 @@ class SkillLoader:
                             # Legacy: wrap raw function in StructuredTool
                             logger.info(f"Auto-wrapping legacy tool function: {tool.__name__}")
                             try:
-                                skills_map[skill_name].append(StructuredTool.from_function(tool))
+                                if inspect.iscoroutinefunction(tool):
+                                    skills_map[skill_name].append(StructuredTool.from_function(coroutine=tool))
+                                else:
+                                    skills_map[skill_name].append(StructuredTool.from_function(tool))
                             except ValueError as e:
                                 if "docstring" in str(e).lower():
                                     # Fallback for missing docstring
                                     logger.warning(f"Tool {tool.__name__} has no docstring. Using name as description.")
-                                    skills_map[skill_name].append(StructuredTool.from_function(tool, description=f"Tool: {tool.__name__}"))
+                                    desc = f"Tool: {tool.__name__}"
+                                    if inspect.iscoroutinefunction(tool):
+                                        skills_map[skill_name].append(StructuredTool.from_function(coroutine=tool, description=desc))
+                                    else:
+                                        skills_map[skill_name].append(StructuredTool.from_function(tool, description=desc))
                                 else:
                                     logger.error(f"Failed to wrap tool {tool.__name__}: {e}")
                         else:

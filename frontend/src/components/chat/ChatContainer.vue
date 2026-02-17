@@ -12,12 +12,38 @@ const artifacts = useArtifactsStore()
 const modelSettings = useModelSettingsStore()
 const newMessage = ref('')
 const selectedModel = ref('')
+const isExpanded = ref(false)
+const composerRef = ref<HTMLTextAreaElement | null>(null)
 
 const messages = computed(() => chat.messages)
 const isLoading = computed(() => chat.isLoading)
 const isHistoryLoading = computed(() => chat.isHistoryLoading)
 const historyHasMore = computed(() => chat.historyHasMore)
 const historyError = computed(() => chat.historyError)
+const primaryModel = computed(() => modelSettings.currentModel)
+const fallbackModel = computed(() => modelSettings.fallbackModel)
+const effectiveModel = computed(() => selectedModel.value || primaryModel.value || '')
+const effectiveSource = computed(() => {
+  if (!effectiveModel.value) return ''
+  if (selectedModel.value && selectedModel.value !== primaryModel.value) return 'Sesión'
+  return 'Principal'
+})
+const modelOptions = computed(() => {
+  const options = [...modelSettings.models]
+  const ensure = (name: string) => {
+    if (name && !options.includes(name)) options.push(name)
+  }
+  ensure(primaryModel.value)
+  ensure(fallbackModel.value)
+  ensure(selectedModel.value)
+  return options
+})
+const availableModelMap = computed(() => {
+  return modelSettings.availableModels.reduce<Record<string, { display_name?: string }>>((acc, model) => {
+    acc[model.id] = model
+    return acc
+  }, {})
+})
 
 const scrollRef = ref<HTMLElement | null>(null)
 
@@ -57,10 +83,26 @@ function normalizeModelLabel(label: string) {
 }
 
 function modelLabel(name: string) {
-  const baseLabel = MODEL_LABELS[name] || name
+  const baseLabel = availableModelMap.value[name]?.display_name || MODEL_LABELS[name] || name
   const normalized = normalizeModelLabel(baseLabel)
   const icon = MODEL_ICONS[name]
   return icon ? `${icon} ${normalized}` : normalized
+}
+
+function modelOptionLabel(name: string) {
+  const label = modelLabel(name)
+  const tags: string[] = []
+  if (name && name === primaryModel.value) tags.push('Principal')
+  if (name && name === fallbackModel.value) tags.push('Fallback')
+  if (name && name === selectedModel.value && name !== primaryModel.value) tags.push('Sesión')
+  return tags.length ? `${label} (${tags.join(' • ')})` : label
+}
+
+function toggleExpand() {
+  isExpanded.value = !isExpanded.value
+  nextTick(() => {
+    composerRef.value?.focus()
+  })
 }
 
 async function syncModelForSession(sessionId: string) {
@@ -78,6 +120,18 @@ watch(
     await syncModelForSession(sid)
   },
   { immediate: true }
+)
+
+watch(
+  () => [modelSettings.currentModel, modelSettings.fallbackModel, modelSettings.models.length],
+  async () => {
+    if (!modelSettings.models.length) return
+    const sid = artifacts.sessionId || 'default'
+    const sessionModel = modelSettings.sessionModels[sid]
+    if (!sessionModel && modelSettings.currentModel) {
+      selectedModel.value = modelSettings.currentModel
+    }
+  }
 )
 
 watch(
@@ -146,9 +200,12 @@ watch(
         <textarea
           v-model="newMessage"
           placeholder="Escribe un mensaje..."
-          rows="1"
-          class="w-full bg-transparent border-none focus:ring-0 text-slate-800 placeholder-slate-400 resize-none py-3 px-3 min-h-[50px]"
+          ref="composerRef"
+          :rows="isExpanded ? 5 : 2"
+          class="w-full bg-transparent border-none focus:ring-0 text-slate-800 placeholder-slate-400 resize-none py-3 px-3 text-sm leading-relaxed transition-all duration-200 ease-in-out min-h-[72px]"
+          :class="isExpanded ? 'min-h-[160px]' : 'min-h-[72px]'"
           :disabled="isLoading"
+          aria-label="Escribe un mensaje"
           @keydown="handleComposerKeydown"
         ></textarea>
         <div class="flex items-center justify-between px-2 pb-1">
@@ -159,9 +216,14 @@ watch(
               :disabled="isLoading || !modelSettings.models.length"
               title="Modelo"
             >
-              <option v-for="m in modelSettings.models" :key="m" :value="m">{{ modelLabel(m) }}</option>
+              <option v-for="m in modelOptions" :key="m" :value="m">{{ modelOptionLabel(m) }}</option>
             </select>
             <span class="material-icons-outlined text-sm text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
+            <div class="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-500">
+              <span v-if="effectiveModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Usando: {{ modelLabel(effectiveModel) }} ({{ effectiveSource }})</span>
+              <span v-if="primaryModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Principal: {{ modelLabel(primaryModel) }}</span>
+              <span v-if="fallbackModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Fallback: {{ modelLabel(fallbackModel) }}</span>
+            </div>
           </div>
           <div class="flex items-center gap-2">
             <div class="flex items-center gap-1 mr-2 border-r border-slate-200 pr-3">
@@ -180,6 +242,14 @@ watch(
                 <span class="material-icons-outlined text-lg">add_to_drive</span>
               </button>
             </div>
+            <button
+              type="button"
+              class="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
+              :aria-label="isExpanded ? 'Contraer editor' : 'Expandir editor'"
+              @click="toggleExpand"
+            >
+              <span class="material-icons-outlined text-lg">{{ isExpanded ? 'unfold_less' : 'unfold_more' }}</span>
+            </button>
             <button
               type="button"
               :disabled="isLoading || !newMessage.trim()"

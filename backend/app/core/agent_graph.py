@@ -12,6 +12,7 @@ from langgraph.prebuilt import ToolNode, create_react_agent
 from app.core.graph_state import AgentState
 from app.core.skill_loader import SkillLoader
 from app.core.supervisor import create_supervisor_node, WORKERS
+from app.core.model_orchestrator import ModelOrchestrator
 
 # Cargar variables de entorno
 load_dotenv()
@@ -46,6 +47,13 @@ WORKER_PROMPTS = {
         "- Para manipular archivos, usa las herramientas de 'workspace'.\n"
         "- Si necesitas recordar algo para el futuro, usa las herramientas de 'memory'.\n"
         "- Sé proactivo y busca la solución más eficiente."
+    ),
+    "ImageGenerator": (
+        "Eres un especialista en generación de imágenes a partir de descripciones textuales.\n"
+        "Instrucciones:\n"
+        "- Usa la herramienta 'generate_image' para crear imágenes.\n"
+        "- Si faltan detalles (estilo, relación de aspecto), pide aclaración.\n"
+        "- Devuelve el resultado indicando la ruta del archivo generado."
     )
 }
 
@@ -57,6 +65,7 @@ class AgentGraph:
         self.model_name = model_name
         self.api_key = os.getenv("GOOGLE_API_KEY")
         self.extra_tools = extra_tools or []
+        self.orchestrator = ModelOrchestrator()
         
         if not self.api_key:
             logger.warning("GOOGLE_API_KEY not found. AgentGraph may fail to initialize correctly.")
@@ -69,25 +78,55 @@ class AgentGraph:
         if self.extra_tools:
             self.skills_map["extra_tools"] = self.extra_tools
 
-        # 2. Configurar Modelo
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=self.api_key,
-            temperature=0,
-            convert_system_message_to_human=True
-        )
+        # 2. Configurar Modelo (Legacy/Fallback)
+        # We keep self.llm for backward compatibility or default usage, but nodes will use specific LLMs
+        self.llm = self._get_llm("supervisor") 
         
         # 3. Definir Herramientas por Trabajador
         # Mapeo de Workers a Módulos de Skills
         self.worker_skills = {
             "WebNavigator": ["browser", "search", "reader"],
             "CalendarManager": ["calendar", "scheduler"],
-            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "memory", "telegram", "extra_tools"] 
+            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "memory", "telegram", "extra_tools"],
+            "ImageGenerator": ["image_generation"]
             # GeneralAssistant se lleva el resto o lo que definamos
         }
 
         # 4. Construir el Grafo
         self.graph = self._build_graph()
+
+    def _get_llm(self, role_name: str) -> ChatGoogleGenerativeAI:
+        """
+        Returns a configured LLM instance for a specific role/worker.
+        """
+        # Map worker names to config roles
+        config_role = "supervisor"
+        if role_name == "WebNavigator":
+            config_role = "search_worker"
+        elif role_name == "CalendarManager":
+            config_role = "scheduled_worker"
+        elif role_name == "GeneralAssistant":
+            config_role = "code_worker"
+        elif role_name == "ImageGenerator":
+            config_role = "image_worker"
+        elif role_name == "supervisor":
+            config_role = "supervisor"
+            
+        # For supervisor, we prefer the model_name passed in __init__ (which comes from session/request)
+        # UNLESS it's the default/generic one, in which case we might want to check the config.
+        # But to be safe and respect explicit overrides, we use self.model_name for supervisor.
+        # Actually, let's use the orchestrator to decide based on the role.
+        # If self.model_name is specifically set to something non-default by the caller, we should use it.
+        # But here we assume self.model_name is the "Supervisor" model.
+        
+        final_model = self.model_name if role_name == "supervisor" else self.orchestrator.get_model_for_role(config_role)
+        
+        return ChatGoogleGenerativeAI(
+            model=final_model,
+            google_api_key=self.api_key,
+            temperature=0,
+            convert_system_message_to_human=True
+        )
 
     def _create_agent_node(self, agent_name: str, tools: list):
         """Helper para crear un nodo agente."""
@@ -95,7 +134,9 @@ class AgentGraph:
         # Pero necesitamos adaptarlo para que funcione como un nodo en nuestro grafo supervisado
         # El nodo debe recibir el estado, invocar al agente, y devolver la actualización del estado.
         
-        agent = create_react_agent(self.llm, tools)
+        # Use specific LLM for this agent
+        agent_llm = self._get_llm(agent_name)
+        agent = create_react_agent(agent_llm, tools)
         
         def agent_node(state: AgentState):
             result = agent.invoke(state)
@@ -122,7 +163,9 @@ class AgentGraph:
         workflow = StateGraph(AgentState)
 
         # 1. Crear Nodo Supervisor
-        supervisor_node = create_supervisor_node(self.llm, WORKERS)
+        # Use specific LLM for supervisor
+        supervisor_llm = self._get_llm("supervisor")
+        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS)
         workflow.add_node("supervisor", supervisor_node)
 
         # 2. Crear Nodos de Trabajadores
@@ -148,7 +191,9 @@ class AgentGraph:
             # Obtener prompt del sistema
             system_prompt = WORKER_PROMPTS.get(worker_name, "Eres un asistente útil.")
             
-            worker_agent = create_react_agent(self.llm, worker_tools, prompt=system_prompt)
+            # Use specific LLM for this worker
+            worker_llm = self._get_llm(worker_name)
+            worker_agent = create_react_agent(worker_llm, worker_tools, prompt=system_prompt)
             
             # Definir la función del nodo
             # Usamos functools.partial para capturar worker_agent en el closure correctamente
