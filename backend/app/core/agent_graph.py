@@ -58,13 +58,14 @@ WORKER_PROMPTS = {
 }
 
 class AgentGraph:
-    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None):
+    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None, user_facts: str = ""):
         """
         Inicializa el Grafo Multi-Agente con Supervisor.
         """
         self.model_name = model_name
         self.api_key = os.getenv("GOOGLE_API_KEY")
         self.extra_tools = extra_tools or []
+        self.user_facts = user_facts
         self.orchestrator = ModelOrchestrator()
         
         if not self.api_key:
@@ -165,7 +166,7 @@ class AgentGraph:
         # 1. Crear Nodo Supervisor
         # Use specific LLM for supervisor
         supervisor_llm = self._get_llm("supervisor")
-        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS)
+        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts=self.user_facts)
         workflow.add_node("supervisor", supervisor_node)
 
         # 2. Crear Nodos de Trabajadores
@@ -190,6 +191,10 @@ class AgentGraph:
             
             # Obtener prompt del sistema
             system_prompt = WORKER_PROMPTS.get(worker_name, "Eres un asistente útil.")
+            
+            # Inyectar hechos del usuario si es el asistente general
+            if worker_name == "GeneralAssistant" and self.user_facts:
+                system_prompt += f"\n\nHechos sobre el usuario:\n{self.user_facts}"
             
             # Use specific LLM for this worker
             worker_llm = self._get_llm(worker_name)

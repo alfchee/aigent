@@ -59,7 +59,7 @@ class TelegramChannel(BaseChannel):
         super().__init__(settings, status_callback=status_callback)
         self.token = (settings or {}).get("token") or os.getenv("TELEGRAM_TOKEN")
         self.auto_send_artifacts = bool(settings.get("auto_send_artifacts", True))
-        self.app = ApplicationBuilder().token(self.token).build()
+        self.app = ApplicationBuilder().token(self.token).read_timeout(30).write_timeout(30).build()
         self._lock_file = None
         self._setup_handlers()
 
@@ -79,9 +79,18 @@ class TelegramChannel(BaseChannel):
         chat_id = str(update.effective_chat.id)
         user_id = str(update.effective_user.id) if update.effective_user else chat_id
         session_id = f"tg_{chat_id}"
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        except Exception:
+            # Si falla el typing action, no bloqueamos el flujo
+            pass
+            
         try:
             response_text = await execute_agent_task(user_text, session_id=session_id, memory_user_id=f"tg_user_{user_id}")
+            if not response_text:
+                response_text = "✅ Tarea completada (sin respuesta de texto)."
+
             if len(response_text) > 4000:
                 for x in range(0, len(response_text), 4000):
                     await update.message.reply_text(response_text[x:x + 4000])
@@ -91,8 +100,13 @@ class TelegramChannel(BaseChannel):
                 await self.check_and_send_artifacts(chat_id, session_id, context)
             await self._heartbeat()
         except Exception as e:
-            await update.message.reply_text(f"⚠️ Error procesando tu solicitud: {str(e)}")
-            await self._error(str(e))
+            error_msg = str(e)
+            if "Chat not found" in error_msg:
+                # Esto sucede si el bot intenta responder pero el chat ya no existe o el usuario bloqueó al bot
+                print(f"Telegram Error: Chat {chat_id} not found or user blocked bot.")
+                return
+            await update.message.reply_text(f"⚠️ Error procesando tu solicitud: {error_msg}")
+            await self._error(error_msg)
 
     async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message is None or update.effective_chat is None:
@@ -163,7 +177,7 @@ class TelegramChannel(BaseChannel):
             await self.app.start()
             try:
                 print(f"[{pid}] TelegramChannel {instance_id}: Starting polling...")
-                await self.app.updater.start_polling(drop_pending_updates=True)
+                await self.app.updater.start_polling(drop_pending_updates=True, poll_interval=1.0)
                 print(f"[{pid}] TelegramChannel {instance_id}: Polling started successfully.")
             except Conflict as e:
                 print(f"[{pid}] TelegramChannel {instance_id}: Conflict detected during start_polling!")

@@ -13,12 +13,12 @@ from app.core.persistence import (
 )
 
 FAST_MODELS = [
-    "gemini-3-flash-preview",
+    "gemini-2.0-flash",
     "gemini-flash-latest",
 ]
 
 FALLBACK_MODELS = [
-    "gemini-3-pro-preview",
+    "gemini-2.0-pro-exp",
     "gemini-2.5-pro",
 ]
 
@@ -178,14 +178,14 @@ IMPORTANTE SOBRE TU MEMORIA:
   3. Si el usuario no especifica duración, asume 1 hora por defecto.
 - Si el usuario dice "Agenda una reunión mañana a las 10", calcula la fecha basándote en la fecha actual.""",
         models={
-            "gemini-3-flash-preview": ModelConfig(
-                name="gemini-3-flash-preview", temperature=0.7, top_p=0.95, max_output_tokens=8192
+            "gemini-2.0-flash": ModelConfig(
+                name="gemini-2.0-flash", temperature=0.7, top_p=0.95, max_output_tokens=8192
             ),
             "gemini-flash-latest": ModelConfig(
                 name="gemini-flash-latest", temperature=0.7, top_p=0.95, max_output_tokens=8192
             ),
-            "gemini-3-pro-preview": ModelConfig(
-                name="gemini-3-pro-preview", temperature=0.7, top_p=0.95, max_output_tokens=8192
+            "gemini-2.0-pro-exp": ModelConfig(
+                name="gemini-2.0-pro-exp", temperature=0.7, top_p=0.95, max_output_tokens=8192
             ),
             "gemini-2.5-pro": ModelConfig(name="gemini-2.5-pro", temperature=0.7, top_p=0.95, max_output_tokens=8192),
             "gemini-2.5-flash-image": ModelConfig(

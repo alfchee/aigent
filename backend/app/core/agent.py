@@ -315,6 +315,21 @@ class NaviBot:
         # 4. Initialize Graph with Extra Tools (MCP)
         mcp_lc_tools = await self._convert_mcp_tools()
         
+        # Load User Facts for Graph Injection
+        user_facts_str = ""
+        try:
+            from app.core.runtime_context import resolve_memory_user_id
+            from app.core.memory_manager import get_agent_memory
+            
+            # Resolve memory user ID from session
+            mem_uid = resolve_memory_user_id(None, session_id)
+            facts = get_agent_memory().get_all_user_facts(mem_uid)
+            if facts:
+                user_facts_str = "\n".join([f"- {f}" for f in facts])
+        except Exception as e:
+            logger.warning(f"Failed to load user facts for graph: {e}")
+
+        
         # We also need to add the native tools registered in self.tools
         # But AgentGraph loads them via SkillLoader. 
         # self.tools contains wrappers from wrap_tool which calls save_tool_call.
@@ -325,7 +340,7 @@ class NaviBot:
         # Ideally, SkillLoader should wrap tools or AgentGraph should.
         # For now, let's assume standard logging is enough or we rely on the graph's output.
         
-        agent_graph = AgentGraph(model_name=self.model_name, extra_tools=mcp_lc_tools)
+        agent_graph = AgentGraph(model_name=self.model_name, extra_tools=mcp_lc_tools, user_facts=user_facts_str)
         graph = agent_graph.get_runnable()
         
         # 5. Execute Graph (Streaming)
@@ -741,20 +756,24 @@ async def execute_agent_task(user_text: str, session_id: str, memory_user_id: st
     Used by external integrations like Telegram.
     """
     from app.core.runtime_context import reset_memory_user_id, reset_session_id, resolve_memory_user_id, set_memory_user_id, set_session_id
-    from app.core.memory import recall_memory
+    from app.core.model_orchestrator import ModelOrchestrator
     
     # Set the session context
     session_token = set_session_id(session_id)
     memory_token = set_memory_user_id(resolve_memory_user_id(memory_user_id, session_id))
     try:
-        # Initialize the agent
-        agent = NaviBot()
+        # Use Orchestrator to determine the best model for this task
+        orchestrator = ModelOrchestrator()
+        model_name = orchestrator.get_model_for_task(session_id, requested_model=None) # Or hint="complex" if we could detect it
         
-        # Ensure session exists
+        # Initialize the agent with the correct model
+        agent = NaviBot(model_name=model_name)
+        
+        # Ensure session exists (loads history)
         await agent.ensure_session(session_id)
         
         # Execute the task
-        result = await agent.send_message_with_react(user_text)
+        result = await agent.send_message_with_graph(user_text)
         
         # Return the response text
         return result.get("response", "")
