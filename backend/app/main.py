@@ -167,15 +167,32 @@ def _extract_retry_delay_seconds(exc: Exception) -> int | None:
 
 
 async def _run_with_rate_limit_retry(fn, *args, **kwargs):
-    try:
-        return await fn(*args, **kwargs)
-    except Exception as e:
-        if _is_rate_limit_error(e):
-            retry_delay = _extract_retry_delay_seconds(e)
-            wait_seconds = retry_delay if retry_delay is not None else 30
-            await asyncio.sleep(min(wait_seconds, 60))
+    max_retries = 3
+    attempt = 0
+    while True:
+        try:
             return await fn(*args, **kwargs)
-        raise
+        except Exception as e:
+            if _is_rate_limit_error(e):
+                attempt += 1
+                if attempt > max_retries:
+                    raise
+                
+                retry_delay = _extract_retry_delay_seconds(e)
+                # Exponential backoff or use API delay
+                if retry_delay is not None:
+                    wait_seconds = float(retry_delay)
+                else:
+                    # 5, 10, 20...
+                    wait_seconds = 5.0 * (2 ** (attempt - 1))
+                
+                # Cap at 60s
+                wait_seconds = min(wait_seconds, 60.0)
+                
+                logger.warning(f"Rate limit hit. Retrying in {wait_seconds}s (Attempt {attempt}/{max_retries})")
+                await asyncio.sleep(wait_seconds)
+                continue
+            raise
 
 
 @app.middleware("http")

@@ -62,13 +62,9 @@ class SkillLoader:
                                     skills_map[skill_name].append(StructuredTool.from_function(tool))
                             except ValueError as e:
                                 if "docstring" in str(e).lower():
-                                    # Fallback for missing docstring
-                                    logger.warning(f"Tool {tool.__name__} has no docstring. Using name as description.")
-                                    desc = f"Tool: {tool.__name__}"
-                                    if inspect.iscoroutinefunction(tool):
-                                        skills_map[skill_name].append(StructuredTool.from_function(coroutine=tool, description=desc))
-                                    else:
-                                        skills_map[skill_name].append(StructuredTool.from_function(tool, description=desc))
+                                    # Skip tools without docstrings to prevent misuse
+                                    logger.warning(f"Skipping tool {tool.__name__} due to missing docstring. Docstrings are required for LLM understanding.")
+                                    continue
                                 else:
                                     logger.error(f"Failed to wrap tool {tool.__name__}: {e}")
                         else:

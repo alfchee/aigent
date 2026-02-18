@@ -12,6 +12,7 @@ const artifacts = useArtifactsStore()
 const modelSettings = useModelSettingsStore()
 const newMessage = ref('')
 const selectedModel = ref('')
+const showModelDetails = ref(false)
 const isExpanded = ref(false)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -210,16 +211,29 @@ watch(
         ></textarea>
         <div class="flex items-center justify-between px-2 pb-1">
           <div class="relative group">
-            <select
-              v-model="selectedModel"
-              class="appearance-none pl-8 pr-8 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium text-slate-700 bg-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-sky-500/20"
-              :disabled="isLoading || !modelSettings.models.length"
-              title="Modelo"
-            >
-              <option v-for="m in modelOptions" :key="m" :value="m">{{ modelOptionLabel(m) }}</option>
-            </select>
-            <span class="material-icons-outlined text-sm text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
-            <div class="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-500">
+            <div class="flex items-center gap-1">
+              <div class="relative">
+                <select
+                  v-model="selectedModel"
+                  class="appearance-none pl-8 pr-8 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-xs font-medium text-slate-700 bg-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                  :disabled="isLoading || !modelSettings.models.length"
+                  title="Modelo"
+                >
+                  <option v-for="m in modelOptions" :key="m" :value="m">{{ modelOptionLabel(m) }}</option>
+                </select>
+                <span class="material-icons-outlined text-sm text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
+              </div>
+              <button 
+                type="button"
+                @click="showModelDetails = !showModelDetails"
+                class="p-1 text-slate-400 hover:text-sky-500 hover:bg-slate-100 rounded-full transition-colors"
+                :class="{ 'text-sky-500 bg-sky-50': showModelDetails }"
+                title="Ver detalles del modelo"
+              >
+                <span class="material-icons-outlined text-sm">info</span>
+              </button>
+            </div>
+            <div v-if="showModelDetails" class="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-500">
               <span v-if="effectiveModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Usando: {{ modelLabel(effectiveModel) }} ({{ effectiveSource }})</span>
               <span v-if="primaryModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Principal: {{ modelLabel(primaryModel) }}</span>
               <span v-if="fallbackModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Fallback: {{ modelLabel(fallbackModel) }}</span>

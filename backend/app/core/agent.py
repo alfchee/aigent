@@ -5,6 +5,7 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 from typing import List, Callable, Any, Dict, Optional, Union
+import functools
 from dotenv import load_dotenv
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -200,6 +201,10 @@ class NaviBot:
                     ))
         return messages
 
+    async def _call_mcp_tool(self, name: str, **kwargs) -> Any:
+        """Helper to call MCP tool with specific name."""
+        return await self.mcp_manager.call_tool(name, kwargs)
+
     async def _convert_mcp_tools(self) -> List[StructuredTool]:
         """Converts loaded MCP tools to LangChain StructuredTool objects."""
         if not self._mcp_loaded:
@@ -213,33 +218,6 @@ class NaviBot:
             name = tool_def["name"]
             description = tool_def.get("description", "")
             schema = tool_def.get("inputSchema", {})
-            
-            # Wrapper function for the tool
-            async def _wrapper(**kwargs):
-                return await self.mcp_manager.call_tool(name, kwargs)
-            
-            # Create StructuredTool
-            # We need to convert JSON schema to Pydantic model or pass schema directly if supported
-            # StructuredTool.from_function infers args from signature.
-            # But _wrapper has **kwargs.
-            # We can use StructuredTool(name=..., func=..., args_schema=...)
-            # But creating Pydantic model dynamically from JSON schema is involved.
-            # Simpler approach: Use the wrapper and let LC handle it, 
-            # or use a helper to create the tool.
-            
-            # For now, let's try to pass the function with a proper docstring or signature?
-            # Or use StructuredTool generic constructor.
-            # LangChain's StructuredTool supports 'args_schema' (Pydantic).
-            
-            # If we skip args_schema, LC might complain or not validate.
-            # But for Gemini, we just need the tool definition passed to the model.
-            # AgentGraph uses ChatGoogleGenerativeAI which calls bind_tools.
-            # bind_tools accepts dicts (JSON schema) or Pydantic or Tools.
-            
-            # Let's try to create a dynamic Pydantic model from the schema.
-            # Or simpler: Just return the dict definition if AgentGraph supports it?
-            # AgentGraph uses SkillLoader which returns StructuredTools.
-            # We should probably return StructuredTool.
             
             try:
                 from langchain_core.pydantic_v1 import create_model, Field
@@ -281,7 +259,7 @@ class NaviBot:
                     name=name,
                     description=description,
                     func=None, # Sync func
-                    coroutine=_wrapper, # Async func
+                    coroutine=functools.partial(self._call_mcp_tool, name=name), # Async func with captured name
                     args_schema=ArgsModel
                 )
                 lc_tools.append(tool)
