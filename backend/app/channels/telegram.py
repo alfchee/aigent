@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from telegram import Update
-from telegram.error import Conflict
+from telegram.error import Conflict, BadRequest, Forbidden
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 from app.channels.base import BaseChannel
@@ -99,13 +99,19 @@ class TelegramChannel(BaseChannel):
             if self.auto_send_artifacts:
                 await self.check_and_send_artifacts(chat_id, session_id, context)
             await self._heartbeat()
+        except (BadRequest, Forbidden) as e:
+            # Handle "Chat not found" (BadRequest) or "Bot was blocked by the user" (Forbidden)
+            # These are errors we can't recover from by replying to the user (since they can't see it or we can't send it)
+            # We log it but don't crash or try to reply recursively
+            print(f"Telegram Error (ignored): {e}")
+            return
         except Exception as e:
             error_msg = str(e)
-            if "Chat not found" in error_msg:
-                # Esto sucede si el bot intenta responder pero el chat ya no existe o el usuario bloqueó al bot
-                print(f"Telegram Error: Chat {chat_id} not found or user blocked bot.")
-                return
-            await update.message.reply_text(f"⚠️ Error procesando tu solicitud: {error_msg}")
+            try:
+                await update.message.reply_text(f"⚠️ Error procesando tu solicitud: {error_msg}")
+            except Exception:
+                # If we can't reply with the error, just ignore
+                pass
             await self._error(error_msg)
 
     async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
