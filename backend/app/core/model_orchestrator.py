@@ -25,6 +25,45 @@ class ModelOrchestrator:
         # 2. If "auto" logic is implied, it falls back to configured default in resolve_model
         return resolve_model(session_id, requested_model)
 
+    def get_model_for_role(self, role: str) -> str:
+        """
+        Determines the model to use for a specific agent role, considering emergency mode.
+        
+        Args:
+            role: The agent role (e.g., "supervisor", "search_worker", "code_worker").
+            
+        Returns:
+            The model name to use.
+        """
+        settings = get_settings()
+        role_config = settings.role_config
+        emergency_mode = settings.emergency_mode
+        
+        # Default mapping
+        model_name = settings.current_model
+        
+        if role == "supervisor":
+            model_name = role_config.supervisor_model
+        elif role == "search_worker":
+            model_name = role_config.search_worker_model
+        elif role == "code_worker":
+            model_name = role_config.code_worker_model
+        elif role == "voice_worker":
+            model_name = role_config.voice_worker_model
+        elif role == "scheduled_worker":
+            model_name = role_config.scheduled_worker_model
+        elif role == "image_worker":
+            model_name = role_config.image_worker_model
+            
+        # Emergency Mode Logic: Downgrade Pro models to Flash
+        if emergency_mode:
+            # Simple heuristic: if model name contains "pro", switch to "flash"
+            if "pro" in model_name.lower():
+                logger.info(f"ModelOrchestrator: Emergency mode active. Downgrading {model_name} to gemini-flash-latest")
+                return "gemini-flash-latest"
+                
+        return model_name
+
     def should_upgrade_model(self, current_model: str, error: Optional[Exception] = None, tool_name: Optional[str] = None) -> Optional[str]:
         """
         Determines if the system should upgrade to a stronger model.

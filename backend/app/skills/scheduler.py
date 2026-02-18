@@ -45,14 +45,51 @@ def schedule_cron_task(prompt: str, cron: str, session_id: str = "default", use_
     return scheduler_service.schedule_cron_task(prompt, cron, session_id, use_react_loop, max_iterations)
 
 def list_job_logs(job_id: str | None = None, limit: int = 200) -> str:
+    """
+    Lista los logs de ejecuciones de tareas programadas.
+    
+    Args:
+        job_id: ID opcional para filtrar por trabajo específico.
+        limit: Número máximo de logs a retornar.
+    """
     logs = scheduler_service.list_logs(job_id=job_id, limit=limit)
     return json.dumps({"job_id": job_id, "logs": logs}, ensure_ascii=False)
 
 
 def get_last_job_result(job_id: str) -> str:
+    """
+    Obtiene el último resultado de ejecución de una tarea.
+    
+    Args:
+        job_id: El ID de la tarea.
+    """
     logs = scheduler_service.list_logs(job_id=job_id, limit=1)
     last = logs[-1] if logs else None
     return json.dumps({"job_id": job_id, "last": last}, ensure_ascii=False)
 
 
-tools = [schedule_task, schedule_interval_task, schedule_cron_task, list_job_logs, get_last_job_result]
+def list_scheduled_jobs() -> str:
+    """
+    Lista las tareas programadas activas (jobs).
+    Retorna una lista con ID, nombre, prompt, próxima ejecución, etc.
+    """
+    jobs = scheduler_service.list_jobs()
+    return json.dumps(jobs, ensure_ascii=False)
+
+
+def delete_scheduled_job(job_id: str) -> str:
+    """
+    Elimina una tarea programada por su ID.
+    Retorna un mensaje de éxito o error.
+    
+    Args:
+        job_id: El ID de la tarea a eliminar.
+    """
+    success = scheduler_service.delete_job(job_id)
+    if success:
+        return f"Tarea {job_id} eliminada correctamente."
+    else:
+        return f"Error al eliminar la tarea {job_id} (posiblemente no existe)."
+
+
+tools = [schedule_task, schedule_interval_task, schedule_cron_task, list_job_logs, get_last_job_result, list_scheduled_jobs, delete_scheduled_job]

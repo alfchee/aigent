@@ -148,24 +148,24 @@ class TestSessionMessagesApi(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         payload = r.json()
         tiers = payload["settings"]["tiers"]
-        self.assertEqual(tiers["fast"], ["gemini-3-flash-preview", "gemini-flash-latest"])
-        self.assertEqual(tiers["fallback"], ["gemini-3-pro-preview", "gemini-2.5-pro"])
+        self.assertEqual(tiers["fast"], ["gemini-2.0-flash", "gemini-flash-latest"])
+        self.assertEqual(tiers["fallback"], ["gemini-2.0-pro-exp", "gemini-2.5-pro"])
 
         models = payload["settings"]["models"]
         self.assertTrue(all(m in models for m in tiers["fast"]))
         self.assertTrue(all(m in models for m in tiers["fallback"]))
 
-        r = self.client.put("/api/settings", json={"current_model": "gemini-1.5-pro"})
+        r = self.client.put("/api/settings", json={"current_model": "not-a-model"})
         self.assertEqual(r.status_code, 400)
 
-        r = self.client.put("/api/settings", json={"fallback_model": "gemini-2.0-flash"})
+        r = self.client.put("/api/settings", json={"fallback_model": "gpt-4"})
         self.assertEqual(r.status_code, 400)
 
         session_id = "s_settings"
         r = self.client.post("/api/sessions", json={"id": session_id, "title": "Settings"})
         self.assertEqual(r.status_code, 200)
 
-        r = self.client.put(f"/api/sessions/{session_id}/settings", json={"model_name": "gemini-1.5-pro"})
+        r = self.client.put(f"/api/sessions/{session_id}/settings", json={"model_name": "bad-model"})
         self.assertEqual(r.status_code, 400)
 
         r = self.client.put(f"/api/sessions/{session_id}/settings", json={"model_name": "gemini-2.5-pro"})

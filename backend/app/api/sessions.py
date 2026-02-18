@@ -162,18 +162,23 @@ def delete_session(session_id: str, purge: bool = False):
     sid = _validate_session_id(session_id)
     try:
         if purge:
+            ws_dir = None
+            try:
+                info = session_fs.get_workspace_info(sid)
+                ws_dir = Path(info["root"]).resolve()
+            except Exception:
+                ws_dir = None
             with db_session() as db:
                 db.query(ChatMessage).filter(ChatMessage.session_id == sid).delete(synchronize_session=False)
                 db.query(ToolCall).filter(ToolCall.session_id == sid).delete(synchronize_session=False)
                 db.query(SessionRecord).filter(SessionRecord.id == sid).delete(synchronize_session=False)
-            try:
-                info = session_fs.get_workspace_info(sid)
-                ws_dir = Path(info["root"]).resolve()
-                import shutil
+            if ws_dir:
+                try:
+                    import shutil
 
-                shutil.rmtree(ws_dir, ignore_errors=True)
-            except Exception:
-                pass
+                    shutil.rmtree(ws_dir, ignore_errors=True)
+                except Exception:
+                    pass
             return {"status": "purged"}
         session_fs.archive_session_workspace(sid)
         return {"status": "archived"}

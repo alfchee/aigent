@@ -4,6 +4,17 @@ from markdownify import markdownify as md
 
 
 async def read_web_content(url: str, max_chars: int = 20000, timeout: float = 10.0) -> str:
+    """
+    Lee y convierte a Markdown el contenido de una página web.
+    
+    Args:
+        url: La URL de la página a leer.
+        max_chars: Máximo de caracteres a retornar.
+        timeout: Tiempo máximo de espera.
+        
+    Returns:
+        JSON string con el contenido en Markdown.
+    """
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url)

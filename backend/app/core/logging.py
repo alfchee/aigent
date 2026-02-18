@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from typing import Any
@@ -23,6 +24,11 @@ def _safe_json(value: Any) -> Any:
         return str(value)
 
 
+_TELEGRAM_TOKEN_RE = re.compile(r"(bot)(\d+:[A-Za-z0-9_-]+)")
+
+def _redact_text(value: str) -> str:
+    return _TELEGRAM_TOKEN_RE.sub(r"\1[REDACTED]", value)
+
 def _redact(value: Any) -> Any:
     if isinstance(value, dict):
         output = {}
@@ -35,16 +41,19 @@ def _redact(value: Any) -> Any:
         return output
     if isinstance(value, list):
         return [_redact(v) for v in value]
+    if isinstance(value, str):
+        return _redact_text(value)
     return value
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        message = _redact_text(record.getMessage())
         payload = {
             "timestamp": _utc_iso(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": message,
             "service": os.getenv("SERVICE_NAME", "navibot-backend"),
             "request_id": get_request_id(),
             "session_id": get_session_id(),
@@ -54,7 +63,7 @@ class JsonFormatter(logging.Formatter):
         if hasattr(record, "payload"):
             payload["payload"] = _safe_json(_redact(record.payload))
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = _redact_text(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False)
 
 

@@ -1,16 +1,27 @@
 import { defineStore } from 'pinia'
 
-import { fetchJson } from '../lib/api'
+import { ApiError, fetchJson } from '../lib/api'
+
+type RoleConfig = {
+  supervisor_model: string
+  search_worker_model: string
+  code_worker_model: string
+  voice_worker_model: string
+  scheduled_worker_model: string
+  image_worker_model: string
+}
 
 type AppSettingsResponse = {
   settings: {
     current_model: string
     fallback_model: string
     auto_escalate: boolean
+    emergency_mode: boolean
     system_prompt: string
     models: string[]
     tiers?: { fast: string[]; fallback: string[] }
     routing_config?: Record<string, any>
+    role_config?: RoleConfig
     limits_config?: Record<string, any>
     model_routing_json?: Record<string, any>
   }
@@ -34,6 +45,21 @@ type AvailableModelsResponse = {
   models: ModelInfo[]
 }
 
+function toErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const body = error.body
+    if (body && typeof body === 'object') {
+      const detail = (body as any).detail
+      if (typeof detail === 'string') return detail
+      if (detail && typeof detail === 'object' && 'message' in detail) {
+        return String((detail as any).message)
+      }
+    }
+    if (typeof body === 'string') return body
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
 export const useModelSettingsStore = defineStore('modelSettings', {
   state: () => ({
     models: [] as string[],
@@ -43,8 +69,17 @@ export const useModelSettingsStore = defineStore('modelSettings', {
     currentModel: '' as string,
     fallbackModel: '' as string,
     autoEscalate: true as boolean,
+    emergencyMode: false as boolean,
     systemPrompt: '' as string,
     routingConfig: {} as Record<string, any>,
+    roleConfig: {
+      supervisor_model: 'gemini-2.5-pro',
+      search_worker_model: 'gemini-2.0-flash',
+      code_worker_model: 'gemini-2.0-flash',
+      voice_worker_model: 'gemini-flash-latest',
+      scheduled_worker_model: 'gemini-flash-latest',
+      image_worker_model: 'gemini-2.5-flash-image'
+    } as RoleConfig,
     limitsConfig: {} as Record<string, any>,
     modelRoutingJson: {} as Record<string, any>,
     
@@ -72,15 +107,24 @@ export const useModelSettingsStore = defineStore('modelSettings', {
         this.currentModel = data.settings?.current_model || ''
         this.fallbackModel = data.settings?.fallback_model || ''
         this.autoEscalate = Boolean(data.settings?.auto_escalate)
+        this.emergencyMode = Boolean(data.settings?.emergency_mode)
         this.systemPrompt = data.settings?.system_prompt || ''
         
         this.routingConfig = data.settings?.routing_config || {}
+        this.roleConfig = data.settings?.role_config || {
+          supervisor_model: 'gemini-2.5-pro',
+          search_worker_model: 'gemini-2.0-flash',
+          code_worker_model: 'gemini-2.0-flash',
+          voice_worker_model: 'gemini-flash-latest',
+          scheduled_worker_model: 'gemini-flash-latest',
+          image_worker_model: 'gemini-2.5-flash-image'
+        }
         this.limitsConfig = data.settings?.limits_config || {}
         this.modelRoutingJson = data.settings?.model_routing_json || {}
         
         this.providers = data.providers || {}
       } catch (e) {
-        this.error = e instanceof Error ? e.message : String(e)
+        this.error = toErrorMessage(e)
       } finally {
         this.loading = false
       }
@@ -109,8 +153,10 @@ export const useModelSettingsStore = defineStore('modelSettings', {
       current_model?: string
       fallback_model?: string
       auto_escalate?: boolean
+      emergency_mode?: boolean
       system_prompt?: string
       routing_config?: Record<string, any>
+      role_config?: RoleConfig
       limits_config?: Record<string, any>
       model_routing_json?: Record<string, any>
     }) {
@@ -128,15 +174,24 @@ export const useModelSettingsStore = defineStore('modelSettings', {
         this.currentModel = data.settings?.current_model || ''
         this.fallbackModel = data.settings?.fallback_model || ''
         this.autoEscalate = Boolean(data.settings?.auto_escalate)
+        this.emergencyMode = Boolean(data.settings?.emergency_mode)
         this.systemPrompt = data.settings?.system_prompt || ''
         
         this.routingConfig = data.settings?.routing_config || {}
+        this.roleConfig = data.settings?.role_config || {
+          supervisor_model: 'gemini-2.5-pro',
+          search_worker_model: 'gemini-2.0-flash',
+          code_worker_model: 'gemini-2.0-flash',
+          voice_worker_model: 'gemini-flash-latest',
+          scheduled_worker_model: 'gemini-flash-latest',
+          image_worker_model: 'gemini-2.5-flash-image'
+        }
         this.limitsConfig = data.settings?.limits_config || {}
         this.modelRoutingJson = data.settings?.model_routing_json || {}
         
         this.providers = data.providers || {}
       } catch (e) {
-        this.error = e instanceof Error ? e.message : String(e)
+        this.error = toErrorMessage(e)
         throw e
       } finally {
         this.loading = false

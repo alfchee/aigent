@@ -10,6 +10,18 @@ def _get_brave_api_key() -> str | None:
 
 
 async def search_brave(query: str, count: int = 5, offset: int = 0, lang: str = "es") -> str:
+    """
+    Realiza una búsqueda web utilizando Brave Search API.
+    
+    Args:
+        query: La consulta de búsqueda.
+        count: Número de resultados a retornar (default: 5).
+        offset: Desplazamiento para paginación (default: 0).
+        lang: Código de idioma para la búsqueda (default: "es").
+        
+    Returns:
+        JSON string con los resultados de la búsqueda.
+    """
     api_key = _get_brave_api_key()
     if not api_key:
         return "Error: BRAVE_API_KEY no configurado."
@@ -46,6 +58,16 @@ async def search_brave(query: str, count: int = 5, offset: int = 0, lang: str = 
 
 
 async def search_duckduckgo_fallback(query: str, max_results: int = 5) -> str:
+    """
+    Realiza una búsqueda web utilizando DuckDuckGo (scraping) como fallback.
+    
+    Args:
+        query: La consulta de búsqueda.
+        max_results: Número de resultados a retornar.
+        
+    Returns:
+        JSON string con los resultados.
+    """
     url = f"https://duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     browser = None
     try:

@@ -1,10 +1,11 @@
+
 import re
 from app.core.memory_manager import get_agent_memory
 from app.core.runtime_context import get_memory_user_id
 
-def search_memory_tool(query: str) -> str:
+def recall_facts(query: str) -> str:
     """
-    Busca información en la memoria a largo plazo.
+    Busca información en la memoria a largo plazo (User Facts).
     Útil cuando necesitas recordar datos pasados, preferencias del usuario, detalles de proyectos anteriores
     o información que no está en el contexto actual de la conversación.
     
@@ -24,7 +25,7 @@ def search_memory_tool(query: str) -> str:
     except Exception as e:
         return f"Error al buscar en memoria: {str(e)}"
 
-def save_memory_tool(fact: str) -> str:
+def save_fact(fact: str) -> str:
     """
     Guarda un dato importante en la memoria a largo plazo.
     Úsala SOLO si el usuario te da una información CRÍTICA o NUEVA que debe ser recordada en el futuro.
@@ -70,4 +71,9 @@ def _looks_sensitive(text: str) -> bool:
         return True
     return False
 
-tools = [search_memory_tool, save_memory_tool]
+# Export new tool names
+# Keeping old names for compatibility if needed, but the agent uses the tool objects
+search_memory_tool = recall_facts
+save_memory_tool = save_fact
+
+tools = [recall_facts, save_fact]

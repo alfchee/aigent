@@ -39,6 +39,8 @@ navi_memory_db/
 backend/logs/
 backend/app/settings/active_mcp.json
 backend/app/settings/scheduler_logs.jsonl
+backend/navi_memory_qdrant/
+backend/navi_memory_db/
 
 # Node.js (Frontend)
 node_modules/
