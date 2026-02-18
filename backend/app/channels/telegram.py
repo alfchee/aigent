@@ -80,27 +80,38 @@ class TelegramChannel(BaseChannel):
         user_id = str(update.effective_user.id) if update.effective_user else chat_id
         session_id = f"tg_{chat_id}"
         
+        # Procesamiento asíncrono en segundo plano para evitar bloqueos de Telegram
+        asyncio.create_task(self._process_message_background(chat_id, user_text, session_id, user_id, context))
+
+    async def _process_message_background(self, chat_id, user_text, session_id, user_id, context):
         try:
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        except Exception:
-            # Si falla el typing action, no bloqueamos el flujo
-            pass
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception:
+                # Si falla el typing action, no bloqueamos el flujo
+                pass
             
-        try:
             response_text = await execute_agent_task(user_text, session_id=session_id, memory_user_id=f"tg_user_{user_id}")
             if not response_text:
                 response_text = "✅ Tarea completada (sin respuesta de texto)."
 
             if len(response_text) > 4000:
                 for x in range(0, len(response_text), 4000):
-                    await update.message.reply_text(response_text[x:x + 4000])
+                    await context.bot.send_message(chat_id=chat_id, text=response_text[x:x + 4000])
             else:
-                await update.message.reply_text(response_text)
+                await context.bot.send_message(chat_id=chat_id, text=response_text)
+            
             if self.auto_send_artifacts:
                 await self.check_and_send_artifacts(chat_id, session_id, context)
             await self._heartbeat()
         except (BadRequest, Forbidden) as e:
             # Handle "Chat not found" (BadRequest) or "Bot was blocked by the user" (Forbidden)
+            print(f"Telegram error for {chat_id}: {e}")
+        except Exception as e:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Error: {str(e)}")
+            except Exception:
+                pass
             # These are errors we can't recover from by replying to the user (since they can't see it or we can't send it)
             # We log it but don't crash or try to reply recursively
             print(f"Telegram Error (ignored): {e}")

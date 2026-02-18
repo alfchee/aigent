@@ -58,7 +58,7 @@ WORKER_PROMPTS = {
 }
 
 class AgentGraph:
-    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None, user_facts: str = ""):
+    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None, user_facts: str = "", checkpointer = None):
         """
         Inicializa el Grafo Multi-Agente con Supervisor.
         """
@@ -66,6 +66,7 @@ class AgentGraph:
         self.api_key = os.getenv("GOOGLE_API_KEY")
         self.extra_tools = extra_tools or []
         self.user_facts = user_facts
+        self.checkpointer = checkpointer
         self.orchestrator = ModelOrchestrator()
         
         if not self.api_key:
@@ -167,7 +168,26 @@ class AgentGraph:
         # Use specific LLM for supervisor
         supervisor_llm = self._get_llm("supervisor")
         supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts=self.user_facts)
-        workflow.add_node("supervisor", supervisor_node)
+        
+        # Logging wrapper for Supervisor node
+        async def logging_supervisor_node(state: AgentState):
+            import logging
+            logger = logging.getLogger("navibot.graph")
+            logger.info(f"[Graph] Supervisor Input State: {state.get('messages')[-1] if state.get('messages') else 'Empty'}")
+            
+            result = await supervisor_node(state)
+            
+            # Log routing decision
+            if isinstance(result, dict) and "next" in result:
+                logger.info(f"[Graph] Supervisor Route Decision: -> {result['next']}")
+            elif hasattr(result, "next"):
+                logger.info(f"[Graph] Supervisor Route Decision: -> {result.next}")
+            else:
+                logger.info(f"[Graph] Supervisor Result: {result}")
+                
+            return result
+            
+        workflow.add_node("supervisor", logging_supervisor_node)
 
         # 2. Crear Nodos de Trabajadores
         for worker_name in WORKERS:
@@ -203,8 +223,20 @@ class AgentGraph:
             # Definir la función del nodo
             # Usamos functools.partial para capturar worker_agent en el closure correctamente
             async def node_func(state: AgentState, agent=worker_agent, name=worker_name):
+                import logging
+                logger = logging.getLogger(f"navibot.worker.{name}")
+                
+                # Log entry
+                last_msg = state["messages"][-1]
+                logger.info(f"[Graph Worker:{name}] Processing: {last_msg.content[:100]}...")
+                
                 # Invocar al agente con el estado actual
                 result = await agent.ainvoke(state)
+                
+                # Log output
+                last_response = result["messages"][-1]
+                logger.info(f"[Graph Worker:{name}] Completed. Response: {last_response.content[:100]}...")
+                
                 # Devolver el último mensaje generado por el agente
                 return {"messages": [
                     HumanMessage(content=result["messages"][-1].content, name=name)
@@ -230,7 +262,7 @@ class AgentGraph:
         for worker_name in WORKERS:
             workflow.add_edge(worker_name, "supervisor")
 
-        return workflow.compile()
+        return workflow.compile(checkpointer=self.checkpointer)
 
     def get_runnable(self):
         return self.graph

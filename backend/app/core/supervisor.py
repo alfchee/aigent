@@ -22,11 +22,13 @@ class RouteResponse(TypedDict):
 system_prompt = (
     "Eres un supervisor encargado de gestionar una conversación entre los"
     " siguientes trabajadores:\n{worker_desc}\n\n"
-    "Dada la solicitud del usuario, responde con el siguiente trabajador para actuar."
-    " Cada trabajador realizará una tarea y responderá con sus resultados y estado."
-    " SIEMPRE selecciona un trabajador si la solicitud del usuario requiere una respuesta o acción."
-    " Solo responde con FINISH si la tarea ya ha sido completada satisfactoriamente por un trabajador y no se requiere más interacción."
-    " Para saludos, preguntas generales o conversaciones, envía a GeneralAssistant."
+    "INSTRUCCIONES CRÍTICAS:\n"
+    "1. Analiza el ÚLTIMO mensaje de la conversación.\n"
+    "2. Si el último mensaje es una respuesta clara y completa de un trabajador hacia el usuario (no una solicitud de ayuda interna), DEBES responder con 'FINISH'.\n"
+    "3. Si el usuario acaba de hablar, selecciona el trabajador más adecuado para responder.\n"
+    "4. Si un trabajador necesita ayuda de otro, selecciona ese otro trabajador.\n"
+    "5. NO vuelvas a seleccionar al mismo trabajador si este ya ha respondido al usuario satisfactoriamente.\n"
+    "6. Para saludos simples ('Hola', 'Buenos días') que ya fueron respondidos por GeneralAssistant, responde 'FINISH'.\n"
 )
 
 options = ["FINISH"] + WORKERS
@@ -81,8 +83,8 @@ def create_supervisor_node(llm: ChatGoogleGenerativeAI, members: List[str], user
         | JsonOutputFunctionsParser()
     )
 
-    def supervisor_node(state: AgentState):
-        result = supervisor_chain.invoke(state)
+    async def supervisor_node(state: AgentState):
+        result = await supervisor_chain.ainvoke(state)
         return result
 
     return supervisor_node

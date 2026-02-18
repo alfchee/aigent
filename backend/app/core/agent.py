@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from app.core.persistence import load_chat_history, save_chat_message
 from app.core.persistence_wrapper import wrap_tool
@@ -226,40 +228,63 @@ class NaviBot:
             
             fields = {}
             if "properties" in schema:
+                required_fields = schema.get("required", [])
                 for prop_name, prop_def in schema["properties"].items():
                     prop_type = str
-                    # Simple type mapping
+                    
+                    # Robust type mapping
                     t = prop_def.get("type")
                     if t == "integer": prop_type = int
                     elif t == "number": prop_type = float
                     elif t == "boolean": prop_type = bool
+                    elif t == "object": prop_type = Dict[str, Any]
                     elif t == "array": 
-                        # Handle array items type for Pydantic/Gemini
                         items_def = prop_def.get("items", {})
                         it = items_def.get("type")
-                        item_type = str
-                        if it == "integer": item_type = int
+                        item_type = Any
+                        
+                        if it == "string": item_type = str
+                        elif it == "integer": item_type = int
                         elif it == "number": item_type = float
                         elif it == "boolean": item_type = bool
-                        elif it == "object": item_type = dict
-                        elif it == "array": item_type = list # Nested arrays might need recursion
+                        elif it == "object": item_type = Dict[str, Any]
+                        elif it == "array": item_type = List[Any]
+                        else:
+                            # Fallback to string for array items if type is unspecified
+                            # This prevents "items: missing field" error in Gemini
+                            logger.warning(f"MCP Tool {name}: Array property '{prop_name}' has unspecified item type. Defaulting to str.")
+                            item_type = str
                         
                         prop_type = List[item_type]
-                    elif t == "object": prop_type = dict
                     
+                    # Handle Optional fields
+                    is_required = prop_name in required_fields
                     description_field = prop_def.get("description", "")
-                    fields[prop_name] = (prop_type, Field(description=description_field))
+                    
+                    if is_required:
+                        fields[prop_name] = (prop_type, Field(..., description=description_field))
+                    else:
+                        fields[prop_name] = (Optional[prop_type], Field(None, description=description_field))
             
             # Create dynamic model
             # Note: This is basic and might fail for complex schemas
             try:
                 ArgsModel = create_model(f"{name}Schema", **fields)
                 
+                # Define a proper async wrapper function instead of functools.partial
+                # to satisfy Google GenAI / LangChain introspection requirements
+                async def _mcp_tool_wrapper(**kwargs):
+                    return await self._call_mcp_tool(name=name, **kwargs)
+                
+                # Set metadata for introspection
+                _mcp_tool_wrapper.__name__ = name
+                _mcp_tool_wrapper.__doc__ = description
+                
                 tool = StructuredTool(
                     name=name,
                     description=description,
                     func=None, # Sync func
-                    coroutine=functools.partial(self._call_mcp_tool, name=name), # Async func with captured name
+                    coroutine=_mcp_tool_wrapper, # Proper async wrapper
                     args_schema=ArgsModel
                 )
                 lc_tools.append(tool)
@@ -318,34 +343,94 @@ class NaviBot:
         # Ideally, SkillLoader should wrap tools or AgentGraph should.
         # For now, let's assume standard logging is enough or we rely on the graph's output.
         
-        agent_graph = AgentGraph(model_name=self.model_name, extra_tools=mcp_lc_tools, user_facts=user_facts_str)
-        graph = agent_graph.get_runnable()
+        # Setup Checkpointer
+        os.makedirs("workspace_data", exist_ok=True)
+        db_path = "workspace_data/checkpoints.db"
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
         
-        # 5. Execute Graph (Streaming)
-        inputs = {"messages": lc_messages}
-        final_state = inputs
-        
-        async for state in graph.astream(inputs, stream_mode="values"):
-            final_state = state
-            if state["messages"]:
-                last_msg = state["messages"][-1]
-                node_name = getattr(last_msg, 'name', 'unknown')
-                print(f"[Graph] State update. Last msg from: {node_name}")
-                if event_callback:
-                    await event_callback({"type": "step", "node": node_name, "content": last_msg.content[:50]})
+        async with AsyncSqliteSaver.from_conn_string(db_path) as memory:
+            agent_graph = AgentGraph(
+                model_name=self.model_name, 
+                extra_tools=mcp_lc_tools, 
+                user_facts=user_facts_str,
+                checkpointer=memory
+            )
+            graph = agent_graph.get_runnable()
+            
+            # 5. Execute Graph (Streaming)
+            config = {"configurable": {"thread_id": session_id}}
+            
+            # Logic to avoid duplicating history if resuming
+            checkpoint = await memory.aget(config)
+            
+            if checkpoint:
+                # We are resuming/continuing. 
+                # Only pass the NEW message.
+                inputs = {"messages": [HumanMessage(content=message)]}
+            else:
+                # First run for this thread_id
+                inputs = {"messages": lc_messages}
 
-        # 6. Extract New Messages and Save to DB
-        new_messages = final_state["messages"][len(lc_messages):] # Messages added during execution
+            final_state = inputs
+            
+            async for state in graph.astream(inputs, config=config, stream_mode="values"):
+                final_state = state
+                if state["messages"]:
+                    last_msg = state["messages"][-1]
+                    node_name = getattr(last_msg, 'name', 'unknown')
+                    # print(f"[Graph] State update. Last msg from: {node_name}")
+                    if event_callback:
+                        await event_callback({"type": "step", "node": node_name, "content": last_msg.content[:50]})
+
+            # 6. Extract New Messages and Save to DB
+            
+            # Logic for extracting new messages:
+            # - If inputs was just the new user message (resuming):
+            #   final_state["messages"] contains ALL history + new user msg + new AI msgs.
+            #   We want to capture the new user msg and everything after it.
+            #   However, lc_messages contained the FULL history from DB + new user msg.
+            #   So len(lc_messages) represents the count of messages we KNEW about before execution.
+            #   Wait, if we are resuming, 'inputs' is just [HumanMessage]. 
+            #   But 'final_state["messages"]' will contain the full history from checkpoint + inputs + new outputs.
+            #   The DB history (lc_messages) has: [Old1, Old2, ..., NewUserMsg].
+            #   The Checkpoint history (final_state) has: [Old1, Old2, ..., NewUserMsg, AIResponse...].
+            #   So slicing from len(lc_messages)-1 gives us [NewUserMsg, AIResponse...].
+            #   We want to save NewUserMsg and subsequent AI responses.
+            
+            # BUT, we are manually saving the user message below at line 426.
+            # If we include it in 'new_messages', we might process it twice in the loop?
+            # Let's check the loop.
+            
+            # The loop (line 432) iterates over 'new_messages'.
+            # Inside the loop:
+            # - AIMessage -> saved as 'model'
+            # - ToolMessage -> saved as 'function'
+            # - HumanMessage -> saved as 'model' (as text response from worker)
+            
+            # The User Message we injected is a HumanMessage.
+            # If we include it in 'new_messages', the loop will encounter it.
+            # It will hit the 'elif isinstance(msg, HumanMessage):' block.
+            # It will save it as 'model' response: "[user] content".
+            # This is WRONG. The user's input should not be saved as a model response.
+            
+            # Fix: We should exclude the user's input message from 'new_messages' loop processing
+            # because we save it explicitly as 'user' role at line 426.
+            
+            # So we should slice from len(lc_messages).
+            # lc_messages = [Old..., NewUserMsg] (length N)
+            # final_state = [Old..., NewUserMsg, AI...] (length N + M)
+            # final_state[N:] gives [AI...].
+            
+            start_index = len(lc_messages)
+            
+            # Safety check: if for some reason final_state has fewer messages (shouldn't happen),
+            # prevent negative slicing or errors.
+            if start_index > len(final_state["messages"]):
+                 start_index = len(final_state["messages"])
+                 
+            new_messages = final_state["messages"][start_index:] 
         
-        # Save User Message first (it was added to inputs but not DB)
-        # Actually, main.py might expect us to NOT save it if it does it?
-        # main.py does NOT save the user message before calling send_message.
-        # It relies on history sync after call.
-        # So we should SAVE it here or ensure it's in the returned history?
-        # If we save it here, main.py sync will see it.
-        
-        # Let's save everything generated, including the user message we processed.
-        # User message:
+        # Save User Message explicitly
         save_chat_message(session_id, "user", message)
         
         response_text = ""

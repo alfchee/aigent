@@ -94,14 +94,23 @@ async def execute_agent_task(
     response_text = ""
     error_text = ""
     error_trace = ""
+    
+    # Isolate scheduler execution in a unique thread/session context to prevent locking
+    # "scheduled_tasks_ig" as requested by user pattern
+    isolated_session_id = f"scheduled_tasks_ig_{session_id}" if session_id == "default" else f"scheduled_tasks_ig_{session_id}"
+    
     try:
-        session_token = set_session_id(session_id)
+        session_token = set_session_id(isolated_session_id)
         callback_token = set_event_callback(None)
         # Instantiate a fresh agent for this task
         bot = NaviBot()
         
+        # Ensure the session exists for the isolated thread
+        await bot.ensure_session(isolated_session_id)
+        
         if use_react_loop:
             # Use ReAct loop for autonomous multi-turn execution
+            # Note: send_message_with_react internally uses the session_id from runtime_context
             result = await bot.send_message_with_react(
                 prompt,
                 max_iterations=max_iterations,

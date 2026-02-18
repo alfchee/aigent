@@ -67,3 +67,4 @@ pnpm-lock.yaml
 .gemini/
 brain/
 .trae/
+backend/navi_memory_qdrant/collection/mem0/storage.sqlite

@@ -31,3 +31,5 @@ mcp
 langchain
 langgraph
 langchain-google-genai
+langgraph-checkpoint-sqlite
+aiosqlite
