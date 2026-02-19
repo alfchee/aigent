@@ -5,12 +5,12 @@ from app.core.runtime_context import get_memory_user_id
 
 def recall_facts(query: str) -> str:
     """
-    Busca información en la memoria a largo plazo (User Facts).
-    Útil cuando necesitas recordar datos pasados, preferencias del usuario, detalles de proyectos anteriores
-    o información que no está en el contexto actual de la conversación.
+    Searches for information in long-term memory (User Facts).
+    Useful when you need to remember past data, user preferences, details of previous projects
+    or information not in the current conversation context.
     
     Args:
-        query: La pregunta o tema a buscar en la memoria.
+        query: The question or topic to search in memory.
     """
     memory_user_id = get_memory_user_id()
     if not memory_user_id:
@@ -27,13 +27,13 @@ def recall_facts(query: str) -> str:
 
 def save_fact(fact: str) -> str:
     """
-    Guarda un dato importante en la memoria a largo plazo.
-    Úsala SOLO si el usuario te da una información CRÍTICA o NUEVA que debe ser recordada en el futuro.
-    Ejemplos: nombres, preferencias, fechas importantes, configuraciones de proyecto.
-    NO la uses para charlas casuales o información temporal.
+    Saves important information to long-term memory.
+    Use it ONLY if the user gives you CRITICAL or NEW information that must be remembered in the future.
+    Examples: names, preferences, important dates, project settings.
+    DO NOT use for casual chat or temporary information.
     
     Args:
-        fact: El hecho o información a guardar.
+        fact: The fact or information to save.
     """
     memory_user_id = get_memory_user_id()
     if not memory_user_id:

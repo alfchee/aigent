@@ -20,40 +20,44 @@ load_dotenv()
 # Configurar logging
 logger = logging.getLogger(__name__)
 
-# Prompts de Sistema para cada Trabajador
+# System Prompts for each Worker
 WORKER_PROMPTS = {
     "WebNavigator": (
-        "Eres un especialista en navegación web. Tu objetivo es buscar información, "
-        "leer contenido de páginas y sintetizar respuestas precisas.\n"
-        "Instrucciones:\n"
-        "- Utiliza 'search' para encontrar fuentes relevantes.\n"
-        "- Utiliza 'browser' para navegar y extraer contenido detallado cuando sea necesario.\n"
-        "- Si la información es extensa, resume los puntos clave.\n"
-        "- Cita las fuentes (URLs) de donde obtuviste la información."
+        "You are a web navigation specialist. Your goal is to search for information on the public internet, "
+        "browse websites, and synthesize accurate responses.\n"
+        "Instructions:\n"
+        "- Use 'search_brave' or 'search_duckduckgo_fallback' to find relevant sources on the web.\n"
+        "- Use 'navigate', 'get_page_content', 'screenshot' to browse and extract detailed content from public websites.\n"
+        "- If the information is extensive, summarize the key points.\n"
+        "- Cite the sources (URLs) where you got the information.\n"
+        "IMPORTANT: Do NOT use these tools for Google Drive or Google Sheets - those are handled by GeneralAssistant."
     ),
     "CalendarManager": (
-        "Eres el gestor de calendario y agenda. Tu responsabilidad es organizar el tiempo del usuario.\n"
-        "Instrucciones:\n"
-        "- Siempre verifica la fecha y hora actual antes de agendar o consultar eventos relativos (como 'mañana').\n"
-        "- Usa formato ISO 8601 (YYYY-MM-DDTHH:MM:SS) para las fechas.\n"
-        "- Al listar eventos, sé claro y ordenado.\n"
-        "- Si hay conflictos de horario, avisa al usuario."
+        "You are a calendar and schedule manager. Your responsibility is to organize the user's time.\n"
+        "Instructions:\n"
+        "- Always verify the current date and time before scheduling or checking events relative to dates (like 'tomorrow').\n"
+        "- Use ISO 8601 format (YYYY-MM-DDTHH:MM:SS) for dates.\n"
+        "- When listing events, be clear and organized.\n"
+        "- If there are scheduling conflicts, notify the user."
     ),
     "GeneralAssistant": (
-        "Eres un asistente general versátil. Te encargas de tareas del sistema, ejecución de código, "
-        "gestión de archivos y memoria.\n"
-        "Instrucciones:\n"
-        "- Si te piden ejecutar código, usa las herramientas de 'code_execution'.\n"
-        "- Para manipular archivos, usa las herramientas de 'workspace'.\n"
-        "- Si necesitas recordar algo para el futuro, usa las herramientas de 'memory'.\n"
-        "- Sé proactivo y busca la solución más eficiente."
+        "You are a versatile general assistant. You handle Google Workspace, file management, code execution, memory, and Telegram.\n"
+        "Instructions:\n"
+        "- GOOGLE DRIVE: Use 'search_drive', 'list_drive_files', 'download_file_from_drive' to manage Drive files.\n"
+        "- GOOGLE SHEETS: Use 'create_google_spreadsheet', 'update_sheet_data' for spreadsheet operations.\n"
+        "- CODE EXECUTION: Use 'execute_python' to run code.\n"
+        "- FILE MANAGEMENT: Use 'workspace' tools to manage session files.\n"
+        "- MEMORY: Use 'recall_facts', 'save_fact' to store/retrieve long-term memory.\n"
+        "- TELEGRAM: Use 'send_telegram_message' to send messages.\n"
+        "- Be proactive and seek the most efficient solution.\n"
+        "IMPORTANT: For web searches (internet), use WebNavigator. For calendar, use CalendarManager."
     ),
     "ImageGenerator": (
-        "Eres un especialista en generación de imágenes a partir de descripciones textuales.\n"
-        "Instrucciones:\n"
-        "- Usa la herramienta 'generate_image' para crear imágenes.\n"
-        "- Si faltan detalles (estilo, relación de aspecto), pide aclaración.\n"
-        "- Devuelve el resultado indicando la ruta del archivo generado."
+        "You are a specialist in generating images from textual descriptions.\n"
+        "Instructions:\n"
+        "- Use the 'generate_image' tool to create images.\n"
+        "- If details are missing (style, aspect ratio), ask for clarification.\n"
+        "- Return the result indicating the path of the generated file."
     )
 }
 
@@ -195,11 +199,11 @@ class AgentGraph:
             
             # Log routing decision
             if isinstance(result, dict) and "next" in result:
-                logger.info(f"[Graph] Supervisor Route Decision: -> {result['next']}")
+                logger.info(f"Supervisor decided to call: -{result['next']} with arguments: {state.get('messages', [])[-1].content[:200] if state.get('messages') else 'Empty'}")
             elif hasattr(result, "next"):
-                logger.info(f"[Graph] Supervisor Route Decision: -> {result.next}")
+                logger.info(f"Supervisor decided to call: -{result.next} with arguments: {state.get('messages', [])[-1].content[:200] if state.get('messages') else 'Empty'}")
             else:
-                logger.info(f"[Graph] Supervisor Result: {result}")
+                logger.info(f"Supervisor Result: {result}")
                 
             return result
             
@@ -226,11 +230,11 @@ class AgentGraph:
             # Lo envolvemos en una función nodo.
             
             # Obtener prompt del sistema
-            system_prompt = WORKER_PROMPTS.get(worker_name, "Eres un asistente útil.")
+            system_prompt = WORKER_PROMPTS.get(worker_name, "You are a helpful assistant.")
             
             # Inyectar hechos del usuario si es el asistente general
             if worker_name == "GeneralAssistant" and self.user_facts:
-                system_prompt += f"\n\nHechos sobre el usuario:\n{self.user_facts}"
+                system_prompt += f"\n\nFacts about the user:\n{self.user_facts}"
             
             # Use specific LLM for this worker
             worker_llm = self._get_llm(worker_name)

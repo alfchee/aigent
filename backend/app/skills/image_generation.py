@@ -23,7 +23,7 @@ def _extension_for_mime(mime_type: str | None) -> str:
 
 async def generate_image(prompt: str, aspect_ratio: str | None = None, file_name: str | None = None, **kwargs) -> str:
     """
-    Genera una imagen a partir de un prompt y la guarda en el workspace de la sesión.
+    Generates an image from a prompt and saves it to the session workspace.
     """
     # Ignorar argumentos extra como 'model' que el agente pueda enviar
     if kwargs:

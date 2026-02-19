@@ -9,18 +9,18 @@ def _get_brave_api_key() -> str | None:
     return os.getenv("BRAVE_API_KEY") or os.getenv("BRAVE_SEARCH_API_KEY")
 
 
-async def search_brave(query: str, count: int = 5, offset: int = 0, lang: str = "es") -> str:
+async def search_brave(query: str, count: int = 5, offset: int = 0, lang: str = "en") -> str:
     """
-    Realiza una búsqueda web utilizando Brave Search API.
+    Performs a web search using the Brave Search API.
     
     Args:
-        query: La consulta de búsqueda.
-        count: Número de resultados a retornar (default: 5).
-        offset: Desplazamiento para paginación (default: 0).
-        lang: Código de idioma para la búsqueda (default: "es").
+        query: The search query.
+        count: Number of results to return (default: 5).
+        offset: Offset for pagination (default: 0).
+        lang: Language code for the search (default: "en").
         
     Returns:
-        JSON string con los resultados de la búsqueda.
+        JSON string with the search results.
     """
     api_key = _get_brave_api_key()
     if not api_key:
@@ -59,14 +59,14 @@ async def search_brave(query: str, count: int = 5, offset: int = 0, lang: str = 
 
 async def search_duckduckgo_fallback(query: str, max_results: int = 5) -> str:
     """
-    Realiza una búsqueda web utilizando DuckDuckGo (scraping) como fallback.
+    Performs a web search using DuckDuckGo (scraping) as fallback.
     
     Args:
-        query: La consulta de búsqueda.
-        max_results: Número de resultados a retornar.
+        query: The search query.
+        max_results: Number of results to return.
         
     Returns:
-        JSON string con los resultados.
+        JSON string with the results.
     """
     url = f"https://duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     browser = None

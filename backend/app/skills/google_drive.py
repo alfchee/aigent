@@ -68,13 +68,13 @@ def get_drive_service():
 
 async def list_drive_files(folder_id: str = 'root') -> str:
     """
-    Lista archivos y carpetas dentro de un directorio específico de Google Drive.
+    Lists files and folders within a specific Google Drive directory.
     
     Args:
-        folder_id: El ID de la carpeta en Drive (default: 'root').
+        folder_id: The folder ID in Drive (default: 'root').
         
     Returns:
-        Un string formateado con la lista de archivos/carpetas encontrados.
+        A formatted string with the list of files/folders found.
     """
     try:
         # Run synchronous API call in executor to avoid blocking event loop
@@ -111,13 +111,13 @@ def _list_drive_files_sync(folder_id: str) -> str:
 
 async def search_drive(name: str) -> str:
     """
-    Busca un archivo o carpeta por nombre en todo el Drive compartido.
+    Searches for a file or folder by name in the entire shared Drive.
     
     Args:
-        name: El nombre (o parte del nombre) a buscar.
+        name: The name (or part of the name) to search for.
         
     Returns:
-        Lista de resultados encontrados con sus IDs.
+        List of results found with their IDs.
     """
     try:
         loop = asyncio.get_event_loop()
@@ -175,14 +175,14 @@ def _move_drive_file_sync(file_id: str, folder_id: str) -> str:
 
 async def download_file_from_drive(file_id: str, file_name: str) -> str:
     """
-    Descarga un archivo de Drive al workspace local de la sesión actual para ser procesado.
+    Downloads a file from Drive to the local workspace of the current session to be processed.
     
     Args:
-        file_id: El ID del archivo en Google Drive.
-        file_name: El nombre con el que se guardará localmente (ej. 'datos.xlsx').
+        file_id: The ID of the file in Google Drive.
+        file_name: The name to save locally (e.g. 'data.xlsx').
         
     Returns:
-        Mensaje de éxito con la ruta relativa del archivo.
+        Success message with the relative path of the file.
     """
     session_id = get_session_id()
     if not session_id:

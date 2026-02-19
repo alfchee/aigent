@@ -166,13 +166,13 @@ def _transfer_ownership(file_id: str, owner_email: str, creds) -> None:
 
 async def create_google_spreadsheet(title: str, folder_id: Optional[str] = None) -> dict:
     """
-    Crea una nueva hoja de cálculo en Google Sheets y devuelve su URL e ID.
+    Creates a new spreadsheet in Google Sheets and returns its URL and ID.
     
     Args:
-        title: El título del nuevo documento.
+        title: The title of the new document.
         
     Returns:
-        Un diccionario con 'url' e 'id' del documento creado.
+        A dictionary with 'url' and 'id' of the created document.
     """
     try:
         workspace_config = _get_workspace_config()
@@ -240,15 +240,15 @@ async def create_google_spreadsheet(title: str, folder_id: Optional[str] = None)
 
 async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[List[Union[str, int, float]]]) -> str:
     """
-    Inserta o actualiza datos en una hoja de cálculo existente.
+    Inserts or updates data in an existing spreadsheet.
     
     Args:
-        spreadsheet_id: El ID del documento (se puede obtener de la URL).
-        range_name: El rango (ej. 'Hoja 1!A1') o nombre de la hoja (ej. 'Sheet1').
-        values: Lista de listas con los datos a insertar [[f1c1, f1c2], [f2c1...]].
+        spreadsheet_id: The document ID (can be obtained from the URL).
+        range_name: The range (e.g. 'Sheet1!A1') or sheet name (e.g. 'Sheet1').
+        values: List of lists with data to insert [[f1c1, f1c2], [f2c1...]].
         
     Returns:
-        Un mensaje de confirmación o error.
+        A confirmation or error message.
     """
     try:
         client = get_sheets_client()
@@ -281,8 +281,8 @@ async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[L
 
 async def get_google_oauth_authorization_url() -> str:
     """
-    Genera y devuelve la URL de autorización OAuth2 para Google Workspace.
-    Usa esto cuando necesites pedir al usuario que se autentique.
+    Generates and returns the OAuth2 authorization URL for Google Workspace.
+    Use this when you need to ask the user to authenticate.
     """
     try:
         url = get_authorization_url(SCOPES)
@@ -299,9 +299,9 @@ async def get_google_oauth_authorization_url() -> str:
 
 async def set_google_oauth_token(auth_code: str) -> str:
     """
-    Guarda el token de OAuth2 proporcionado por el usuario después de la autorización.
+    Saves the OAuth2 token provided by the user after authorization.
     Args:
-        auth_code: El código de verificación obtenido de la URL de autorización.
+        auth_code: The verification code obtained from the authorization URL.
     """
     try:
         # Limpieza básica por si el usuario pega la URL completa o tiene espacios
@@ -330,8 +330,8 @@ async def set_google_oauth_token(auth_code: str) -> str:
 
 async def authorize_google_oauth_local_server() -> str:
     """
-    OBSOLETO: Utiliza el flujo manual con get_google_oauth_authorization_url.
-    Esta función ahora solo devuelve la URL para evitar bloqueos.
+    DEPRECATED: Use the manual flow with get_google_oauth_authorization_url.
+    This function now only returns the URL to avoid blocking.
     """
     try:
         return await get_google_oauth_authorization_url() + "\n\nNota: El modo de servidor local ha sido reemplazado por el flujo manual para asegurar que veas este mensaje. Por favor usa la URL de arriba y luego copia el código de autorización usando 'set_google_oauth_token'."
