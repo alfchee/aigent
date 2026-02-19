@@ -219,5 +219,286 @@ def _download_to_path_sync(file_id: str, target_path) -> None:
         while done is False:
             status, done = downloader.next_chunk()
 
+
+async def create_drive_folder(name: str, parent_folder_id: str = 'root') -> str:
+    """
+    Creates a new folder in Google Drive.
+    
+    Args:
+        name: The name of the folder to create.
+        parent_folder_id: The ID of the parent folder (default: 'root').
+        
+    Returns:
+        Success message with the folder ID and link.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _create_drive_folder_sync, name, parent_folder_id)
+        return result
+    except Exception as e:
+        logger.exception(f"Error creating folder {name}")
+        return f"Error creating folder: {str(e)}"
+
+
+def _create_drive_folder_sync(name: str, parent_folder_id: str) -> str:
+    service = get_drive_service()
+    folder_metadata = {
+        'name': name,
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+    if parent_folder_id and parent_folder_id != 'root':
+        folder_metadata['parents'] = [parent_folder_id]
+    
+    folder = service.files().create(body=folder_metadata, fields='id, name, webViewLink').execute()
+    return f"✅ Folder created: {folder['name']} (ID: {folder['id']})\n🔗 Link: {folder.get('webViewLink', 'No link available')}"
+
+
+async def create_drive_file(file_type: str, name: str, parent_folder_id: str = 'root') -> str:
+    """
+    Creates a new Google Docs, Sheets, or Slides file in Drive.
+    
+    Args:
+        file_type: The type of file - 'document', 'spreadsheet', or 'presentation'.
+        name: The name of the file to create.
+        parent_folder_id: The ID of the parent folder (default: 'root').
+        
+    Returns:
+        Success message with the file ID and link.
+    """
+    mime_types = {
+        'document': 'application/vnd.google-apps.document',
+        'spreadsheet': 'application/vnd.google-apps.spreadsheet',
+        'presentation': 'application/vnd.google-apps.presentation'
+    }
+    
+    if file_type not in mime_types:
+        return f"Error: Invalid file_type '{file_type}'. Use 'document', 'spreadsheet', or 'presentation'."
+    
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _create_drive_file_sync, mime_types[file_type], name, parent_folder_id)
+        return result
+    except Exception as e:
+        logger.exception(f"Error creating {file_type} {name}")
+        return f"Error creating {file_type}: {str(e)}"
+
+
+def _create_drive_file_sync(mime_type: str, name: str, parent_folder_id: str) -> str:
+    service = get_drive_service()
+    file_metadata = {
+        'name': name,
+        'mimeType': mime_type
+    }
+    if parent_folder_id and parent_folder_id != 'root':
+        file_metadata['parents'] = [parent_folder_id]
+    
+    file = service.files().create(body=file_metadata, fields='id, name, webViewLink, mimeType').execute()
+    
+    file_type_name = {
+        'application/vnd.google-apps.document': 'Google Doc',
+        'application/vnd.google-apps.spreadsheet': 'Google Sheet',
+        'application/vnd.google-apps.presentation': 'Google Slides'
+    }.get(file.get('mimeType'), 'File')
+    
+    return f"✅ {file_type_name} created: {file['name']} (ID: {file['id']})\n🔗 Link: {file.get('webViewLink', 'No link available')}"
+
+
+async def delete_drive_file(file_id: str) -> str:
+    """
+    Deletes a file or folder from Google Drive.
+    
+    Args:
+        file_id: The ID of the file to delete.
+        
+    Returns:
+        Success or error message.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _delete_drive_file_sync, file_id)
+        return result
+    except Exception as e:
+        logger.exception(f"Error deleting file {file_id}")
+        return f"Error deleting file: {str(e)}"
+
+
+def _delete_drive_file_sync(file_id: str) -> str:
+    service = get_drive_service()
+    try:
+        file_meta = service.files().get(fileId=file_id, fields='name').execute()
+        file_name = file_meta.get('name', file_id)
+    except:
+        file_name = file_id
+    
+    service.files().delete(fileId=file_id).execute()
+    return f"🗑️ File deleted: {file_name} (ID: {file_id})"
+
+
+async def copy_drive_file(file_id: str, new_name: str = None) -> str:
+    """
+    Copies a file in Google Drive.
+    
+    Args:
+        file_id: The ID of the file to copy.
+        new_name: The name for the copy (optional, defaults to 'Copy of [original name]').
+        
+    Returns:
+        Success message with the copied file ID and link.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _copy_drive_file_sync, file_id, new_name)
+        return result
+    except Exception as e:
+        logger.exception(f"Error copying file {file_id}")
+        return f"Error copying file: {str(e)}"
+
+
+def _copy_drive_file_sync(file_id: str, new_name: str) -> str:
+    service = get_drive_service()
+    
+    # Get original file name if not provided
+    if not new_name:
+        original = service.files().get(fileId=file_id, fields='name').execute()
+        new_name = f"Copy of {original.get('name', 'file')}"
+    
+    copy_metadata = {'name': new_name}
+    copied_file = service.files().copy(fileId=file_id, body=copy_metadata, fields='id, name, webViewLink').execute()
+    
+    return f"✅ File copied: {copied_file['name']} (ID: {copied_file['id']})\n🔗 Link: {copied_file.get('webViewLink', 'No link available')}"
+
+
+async def get_drive_file_info(file_id: str) -> str:
+    """
+    Gets detailed metadata information about a file in Google Drive.
+    
+    Args:
+        file_id: The ID of the file.
+        
+    Returns:
+        Detailed file information including size, created date, modified date, owners, permissions, etc.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _get_drive_file_info_sync, file_id)
+        return result
+    except Exception as e:
+        logger.exception(f"Error getting info for file {file_id}")
+        return f"Error getting file info: {str(e)}"
+
+
+def _get_drive_file_info_sync(file_id: str) -> str:
+    service = get_drive_service()
+    
+    file_meta = service.files().get(
+        fileId=file_id,
+        fields='id, name, mimeType, size, createdTime, modifiedTime, owners, parents, webViewLink, webContentLink, permissions'
+    ).execute()
+    
+    from datetime import datetime
+    
+    def format_date(iso_date):
+        if not iso_date:
+            return "N/A"
+        try:
+            dt = datetime.fromisoformat(iso_date.replace('Z', '+00:00'))
+            return dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+        except:
+            return iso_date
+    
+    def format_size(size_bytes):
+        if not size_bytes:
+            return "N/A"
+        try:
+            size = int(size_bytes)
+            for unit in ['B', 'KB', 'MB', 'GB']:
+                if size < 1024:
+                    return f"{size} {unit}"
+                size /= 1024
+            return f"{size} TB"
+        except:
+            return str(size_bytes)
+    
+    owners = file_meta.get('owners', [])
+    owner_names = [o.get('displayName', o.get('emailAddress', 'Unknown')) for o in owners]
+    
+    parents = file_meta.get('parents', [])
+    
+    mime_type = file_meta.get('mimeType', 'Unknown')
+    is_folder = mime_type == 'application/vnd.google-apps.folder'
+    
+    output = [f"📄 File Information for: {file_meta.get('name', 'Unknown')}"]
+    output.append(f"━━━━━━━━━━━━━━━━━━━━━━━━")
+    output.append(f"�ds: {file_meta.get('id')}")
+    output.append(f"📁 Type: {'Folder' if is_folder else mime_type}")
+    output.append(f"💾 Size: {format_size(file_meta.get('size'))}")
+    output.append(f"📅 Created: {format_date(file_meta.get('createdTime'))}")
+    output.append(f"✏️ Modified: {format_date(file_meta.get('modifiedTime'))}")
+    output.append(f"👤 Owner(s): {', '.join(owner_names) if owner_names else 'Unknown'}")
+    output.append(f"📂 Parent(s): {', '.join(parents) if parents else 'Root'}")
+    
+    if file_meta.get('webViewLink'):
+        output.append(f"🔗 View: {file_meta.get('webViewLink')}")
+    if file_meta.get('webContentLink'):
+        output.append(f"⬇️ Download: {file_meta.get('webContentLink')}")
+    
+    return "\n".join(output)
+
+
+async def share_drive_file(file_id: str, email: str, role: str = 'reader') -> str:
+    """
+    Shares a file in Google Drive with a specific email address.
+    
+    Args:
+        file_id: The ID of the file to share.
+        email: The email address to share with.
+        role: The permission role - 'reader', 'writer', or 'commenter' (default: 'reader').
+        
+    Returns:
+        Success or error message.
+    """
+    valid_roles = ['reader', 'writer', 'commenter', 'owner']
+    if role not in valid_roles:
+        return f"Error: Invalid role '{role}'. Use: {', '.join(valid_roles)}"
+    
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _share_drive_file_sync, file_id, email, role)
+        return result
+    except Exception as e:
+        logger.exception(f"Error sharing file {file_id}")
+        return f"Error sharing file: {str(e)}"
+
+
+def _share_drive_file_sync(file_id: str, email: str, role: str) -> str:
+    service = get_drive_service()
+    
+    permission = {
+        'type': 'user',
+        'role': role,
+        'emailAddress': email
+    }
+    
+    service.permissions().create(
+        fileId=file_id,
+        body=permission,
+        sendNotificationEmail=True
+    ).execute()
+    
+    role_emoji = {'reader': '👁️', 'writer': '✏️', 'commenter': '💬', 'owner': '👑'}
+    return f"✅ File shared with {email}\n🔖 Role: {role_emoji.get(role, '')} {role}\n📎 File ID: {file_id}"
+
+
 # Export tools
-tools = [list_drive_files, search_drive, move_drive_file, download_file_from_drive]
+tools = [
+    list_drive_files,
+    search_drive,
+    move_drive_file,
+    download_file_from_drive,
+    create_drive_folder,
+    create_drive_file,
+    delete_drive_file,
+    copy_drive_file,
+    get_drive_file_info,
+    share_drive_file
+]

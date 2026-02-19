@@ -43,7 +43,7 @@ WORKER_PROMPTS = {
     "GeneralAssistant": (
         "You are a versatile general assistant. You handle Google Workspace, file management, code execution, memory, and Telegram.\n"
         "Instructions:\n"
-        "- GOOGLE DRIVE: Use 'search_drive', 'list_drive_files', 'download_file_from_drive' to manage Drive files.\n"
+        "- GOOGLE DRIVE: Use 'search_drive', 'list_drive_files', 'download_file_from_drive', 'create_drive_folder', 'create_drive_file', 'delete_drive_file', 'copy_drive_file', 'get_drive_file_info', 'share_drive_file' to manage Drive files.\n"
         "- GOOGLE SHEETS: Use 'create_google_spreadsheet', 'update_sheet_data' for spreadsheet operations.\n"
         "- CODE EXECUTION: Use 'execute_python' to run code.\n"
         "- FILE MANAGEMENT: Use 'workspace' tools to manage session files.\n"
