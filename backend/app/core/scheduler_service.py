@@ -75,6 +75,12 @@ async def execute_agent_task(
     """
     Execute an agent task with optional ReAct loop.
     
+    GHOST USER PATTERN: Uses isolated session_id and entity metadata for scheduler tasks.
+    This ensures:
+    - Complete isolation from human user sessions
+    - No DB locking conflicts with live chat sessions
+    - Proper auditing of automated vs human interactions
+    
     Args:
         prompt: The task prompt for the agent
         use_react_loop: Whether to use ReAct loop (default: True)
@@ -87,7 +93,17 @@ async def execute_agent_task(
     print(f"{'='*60}\n")
     
     from app.core.agent import NaviBot
-    from app.core.runtime_context import reset_event_callback, reset_session_id, set_event_callback, set_session_id
+    from app.core.runtime_context import (
+        reset_event_callback,
+        reset_session_id,
+        set_event_callback,
+        set_session_id,
+        set_entity_type,
+        set_entity_metadata,
+        reset_entity_type,
+        reset_entity_metadata,
+        EntityType
+    )
     
     start_time = time.time()
     status = "success"
@@ -95,13 +111,31 @@ async def execute_agent_task(
     error_text = ""
     error_trace = ""
     
-    # Isolate scheduler execution in a unique thread/session context to prevent locking
-    # "scheduled_tasks_ig" as requested by user pattern
-    isolated_session_id = f"scheduled_tasks_ig_{session_id}" if session_id == "default" else f"scheduled_tasks_ig_{session_id}"
+    # GHOST USER PATTERN: Generate unique isolated session_id for scheduler
+    # Format: ghost_scheduler_{job_id} or scheduled_{timestamp}_{session_id}
+    ghost_job_id = job_id or str(uuid.uuid4())
+    isolated_session_id = f"ghost_scheduler_{ghost_job_id}"
+    
+    # Store tokens for proper cleanup
+    session_token = None
+    callback_token = None
+    entity_type_token = None
+    entity_metadata_token = None
     
     try:
+        # GHOST USER: Set scheduler entity type to identify non-human execution
         session_token = set_session_id(isolated_session_id)
+        entity_type_token = set_entity_type(EntityType.SCHEDULER)
+        entity_metadata_token = set_entity_metadata({
+            "job_id": ghost_job_id,
+            "entity_type": "scheduler",
+            "is_automated": True,
+            "parent_session_id": session_id,
+            "prompt": prompt[:100],  # Store truncated prompt for debugging
+            "use_react_loop": use_react_loop
+        })
         callback_token = set_event_callback(None)
+        
         # Instantiate a fresh agent for this task
         bot = NaviBot()
         
@@ -110,7 +144,6 @@ async def execute_agent_task(
         
         if use_react_loop:
             # Use ReAct loop for autonomous multi-turn execution
-            # Note: send_message_with_react internally uses the session_id from runtime_context
             result = await bot.send_message_with_react(
                 prompt,
                 max_iterations=max_iterations,
@@ -127,13 +160,11 @@ async def execute_agent_task(
             print(f"Final Response: {result['response']}")
             print(f"{'='*60}\n")
             
-            # Print reasoning trace for debugging
             if result.get('reasoning_trace'):
                 print("\nReasoning Trace:")
                 for trace_line in result['reasoning_trace']:
                     print(trace_line)
         else:
-            # Simple single-turn execution (backward compatibility)
             response = await bot.send_message(prompt)
             response_text = str(response)
             print(f"\n{'='*60}")
@@ -151,8 +182,11 @@ async def execute_agent_task(
         finished_at = time.time()
         _append_log({
             "job_id": job_id,
+            "ghost_session_id": isolated_session_id,
             "prompt": prompt,
             "session_id": session_id,
+            "entity_type": "scheduler",
+            "is_automated": True,
             "use_react_loop": use_react_loop,
             "max_iterations": max_iterations,
             "status": status,
@@ -164,8 +198,15 @@ async def execute_agent_task(
             "duration_seconds": round(finished_at - start_time, 3)
         })
         try:
-            reset_session_id(session_token)
-            reset_event_callback(callback_token)
+            # Clean up context variables to prevent leaks
+            if session_token:
+                reset_session_id(session_token)
+            if callback_token:
+                reset_event_callback(callback_token)
+            if entity_type_token:
+                reset_entity_type(entity_type_token)
+            if entity_metadata_token:
+                reset_entity_metadata(entity_metadata_token)
         except Exception:
             pass
 

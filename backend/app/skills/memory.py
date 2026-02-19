@@ -1,7 +1,7 @@
 
 import re
 from app.core.memory_manager import get_agent_memory
-from app.core.runtime_context import get_memory_user_id
+from app.core.runtime_context import get_memory_user_id, is_scheduler_entity, get_entity_metadata
 
 def recall_facts(query: str) -> str:
     """
@@ -12,18 +12,24 @@ def recall_facts(query: str) -> str:
     Args:
         query: The question or topic to search in memory.
     """
+    # GHOST USER: Scheduler entities should not access human user memories
+    if is_scheduler_entity():
+        entity_meta = get_entity_metadata()
+        parent_session = entity_meta.get('parent_session_id', 'unknown')
+        return f"[Scheduler Task] Memory recall skipped for automated entity. Parent session: {parent_session}"
+    
     memory_user_id = get_memory_user_id()
     if not memory_user_id:
-        return "Error: No se pudo identificar el usuario para la memoria."
+        return "Error: Could not identify user for memory."
     
     try:
         memory_manager = get_agent_memory()
         result = memory_manager.get_relevant_context(user_id=memory_user_id, query=query)
         if not result:
-            return "No encontré información relevante en la memoria sobre ese tema."
-        return f"Información recuperada de la memoria:\n{result}"
+            return "I found no relevant information in memory about that topic."
+        return f"Information retrieved from memory:\n{result}"
     except Exception as e:
-        return f"Error al buscar en memoria: {str(e)}"
+        return f"Error searching memory: {str(e)}"
 
 def save_fact(fact: str) -> str:
     """
@@ -35,23 +41,30 @@ def save_fact(fact: str) -> str:
     Args:
         fact: The fact or information to save.
     """
+    # GHOST USER: Scheduler entities should not store to human user memories
+    if is_scheduler_entity():
+        entity_meta = get_entity_metadata()
+        parent_session = entity_meta.get('parent_session_id', 'unknown')
+        job_id = entity_meta.get('job_id', 'unknown')
+        return f"[Scheduler Task] Memory save skipped for automated entity (Job: {job_id}). Parent session: {parent_session}"
+    
     memory_user_id = get_memory_user_id()
     if not memory_user_id:
-        return "Error: No se pudo identificar el usuario para la memoria."
+        return "Error: Could not identify user for memory."
     
     text = (fact or "").strip()
     if not text:
-        return "Error: El contenido está vacío."
+        return "Error: Content is empty."
     
     if _looks_sensitive(text):
-        return "No puedo guardar credenciales o secretos sensibles en memoria por seguridad."
+        return "I cannot store sensitive credentials or secrets in memory for security."
 
     try:
         memory_manager = get_agent_memory()
         memory_manager.add_interaction(user_id=memory_user_id, text=text)
-        return "Memoria actualizada correctamente."
+        return "Memory updated successfully."
     except Exception as e:
-        return f"Error al guardar en memoria: {str(e)}"
+        return f"Error saving to memory: {str(e)}"
 
 def _looks_sensitive(text: str) -> bool:
     lowered = text.lower()

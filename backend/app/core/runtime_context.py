@@ -4,15 +4,25 @@ import asyncio
 import os
 from contextvars import ContextVar
 from typing import Awaitable, Callable, Optional
+from enum import Enum
 
 SessionId = str
 MemoryUserId = str
 EventCallback = Callable[[str, dict], Awaitable[None]]
 
+# Ghost User Pattern: Identify non-human scheduler entities
+class EntityType(Enum):
+    HUMAN = "human"
+    SCHEDULER = "scheduler"
+    API = "api"
+    UNKNOWN = "unknown"
+
 _session_id_var: ContextVar[SessionId] = ContextVar("navibot_session_id", default="default")
 _memory_user_id_var: ContextVar[MemoryUserId] = ContextVar("navibot_memory_user_id", default="default")
 _event_callback_var: ContextVar[Optional[EventCallback]] = ContextVar("navibot_event_callback", default=None)
 _request_id_var: ContextVar[str] = ContextVar("navibot_request_id", default="")
+_entity_type_var: ContextVar[EntityType] = ContextVar("navibot_entity_type", default=EntityType.HUMAN)
+_entity_metadata_var: ContextVar[dict] = ContextVar("navibot_entity_metadata", default={})
 
 
 def get_session_id() -> SessionId:
@@ -80,6 +90,46 @@ def set_request_id(request_id: str):
 
 def reset_request_id(token) -> None:
     _request_id_var.reset(token)
+
+
+def get_entity_type() -> EntityType:
+    """Get the current entity type (human, scheduler, api, etc.)"""
+    return _entity_type_var.get()
+
+
+def set_entity_type(entity_type: EntityType) -> None:
+    """Set the entity type for the current context"""
+    _entity_type_var.set(entity_type)
+
+
+def reset_entity_type(token) -> None:
+    """Reset entity type to default"""
+    _entity_type_var.reset(token)
+
+
+def get_entity_metadata() -> dict:
+    """Get metadata about the current entity"""
+    return _entity_metadata_var.get().copy()
+
+
+def set_entity_metadata(metadata: dict) -> None:
+    """Set metadata for the current entity"""
+    _entity_metadata_var.set(metadata or {})
+
+
+def reset_entity_metadata(token) -> None:
+    """Reset entity metadata to default"""
+    _entity_metadata_var.reset(token)
+
+
+def is_scheduler_entity() -> bool:
+    """Check if the current entity is a scheduler (ghost user)"""
+    return get_entity_type() == EntityType.SCHEDULER
+
+
+def is_human_entity() -> bool:
+    """Check if the current entity is a human user"""
+    return get_entity_type() == EntityType.HUMAN
 
 
 def emit_event(event_type: str, data: dict) -> None:
