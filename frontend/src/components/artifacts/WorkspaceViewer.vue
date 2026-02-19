@@ -4,7 +4,12 @@ import { computed, ref, watch } from 'vue'
 import { useArtifactsStore } from '../../stores/artifacts'
 import { useSessionsStore } from '../../stores/sessions'
 import FilePreview from './FilePreview.vue'
-import { isCollapsed as isCollapsedState, nextSidebarState, sidebarWidthPx, type SidebarState } from '../../lib/sidebars'
+import {
+  isCollapsed as isCollapsedState,
+  nextSidebarState,
+  sidebarWidthPx,
+  type SidebarState,
+} from '../../lib/sidebars'
 
 const store = useArtifactsStore()
 const sessions = useSessionsStore()
@@ -21,7 +26,7 @@ const emit = defineEmits<{
 
 const selected = computed(() => store.selectedPath)
 const selectedMeta = computed(() =>
-  showTrash.value ? null : store.files.find((f) => f.path === store.selectedPath) || null
+  showTrash.value ? null : store.files.find((f) => f.path === store.selectedPath) || null,
 )
 const collapsed = computed(() => isCollapsedState(props.sidebarState))
 const sidebarWidth = computed(() => sidebarWidthPx(props.sidebarState))
@@ -39,7 +44,7 @@ const showAudit = ref(false)
 const isViewingArchive = computed(() => showArchived.value && Boolean(archiveSessionId.value))
 const viewLabel = computed(() => (isViewingArchive.value ? 'Archivada' : 'Actual'))
 const viewBadgeClass = computed(() =>
-  isViewingArchive.value ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+  isViewingArchive.value ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
 )
 const filteredFiles = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -51,7 +56,9 @@ const filteredTrash = computed(() => {
   if (!q) return store.trash
   return store.trash.filter((f) => f.path.toLowerCase().includes(q))
 })
-const displayCount = computed(() => (showTrash.value ? filteredTrash.value.length : filteredFiles.value.length))
+const displayCount = computed(() =>
+  showTrash.value ? filteredTrash.value.length : filteredFiles.value.length,
+)
 
 watch(
   () => showArchived.value,
@@ -59,7 +66,10 @@ watch(
     if (next) {
       await sessions.fetchSessions({ includeArchived: true })
       archiveSessionId.value = sessions.archivedSessions[0]?.id || ''
-      await store.setViewSession(archiveSessionId.value || store.sessionId, Boolean(archiveSessionId.value))
+      await store.setViewSession(
+        archiveSessionId.value || store.sessionId,
+        Boolean(archiveSessionId.value),
+      )
       if (showTrash.value) await store.fetchTrash()
     } else {
       archiveSessionId.value = ''
@@ -67,7 +77,7 @@ watch(
       if (showTrash.value) await store.fetchTrash()
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(
@@ -76,7 +86,7 @@ watch(
     if (!showArchived.value) return
     await store.setViewSession(next || store.sessionId, Boolean(next))
     if (showTrash.value) await store.fetchTrash()
-  }
+  },
 )
 
 watch(
@@ -86,7 +96,7 @@ watch(
       await store.fetchTrash()
       store.selectArtifact('')
     }
-  }
+  },
 )
 
 watch(
@@ -95,7 +105,7 @@ watch(
     if (showArchived.value) return
     await store.setViewSession(next, false)
     if (showTrash.value) await store.fetchTrash()
-  }
+  },
 )
 
 async function refresh() {
@@ -138,7 +148,7 @@ async function toggleAudit() {
 async function confirmDelete(path: string) {
   actionError.value = null
   const ok = confirm(
-    `¿Eliminar ${path} del workspace? Se moverá a la papelera y podrás restaurarlo por un tiempo limitado.`
+    `¿Eliminar ${path} del workspace? Se moverá a la papelera y podrás restaurarlo por un tiempo limitado.`,
   )
   if (!ok) return
   try {
@@ -184,7 +194,8 @@ function getIcon(mime: string | null | undefined, path: string) {
   if (path.endsWith('.json')) return { name: 'code', color: 'text-yellow-500' }
   if (path.endsWith('.html')) return { name: 'html', color: 'text-orange-500' }
   if (path.endsWith('.txt')) return { name: 'description', color: 'text-slate-400' }
-  if (path.endsWith('.png') || path.endsWith('.jpg')) return { name: 'image', color: 'text-purple-500' }
+  if (path.endsWith('.png') || path.endsWith('.jpg'))
+    return { name: 'image', color: 'text-purple-500' }
   if (mime?.includes('image')) return { name: 'image', color: 'text-purple-500' }
   if (mime?.includes('csv')) return { name: 'table_chart', color: 'text-green-500' }
   if (mime?.includes('json')) return { name: 'code', color: 'text-yellow-500' }
@@ -200,10 +211,17 @@ function getIcon(mime: string | null | undefined, path: string) {
           <span class="text-sm font-bold text-slate-800" :title="collapsed ? 'Artefactos' : ''">
             {{ collapsed ? 'Art.' : 'Artefactos' }}
           </span>
-          <span v-if="!collapsed" class="bg-gray-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
+          <span
+            v-if="!collapsed"
+            class="bg-gray-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-full"
+          >
             {{ displayCount }}
           </span>
-          <span v-if="!collapsed" class="text-[10px] font-semibold px-2 py-0.5 rounded-full" :class="viewBadgeClass">
+          <span
+            v-if="!collapsed"
+            class="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+            :class="viewBadgeClass"
+          >
             {{ viewLabel }}
           </span>
         </div>
@@ -253,7 +271,11 @@ function getIcon(mime: string | null | undefined, path: string) {
         />
         <button
           class="text-xs px-3 py-1.5 border rounded transition-colors"
-          :class="showArchived ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-600'"
+          :class="
+            showArchived
+              ? 'border-amber-300 bg-amber-50 text-amber-700'
+              : 'border-slate-200 bg-white text-slate-600'
+          "
           type="button"
           @click="showArchived = !showArchived"
         >
@@ -261,7 +283,11 @@ function getIcon(mime: string | null | undefined, path: string) {
         </button>
         <button
           class="text-xs px-3 py-1.5 border rounded transition-colors"
-          :class="showTrash ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-200 bg-white text-slate-600'"
+          :class="
+            showTrash
+              ? 'border-rose-300 bg-rose-50 text-rose-700'
+              : 'border-slate-200 bg-white text-slate-600'
+          "
           type="button"
           @click="showTrash = !showTrash"
         >
@@ -269,7 +295,11 @@ function getIcon(mime: string | null | undefined, path: string) {
         </button>
         <button
           class="text-xs px-3 py-1.5 border rounded transition-colors"
-          :class="showAudit ? 'border-slate-300 bg-slate-100 text-slate-700' : 'border-slate-200 bg-white text-slate-600'"
+          :class="
+            showAudit
+              ? 'border-slate-300 bg-slate-100 text-slate-700'
+              : 'border-slate-200 bg-white text-slate-600'
+          "
           type="button"
           @click="toggleAudit"
         >
@@ -305,10 +335,16 @@ function getIcon(mime: string | null | undefined, path: string) {
         class="border-r border-slate-200 overflow-y-auto transition-all duration-300 custom-scrollbar"
         :style="{ width: sidebarWidth + 'px' }"
       >
-        <div v-if="!store.loading && !showTrash && filteredFiles.length === 0" class="p-4 text-sm text-slate-500">
+        <div
+          v-if="!store.loading && !showTrash && filteredFiles.length === 0"
+          class="p-4 text-sm text-slate-500"
+        >
           {{ collapsed ? '—' : 'Aún no hay artefactos en esta sesión.' }}
         </div>
-        <div v-if="!store.loading && showTrash && filteredTrash.length === 0" class="p-4 text-sm text-slate-500">
+        <div
+          v-if="!store.loading && showTrash && filteredTrash.length === 0"
+          class="p-4 text-sm text-slate-500"
+        >
           {{ collapsed ? '—' : 'La papelera está vacía.' }}
         </div>
         <div
@@ -322,15 +358,21 @@ function getIcon(mime: string | null | undefined, path: string) {
         >
           <div class="flex justify-between items-start mb-1">
             <div class="flex items-center gap-2 overflow-hidden">
-              <span class="material-icons-outlined text-lg" :class="getIcon(f.mime_type, f.path).color">
+              <span
+                class="material-icons-outlined text-lg"
+                :class="getIcon(f.mime_type, f.path).color"
+              >
                 {{ getIcon(f.mime_type, f.path).name }}
               </span>
-              <span v-if="!collapsed" class="text-sm font-medium text-slate-700 truncate">{{ f.path }}</span>
+              <span v-if="!collapsed" class="text-sm font-medium text-slate-700 truncate">{{
+                f.path
+              }}</span>
             </div>
             <div v-if="!collapsed" class="flex items-center gap-1">
-              <span class="text-[10px] text-slate-400 bg-gray-100 px-1.5 py-0.5 rounded truncate max-w-[60px]">{{
-                f.mime_type || 'unknown'
-              }}</span>
+              <span
+                class="text-[10px] text-slate-400 bg-gray-100 px-1.5 py-0.5 rounded truncate max-w-[60px]"
+                >{{ f.mime_type || 'unknown' }}</span
+              >
               <button
                 class="text-[10px] px-1.5 py-0.5 rounded border border-rose-200 text-rose-600 hover:bg-rose-50"
                 type="button"
@@ -354,7 +396,9 @@ function getIcon(mime: string | null | undefined, path: string) {
           <div class="flex justify-between items-start mb-1">
             <div class="flex items-center gap-2 overflow-hidden">
               <span class="material-icons-outlined text-lg text-rose-500">delete</span>
-              <span v-if="!collapsed" class="text-sm font-medium text-slate-700 truncate">{{ t.path }}</span>
+              <span v-if="!collapsed" class="text-sm font-medium text-slate-700 truncate">{{
+                t.path
+              }}</span>
             </div>
             <div v-if="!collapsed" class="flex items-center gap-1">
               <button
@@ -376,8 +420,14 @@ function getIcon(mime: string | null | undefined, path: string) {
         </div>
         <div v-if="showAudit && !collapsed" class="p-3 border-t border-slate-200 bg-gray-50/50">
           <div class="text-[11px] font-semibold text-slate-600 mb-2">Actividad reciente</div>
-          <div v-if="store.audit.length === 0" class="text-[11px] text-slate-400">Sin registros</div>
-          <div v-for="a in store.audit" :key="a.timestamp + (a.path || '')" class="text-[11px] text-slate-600">
+          <div v-if="store.audit.length === 0" class="text-[11px] text-slate-400">
+            Sin registros
+          </div>
+          <div
+            v-for="a in store.audit"
+            :key="a.timestamp + (a.path || '')"
+            class="text-[11px] text-slate-600"
+          >
             <span class="font-semibold">{{ a.op }}</span>
             <span v-if="a.path"> · {{ a.path }}</span>
             <span v-if="a.freed_bytes"> · {{ formatBytes(a.freed_bytes) }}</span>
@@ -386,10 +436,16 @@ function getIcon(mime: string | null | undefined, path: string) {
       </div>
 
       <div class="min-w-0 flex-1 min-h-0 bg-white">
-        <div v-if="showTrash" class="h-full flex items-center justify-center text-sm text-slate-500">
+        <div
+          v-if="showTrash"
+          class="h-full flex items-center justify-center text-sm text-slate-500"
+        >
           Selecciona un artefacto en la papelera para restaurarlo.
         </div>
-        <div v-else-if="!selected" class="h-full flex items-center justify-center text-sm text-slate-500">
+        <div
+          v-else-if="!selected"
+          class="h-full flex items-center justify-center text-sm text-slate-500"
+        >
           Selecciona un archivo para previsualizarlo.
         </div>
         <FilePreview

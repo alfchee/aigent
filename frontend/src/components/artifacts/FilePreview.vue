@@ -70,7 +70,23 @@ const isHtml = computed(() => ['html', 'htm'].includes(ext.value))
 const isPdf = computed(() => ext.value === 'pdf')
 const isJson = computed(() => ext.value === 'json')
 const isCsv = computed(() => ext.value === 'csv')
-const isCode = computed(() => ['js', 'ts', 'tsx', 'vue', 'py', 'css', 'scss', 'html', 'htm', 'md', 'json', 'yml', 'yaml'].includes(ext.value))
+const isCode = computed(() =>
+  [
+    'js',
+    'ts',
+    'tsx',
+    'vue',
+    'py',
+    'css',
+    'scss',
+    'html',
+    'htm',
+    'md',
+    'json',
+    'yml',
+    'yaml',
+  ].includes(ext.value),
+)
 
 const language = computed(() => {
   const map: Record<string, string> = {
@@ -86,7 +102,7 @@ const language = computed(() => {
     md: 'markdown',
     json: 'json',
     yml: 'yaml',
-    yaml: 'yaml'
+    yaml: 'yaml',
   }
   return map[ext.value] || 'plaintext'
 })
@@ -179,7 +195,9 @@ async function load() {
     if (isJson.value) {
       const parsed = JSON.parse(content)
       if (Array.isArray(parsed)) {
-        const normalized = parsed.slice(0, 500).map((v, idx) => (typeof v === 'object' && v ? v : { value: v, index: idx }))
+        const normalized = parsed
+          .slice(0, 500)
+          .map((v, idx) => (typeof v === 'object' && v ? v : { value: v, index: idx }))
         rows.value = normalized as any
         columns.value = Array.from(new Set(rows.value.flatMap((r) => Object.keys(r))))
       } else if (typeof parsed === 'object' && parsed) {
@@ -190,10 +208,15 @@ async function load() {
         columns.value = ['value']
       }
     } else if (isCsv.value) {
-      const result = Papa.parse<Record<string, unknown>>(content, { header: true, skipEmptyLines: true })
+      const result = Papa.parse<Record<string, unknown>>(content, {
+        header: true,
+        skipEmptyLines: true,
+      })
       const data = (result.data || []).slice(0, 500)
       rows.value = data
-      columns.value = Array.from(new Set(data.flatMap((r: Record<string, unknown>) => Object.keys(r))))
+      columns.value = Array.from(
+        new Set(data.flatMap((r: Record<string, unknown>) => Object.keys(r))),
+      )
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -205,7 +228,7 @@ async function load() {
 watch(
   () => props.file.path,
   () => load(),
-  { immediate: true }
+  { immediate: true },
 )
 
 onBeforeUnmount(() => {
@@ -216,7 +239,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="h-full min-h-0 flex flex-col">
-    <div class="p-4 border-b border-slate-200 flex items-center justify-between gap-2 bg-gray-50/50">
+    <div
+      class="p-4 border-b border-slate-200 flex items-center justify-between gap-2 bg-gray-50/50"
+    >
       <div class="flex items-center gap-2 min-w-0">
         <button
           class="flex items-center justify-center p-1.5 text-slate-500 hover:text-slate-800 rounded-md hover:bg-gray-200 transition-colors"
@@ -273,11 +298,15 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="isLarge" class="p-4 text-sm text-slate-600">
-      Este archivo supera 10MB. Para evitar degradación de rendimiento, se desactiva la previsualización completa.
+      Este archivo supera 10MB. Para evitar degradación de rendimiento, se desactiva la
+      previsualización completa.
     </div>
 
     <div v-else-if="loading" class="p-4 text-sm text-slate-500">Cargando preview…</div>
-    <div v-else-if="error" class="p-4 text-sm text-red-700 bg-red-50 border border-red-200 m-3 rounded">
+    <div
+      v-else-if="error"
+      class="p-4 text-sm text-red-700 bg-red-50 border border-red-200 m-3 rounded"
+    >
       {{ error }}
     </div>
 
@@ -313,7 +342,10 @@ onBeforeUnmount(() => {
             class="w-full p-2 text-sm border border-slate-200 rounded bg-white"
             placeholder="Buscar…"
           />
-          <select v-model.number="pageSize" class="p-2 text-sm border border-slate-200 rounded bg-white">
+          <select
+            v-model.number="pageSize"
+            class="p-2 text-sm border border-slate-200 rounded bg-white"
+          >
             <option :value="10">10</option>
             <option :value="25">25</option>
             <option :value="50">50</option>
@@ -324,9 +356,14 @@ onBeforeUnmount(() => {
           Mostrando {{ filtered.length }} fila(s) (hasta 500 en preview)
         </div>
 
-        <div v-if="rows.length" class="overflow-auto border border-slate-200 rounded-lg shadow-sm bg-white">
+        <div
+          v-if="rows.length"
+          class="overflow-auto border border-slate-200 rounded-lg shadow-sm bg-white"
+        >
           <table class="min-w-full text-xs text-slate-600">
-            <thead class="bg-gray-100 sticky top-0 text-slate-800 font-semibold uppercase tracking-wider">
+            <thead
+              class="bg-gray-100 sticky top-0 text-slate-800 font-semibold uppercase tracking-wider"
+            >
               <tr>
                 <th
                   v-for="c in columns"
@@ -339,7 +376,11 @@ onBeforeUnmount(() => {
             </thead>
             <tbody>
               <tr v-for="(r, idx) in paged" :key="idx" class="odd:bg-white even:bg-slate-50">
-                <td v-for="c in columns" :key="c" class="px-3 py-2 border-b border-slate-100 align-top">
+                <td
+                  v-for="c in columns"
+                  :key="c"
+                  class="px-3 py-2 border-b border-slate-100 align-top"
+                >
                   {{ (r as any)[c] }}
                 </td>
               </tr>
@@ -368,7 +409,9 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="rawPreview" class="mt-4">
-          <div class="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Raw Preview</div>
+          <div class="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
+            Raw Preview
+          </div>
           <div class="bg-white border border-slate-200 rounded-lg p-3 overflow-x-auto">
             <pre class="text-[10px] leading-relaxed font-mono text-slate-600">{{ rawPreview }}</pre>
           </div>
@@ -380,12 +423,13 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else-if="text !== null" class="p-3">
-        <pre class="text-sm whitespace-pre-wrap bg-white border border-slate-200 rounded p-3 overflow-auto">{{ text }}</pre>
+        <pre
+          class="text-sm whitespace-pre-wrap bg-white border border-slate-200 rounded p-3 overflow-auto"
+          >{{ text }}</pre
+        >
       </div>
 
-      <div v-else class="p-4 text-sm text-slate-500">
-        No se pudo previsualizar este archivo.
-      </div>
+      <div v-else class="p-4 text-sm text-slate-500">No se pudo previsualizar este archivo.</div>
     </div>
     <div class="p-3 bg-white border-t border-slate-200 text-center">
       <p class="text-[10px] text-slate-400 flex items-center justify-center gap-1">

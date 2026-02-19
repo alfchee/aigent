@@ -12,12 +12,12 @@ describe('WorkspaceViewer sidebar', () => {
     store.sessionId = 's1'
     store.files = [
       { path: 'a.png', size_bytes: 10, modified_at: 't', mime_type: 'image/png' },
-      { path: 'b.txt', size_bytes: 5, modified_at: 't', mime_type: 'text/plain' }
+      { path: 'b.txt', size_bytes: 5, modified_at: 't', mime_type: 'text/plain' },
     ]
 
     const wrapper = mount(WorkspaceViewer, {
       props: { sidebarState: 'collapsed', panelCollapsed: false },
-      global: { plugins: [pinia] }
+      global: { plugins: [pinia] },
     })
 
     const sidebar = wrapper.get('[data-testid="artifacts-sidebar"]')

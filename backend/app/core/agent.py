@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from app.core.persistence import load_chat_history, save_chat_message
 from app.core.persistence_wrapper import wrap_tool
@@ -371,16 +370,22 @@ class NaviBot:
                 # First run for this thread_id
                 inputs = {"messages": lc_messages}
 
+            # IMPORTANT: Calculate start index BEFORE execution to avoid issues if lc_messages is modified in place
+            # or if references change. We want to capture messages added AFTER this point.
+            start_index = len(lc_messages)
             final_state = inputs
-            
+            step_count = 0
             async for state in graph.astream(inputs, config=config, stream_mode="values"):
                 final_state = state
+                step_count += 1
                 if state["messages"]:
                     last_msg = state["messages"][-1]
-                    node_name = getattr(last_msg, 'name', 'unknown')
-                    # print(f"[Graph] State update. Last msg from: {node_name}")
+                    node_name = getattr(last_msg, "name", "unknown")
                     if event_callback:
                         await event_callback({"type": "step", "node": node_name, "content": last_msg.content[:50]})
+                if step_count >= max_iterations:
+                    logger.warning("Agent graph reached max_iterations; stopping execution early.")
+                    break
 
             # 6. Extract New Messages and Save to DB
             
@@ -419,17 +424,17 @@ class NaviBot:
             # So we should slice from len(lc_messages).
             # lc_messages = [Old..., NewUserMsg] (length N)
             # final_state = [Old..., NewUserMsg, AI...] (length N + M)
-            # final_state[N:] gives [AI...].
-            
-            start_index = len(lc_messages)
-            
-            # Safety check: if for some reason final_state has fewer messages (shouldn't happen),
-            # prevent negative slicing or errors.
-            if start_index > len(final_state["messages"]):
-                 start_index = len(final_state["messages"])
-                 
-            new_messages = final_state["messages"][start_index:] 
+            #   final_state[N:] gives [AI...].
         
+        # start_index is now calculated BEFORE execution (line 373)
+        
+        # Safety check: if for some reason final_state has fewer messages (shouldn't happen),
+        # prevent negative slicing or errors.
+        if start_index > len(final_state["messages"]):
+             start_index = len(final_state["messages"])
+             
+        new_messages = final_state["messages"][start_index:] 
+    
         # Save User Message explicitly
         save_chat_message(session_id, "user", message)
         
@@ -474,11 +479,12 @@ class NaviBot:
                  # Sometimes agents return HumanMessage as "result from agent"
                  # We treat it as assistant text for the user?
                  # Or "model"?
-                 # In our graph, workers return HumanMessage with name=worker_name.
-                 # We should save this as model response text.
-                 content_obj = {"role": "model", "parts": [{"text": f"[{msg.name}] {msg.content}"}]}
-                 save_chat_message(session_id, "model", content_obj)
-                 response_text = msg.content
+                # We should save this as model response text.
+                content_obj = {"role": "model", "parts": [{"text": f"[{msg.name}] {msg.content}"}]}
+                save_chat_message(session_id, "model", content_obj)
+                response_text = msg.content
+    
+        logger.info(f"[Agent] Execution complete. Response len: {len(response_text)}. Content snippet: {response_text[:100]}...")
 
         return {
             "response": response_text,
@@ -836,10 +842,28 @@ async def execute_agent_task(user_text: str, session_id: str, memory_user_id: st
         await agent.ensure_session(session_id)
         
         # Execute the task
-        result = await agent.send_message_with_graph(user_text)
+        try:
+            result = await agent.send_message_with_graph(user_text)
+        except Exception as agent_error:
+            logger.error(
+                "execute_agent_task_graph_error",
+                exc_info=True,
+                extra={
+                    "session_id": session_id,
+                    "error": str(agent_error),
+                    "error_type": type(agent_error).__name__,
+                },
+            )
+            raise
         
         # Return the response text
-        return result.get("response", "")
+        response = result.get("response", "")
+        if not response:
+            logger.warning(
+                "execute_agent_task_empty_response",
+                extra={"session_id": session_id},
+            )
+        return response
     finally:
         reset_session_id(session_token)
         reset_memory_user_id(memory_token)

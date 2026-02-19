@@ -267,14 +267,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, http_request: Request):
     from app.core.runtime_context import reset_event_callback, reset_memory_user_id, reset_session_id, resolve_memory_user_id, set_event_callback, set_memory_user_id, set_session_id
-    from app.core.memory import recall_memory
     session_token = set_session_id(request.session_id)
     header_memory_user_id = http_request.headers.get("x-memory-user-id")
     memory_user_id = resolve_memory_user_id(request.memory_user_id, request.session_id, header_memory_user_id)
     memory_token = set_memory_user_id(memory_user_id)
     callback_token = set_event_callback(None)
     try:
-        settings = get_settings()
         explicit_model = (request.model_name or "").strip() or None
         try:
             model_name = orchestrator.get_model_for_task(session_id=request.session_id, requested_model=explicit_model)
@@ -508,7 +506,7 @@ async def chat(request: ChatRequest, http_request: Request):
         reset_event_callback(callback_token)
 
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(request: ChatRequest, http_request: Request):
     """
     Streaming endpoint using Server-Sent Events (SSE).
     Provides real-time updates during agent execution.
@@ -522,6 +520,7 @@ async def chat_stream(request: ChatRequest):
         task_complete = asyncio.Event()
         final_result = None
         task_error = None
+        header_memory_user_id = http_request.headers.get("x-memory-user-id")
         
         # Define callback to push events to queue
         async def event_callback(event_type: str, data: dict):
@@ -534,13 +533,11 @@ async def chat_stream(request: ChatRequest):
         async def run_agent():
             nonlocal final_result, task_error
             from app.core.runtime_context import reset_event_callback, reset_memory_user_id, reset_session_id, resolve_memory_user_id, set_event_callback, set_memory_user_id, set_session_id
-            from app.core.memory import recall_memory
             session_token = set_session_id(request.session_id)
             memory_user_id = resolve_memory_user_id(request.memory_user_id, request.session_id, header_memory_user_id)
             memory_token = set_memory_user_id(memory_user_id)
             callback_token = set_event_callback(event_callback)
 
-            settings = get_settings()
             explicit_model = (request.model_name or "").strip() or None
             try:
                 model_name = orchestrator.get_model_for_task(session_id=request.session_id, requested_model=explicit_model)
@@ -660,7 +657,7 @@ async def chat_stream(request: ChatRequest):
                 task_complete.set()
         
         # Start the agent task
-        agent_task = asyncio.create_task(run_agent())
+        asyncio.create_task(run_agent())
         
         try:
             # Stream events as they arrive

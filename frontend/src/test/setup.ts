@@ -11,9 +11,9 @@ Object.defineProperty(window, 'matchMedia', {
       removeEventListener: vi.fn(),
       addListener: vi.fn(),
       removeListener: vi.fn(),
-      dispatchEvent: vi.fn()
+      dispatchEvent: vi.fn(),
     }
-  }
+  },
 })
 
 class MockEventSource {
@@ -45,4 +45,3 @@ Object.defineProperty(window, 'EventSource', { value: MockEventSource })
 afterEach(() => {
   vi.restoreAllMocks()
 })
-

@@ -15,12 +15,14 @@ const chat = useChatStore()
 const sessions = useSessionsStore()
 
 const sessionsSidebarState = ref<SidebarState>(
-  normalizeSidebarState(localStorage.getItem('navibot_sidebar_sessions_state'), 'normal')
+  normalizeSidebarState(localStorage.getItem('navibot_sidebar_sessions_state'), 'normal'),
 )
 const artifactsSidebarState = ref<SidebarState>(
-  normalizeSidebarState(localStorage.getItem('navibot_sidebar_artifacts_state'), 'normal')
+  normalizeSidebarState(localStorage.getItem('navibot_sidebar_artifacts_state'), 'normal'),
 )
-const artifactsPanelCollapsed = ref<boolean>(localStorage.getItem('navibot_artifacts_panel_collapsed') === 'true')
+const artifactsPanelCollapsed = ref<boolean>(
+  localStorage.getItem('navibot_artifacts_panel_collapsed') === 'true',
+)
 
 if (sessionsSidebarState.value === 'collapsed' && artifactsSidebarState.value === 'collapsed') {
   artifactsSidebarState.value = 'normal'
@@ -107,7 +109,8 @@ async function setActiveSession(sid: string) {
   store.connectSse()
   try {
     await sessions.createSession(sessionId)
-  } catch {
+  } catch (error) {
+    void error
   }
   await Promise.allSettled([store.fetchArtifacts(), chat.loadSessionHistory(sessionId)])
 }
@@ -116,7 +119,8 @@ async function createNewSession() {
   const sid = generateSessionId()
   try {
     await sessions.createSession(sid, 'Nueva Conversación')
-  } catch {
+  } catch (error) {
+    void error
   }
   await setActiveSession(sid)
 }
@@ -124,7 +128,8 @@ async function createNewSession() {
 async function deleteSession(sessionId: string) {
   try {
     await sessions.deleteSession(sessionId)
-  } catch {
+  } catch (error) {
+    void error
   }
   const remaining = sessions.sessions[0]?.id
   if (store.sessionId === sessionId) {
@@ -159,30 +164,37 @@ function setArtifactsPanelCollapsed(next: boolean) {
 const gridStyle = computed(() => {
   if (artifactsPanelCollapsed.value) {
     return {
-      gridTemplateColumns: `100% 8px 0%`
+      gridTemplateColumns: `100% 8px 0%`,
     }
   }
   const right = clamp(rightWidthPct.value, 20, 60)
   const left = 100 - right
   return {
-    gridTemplateColumns: `${left}% 8px ${right}%`
+    gridTemplateColumns: `${left}% 8px ${right}%`,
   }
 })
 </script>
 
 <template>
   <div class="h-screen w-screen flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
-    <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-20 shadow-sm">
+    <header
+      class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-20 shadow-sm"
+    >
       <div class="flex items-center gap-3">
         <div class="bg-sky-500 text-white p-1.5 rounded-lg">
           <span class="material-icons-outlined text-2xl">near_me</span>
         </div>
         <h1 class="text-xl font-bold tracking-tight text-slate-900">Navibot</h1>
-        <span class="px-2 py-0.5 text-xs font-medium bg-sky-50 text-sky-500 rounded-full">v2.0</span>
+        <span class="px-2 py-0.5 text-xs font-medium bg-sky-50 text-sky-500 rounded-full"
+          >v2.0</span
+        >
       </div>
       <div class="flex items-center gap-3">
         <div class="hidden md:flex items-center gap-2">
-          <div v-if="store.sessionId" class="flex items-center gap-2 text-sm text-slate-500 border border-slate-200 rounded-md px-3 py-1.5 bg-gray-50">
+          <div
+            v-if="store.sessionId"
+            class="flex items-center gap-2 text-sm text-slate-500 border border-slate-200 rounded-md px-3 py-1.5 bg-gray-50"
+          >
             <span class="material-icons-outlined text-xs">fingerprint</span>
             <span class="truncate font-mono text-xs max-w-[150px]">{{ store.sessionId }}</span>
           </div>
@@ -200,12 +212,19 @@ const gridStyle = computed(() => {
           >
             <span class="material-icons-outlined text-sm">settings</span>
           </RouterLink>
-          <div v-if="store.unreadCount" class="text-xs bg-amber-100 text-amber-900 border border-amber-200 px-2 py-1 rounded-full">
+          <div
+            v-if="store.unreadCount"
+            class="text-xs bg-amber-100 text-amber-900 border border-amber-200 px-2 py-1 rounded-full"
+          >
             {{ store.unreadCount }} new
           </div>
         </div>
         <div class="h-6 w-px bg-slate-200 mx-1 hidden md:block"></div>
-        <button class="p-2 rounded-full hover:bg-gray-100 transition-colors text-slate-500" id="theme-toggle" title="Toggle Theme (Not Implemented)">
+        <button
+          class="p-2 rounded-full hover:bg-gray-100 transition-colors text-slate-500"
+          id="theme-toggle"
+          title="Toggle Theme (Not Implemented)"
+        >
           <span class="material-icons-outlined">dark_mode</span>
         </button>
       </div>
@@ -246,7 +265,10 @@ const gridStyle = computed(() => {
         <div class="flex-1 min-h-0">
           <ChatContainer />
         </div>
-        <div v-if="!artifactsPanelCollapsed" class="h-[40%] min-h-[260px] border-t border-slate-200">
+        <div
+          v-if="!artifactsPanelCollapsed"
+          class="h-[40%] min-h-[260px] border-t border-slate-200"
+        >
           <WorkspaceViewer
             :sidebarState="artifactsSidebarState"
             :panelCollapsed="artifactsPanelCollapsed"
@@ -254,7 +276,10 @@ const gridStyle = computed(() => {
             @update:panelCollapsed="setArtifactsPanelCollapsed"
           />
         </div>
-        <div v-else class="h-12 border-t border-slate-200 flex items-center justify-center bg-white">
+        <div
+          v-else
+          class="h-12 border-t border-slate-200 flex items-center justify-center bg-white"
+        >
           <button
             class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-gray-50 border border-slate-200 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5"
             type="button"
@@ -310,7 +335,10 @@ const gridStyle = computed(() => {
           </button>
         </div>
 
-        <div v-show="!artifactsPanelCollapsed" class="min-w-0 min-h-0 border-l border-slate-200 bg-white">
+        <div
+          v-show="!artifactsPanelCollapsed"
+          class="min-w-0 min-h-0 border-l border-slate-200 bg-white"
+        >
           <WorkspaceViewer
             :sidebarState="artifactsSidebarState"
             :panelCollapsed="artifactsPanelCollapsed"

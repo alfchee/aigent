@@ -31,14 +31,14 @@ type SessionMessagesResponse = {
 export const useChatStore = defineStore('chat', {
   state: () => ({
     messages: [
-      { role: 'assistant', content: '¡Hola! Soy Navibot. ¿En qué puedo ayudarte hoy?' }
+      { role: 'assistant', content: '¡Hola! Soy Navibot. ¿En qué puedo ayudarte hoy?' },
     ] as ChatMessage[],
     isLoading: false as boolean,
     error: null as string | null,
     isHistoryLoading: false as boolean,
     historyError: null as string | null,
     historyHasMore: false as boolean,
-    historyNextBeforeId: null as number | null
+    historyNextBeforeId: null as number | null,
   }),
   actions: {
     async loadSessionHistory(sessionId: string) {
@@ -46,13 +46,13 @@ export const useChatStore = defineStore('chat', {
       this.historyError = null
       try {
         const data = await fetchJson<SessionMessagesResponse>(
-          `/api/sessions/${encodeURIComponent(sessionId || 'default')}/messages?limit=50`
+          `/api/sessions/${encodeURIComponent(sessionId || 'default')}/messages?limit=50`,
         )
         const items = (data.items || []).map((m) => ({
           id: m.id,
           role: m.role,
           content: m.content,
-          created_at: m.created_at
+          created_at: m.created_at,
         }))
         this.messages =
           items.length > 0
@@ -72,13 +72,13 @@ export const useChatStore = defineStore('chat', {
       this.historyError = null
       try {
         const data = await fetchJson<SessionMessagesResponse>(
-          `/api/sessions/${encodeURIComponent(sessionId || 'default')}/messages?limit=50&before_id=${this.historyNextBeforeId}`
+          `/api/sessions/${encodeURIComponent(sessionId || 'default')}/messages?limit=50&before_id=${this.historyNextBeforeId}`,
         )
         const items = (data.items || []).map((m) => ({
           id: m.id,
           role: m.role,
           content: m.content,
-          created_at: m.created_at
+          created_at: m.created_at,
         }))
         if (items.length > 0) {
           this.messages = [...items, ...this.messages]
@@ -107,10 +107,13 @@ export const useChatStore = defineStore('chat', {
             message: trimmed,
             session_id: sessionId,
             model_name: model_name || undefined,
-            memory_user_id: memory_user_id || undefined
-          })
+            memory_user_id: memory_user_id || undefined,
+          }),
         })
-        this.messages.push({ role: 'assistant', content: data.response || 'No recibí respuesta del agente.' })
+        this.messages.push({
+          role: 'assistant',
+          content: data.response || 'No recibí respuesta del agente.',
+        })
         try {
           const userCount = this.messages.filter((m) => m.role === 'user').length
           const assistantCount = this.messages.filter((m) => m.role === 'assistant').length
@@ -118,7 +121,8 @@ export const useChatStore = defineStore('chat', {
             const sessions = useSessionsStore()
             await sessions.autotitle(sessionId)
           }
-        } catch {
+        } catch (error) {
+          void error
         }
       } catch (e) {
         let msg = e instanceof Error ? e.message : String(e)
@@ -133,6 +137,6 @@ export const useChatStore = defineStore('chat', {
       } finally {
         this.isLoading = false
       }
-    }
-  }
+    },
+  },
 })

@@ -5,7 +5,7 @@ import 'highlight.js/styles/github-dark.css' // Or any other style
 export const md = new MarkdownIt({
   html: false,
   linkify: true,
-  typographer: true
+  typographer: true,
 })
 
 const defaultLinkRender =
@@ -50,5 +50,5 @@ md.set({
       md.utils.escapeHtml(str) +
       '</code></pre>'
     )
-  }
+  },
 })

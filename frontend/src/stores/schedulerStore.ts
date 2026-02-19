@@ -61,7 +61,7 @@ function getDebounce(store: object): StoreDebounce {
   if (existing) return existing
   const state: StoreDebounce = {
     jobs: { timer: null, lastAt: 0, pending: null, inFlight: null },
-    logs: { timer: null, lastAt: 0, pending: null, inFlight: null }
+    logs: { timer: null, lastAt: 0, pending: null, inFlight: null },
   }
   debounceMap.set(store, state)
   return state
@@ -100,7 +100,11 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // Debounce enforces a minimum interval between network updates to avoid UI blinking.
-async function scheduleDebounced(store: object, key: keyof StoreDebounce, task: () => Promise<void>): Promise<void> {
+async function scheduleDebounced(
+  store: object,
+  key: keyof StoreDebounce,
+  task: () => Promise<void>,
+): Promise<void> {
   const debounce = getDebounce(store)[key]
   const now = Date.now()
   const wait = Math.max(0, baseDebounceMs - (now - debounce.lastAt))
@@ -149,7 +153,7 @@ export const useSchedulerStore = defineStore('scheduler', {
     hasChanges: false,
     error: null as string | null,
     _jobsHash: '' as string,
-    _logsHash: '' as string
+    _logsHash: '' as string,
   }),
   getters: {
     activeJobs: (state) => state.jobs.filter((job) => !job.paused),
@@ -160,7 +164,8 @@ export const useSchedulerStore = defineStore('scheduler', {
       return state.jobs
     },
     logsByStatus: (state) => (status: string) => state.logs.filter((log) => log.status === status),
-    logsSince: (state) => (isoDate: string) => state.logs.filter((log) => log.started_at >= isoDate),
+    logsSince: (state) => (isoDate: string) =>
+      state.logs.filter((log) => log.started_at >= isoDate),
     stats: (state) => {
       const total = state.jobs.length
       const active = state.jobs.filter((job) => !job.paused).length
@@ -172,9 +177,9 @@ export const useSchedulerStore = defineStore('scheduler', {
         activeJobs: active,
         pausedJobs: paused,
         lastRunAt: lastRun,
-        errorRate: total > 0 ? Number((errorCount / Math.max(1, state.logs.length)).toFixed(3)) : 0
+        errorRate: total > 0 ? Number((errorCount / Math.max(1, state.logs.length)).toFixed(3)) : 0,
       }
-    }
+    },
   },
   actions: {
     async fetchJobs() {
@@ -213,7 +218,9 @@ export const useSchedulerStore = defineStore('scheduler', {
         this.isLoading = true
         this.error = null
         try {
-          const url = jobId ? `/api/scheduler/logs?job_id=${encodeURIComponent(jobId)}` : '/api/scheduler/logs'
+          const url = jobId
+            ? `/api/scheduler/logs?job_id=${encodeURIComponent(jobId)}`
+            : '/api/scheduler/logs'
           const data = await withRetry(() => fetchJson<SchedulerLog[]>(url))
           const nextHash = hashPayload(data)
           if (nextHash !== this._logsHash) {
@@ -249,6 +256,6 @@ export const useSchedulerStore = defineStore('scheduler', {
     async deleteJob(jobId: string) {
       await fetchJson(`/api/scheduler/jobs/${jobId}`, { method: 'DELETE' })
       await this.fetchJobs()
-    }
-  }
+    },
+  },
 })

@@ -9,8 +9,8 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'home', component: ArtifactPanel },
-      { path: '/settings', name: 'settings', component: SettingsView },
-      { path: '/channels', name: 'channels', component: ChannelsView },
-      { path: '/scheduler', name: 'scheduler', component: SchedulerView }
-  ]
+    { path: '/settings', name: 'settings', component: SettingsView },
+    { path: '/channels', name: 'channels', component: ChannelsView },
+    { path: '/scheduler', name: 'scheduler', component: SchedulerView },
+  ],
 })

@@ -8,7 +8,7 @@ const localSettings = reactive<Record<string, Record<string, any>>>({})
 const channels = computed(() => store.channels)
 
 function syncLocalSettings() {
-  channels.value.forEach(channel => {
+  channels.value.forEach((channel) => {
     if (!localSettings[channel.channel_id]) {
       localSettings[channel.channel_id] = { ...(channel.settings || {}) }
     }
@@ -53,7 +53,9 @@ onMounted(() => {
 
 <template>
   <div class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-    <header class="p-4 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm sticky top-0 z-10">
+    <header
+      class="p-4 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm sticky top-0 z-10"
+    >
       <div class="flex items-center gap-3">
         <RouterLink
           to="/"
@@ -74,20 +76,38 @@ onMounted(() => {
     </header>
 
     <main class="flex-1 p-6 space-y-6">
-      <div v-if="store.error" class="bg-rose-50 text-rose-700 border border-rose-200 rounded p-3 text-sm">
+      <div
+        v-if="store.error"
+        class="bg-rose-50 text-rose-700 border border-rose-200 rounded p-3 text-sm"
+      >
         {{ store.error }}
       </div>
 
       <div v-if="store.loading" class="text-sm text-slate-500">Cargando canales…</div>
 
-      <div v-for="channel in channels" :key="channel.channel_id" class="bg-white border border-slate-200 rounded-lg shadow-sm p-4 space-y-4">
+      <div
+        v-for="channel in channels"
+        :key="channel.channel_id"
+        class="bg-white border border-slate-200 rounded-lg shadow-sm p-4 space-y-4"
+      >
         <div class="flex items-start justify-between gap-4">
           <div>
             <div class="text-lg font-semibold text-slate-900">{{ channel.display_name }}</div>
-            <div class="text-xs text-slate-500">{{ channel.channel_id }} · v{{ channel.version }}</div>
+            <div class="text-xs text-slate-500">
+              {{ channel.channel_id }} · v{{ channel.version }}
+            </div>
             <div class="text-xs text-slate-500">
               Estado:
-              <span class="font-medium" :class="channel.status?.state === 'active' ? 'text-emerald-600' : channel.status?.state === 'error' ? 'text-rose-600' : 'text-slate-600'">
+              <span
+                class="font-medium"
+                :class="
+                  channel.status?.state === 'active'
+                    ? 'text-emerald-600'
+                    : channel.status?.state === 'error'
+                      ? 'text-rose-600'
+                      : 'text-slate-600'
+                "
+              >
                 {{ channel.status?.state || (channel.enabled ? 'pending' : 'disabled') }}
               </span>
             </div>
@@ -131,26 +151,47 @@ onMounted(() => {
               type="password"
               class="border border-slate-200 rounded px-3 py-2 text-sm"
               :value="getFieldValue(channel.channel_id, field.key)"
-              @input="updateField(channel.channel_id, field.key, ($event.target as HTMLInputElement).value)"
+              @input="
+                updateField(
+                  channel.channel_id,
+                  field.key,
+                  ($event.target as HTMLInputElement).value,
+                )
+              "
             />
             <input
               v-else-if="field.type === 'boolean'"
               type="checkbox"
               class="h-4 w-4"
               :checked="Boolean(getFieldValue(channel.channel_id, field.key))"
-              @change="updateField(channel.channel_id, field.key, ($event.target as HTMLInputElement).checked)"
+              @change="
+                updateField(
+                  channel.channel_id,
+                  field.key,
+                  ($event.target as HTMLInputElement).checked,
+                )
+              "
             />
             <input
               v-else
               type="text"
               class="border border-slate-200 rounded px-3 py-2 text-sm"
               :value="getFieldValue(channel.channel_id, field.key)"
-              @input="updateField(channel.channel_id, field.key, ($event.target as HTMLInputElement).value)"
+              @input="
+                updateField(
+                  channel.channel_id,
+                  field.key,
+                  ($event.target as HTMLInputElement).value,
+                )
+              "
             />
           </div>
         </div>
 
-        <div v-if="store.validationErrors[channel.channel_id]?.length" class="text-xs text-rose-600">
+        <div
+          v-if="store.validationErrors[channel.channel_id]?.length"
+          class="text-xs text-rose-600"
+        >
           <div v-for="err in store.validationErrors[channel.channel_id]" :key="err">{{ err }}</div>
         </div>
 

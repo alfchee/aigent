@@ -19,4 +19,3 @@ const safeHtml = computed(() => {
     referrerpolicy="no-referrer"
   />
 </template>
-

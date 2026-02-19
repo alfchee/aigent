@@ -44,7 +44,7 @@ export const useMcpStore = defineStore('mcp', {
     servers: [] as McpServer[],
     marketplace: {} as Record<string, McpMarketplaceItem>,
     loading: false,
-    error: null as string | null
+    error: null as string | null,
   }),
 
   actions: {
@@ -76,9 +76,9 @@ export const useMcpStore = defineStore('mcp', {
         await fetchJson('/api/mcp/servers', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
           },
-          body: JSON.stringify(server)
+          body: JSON.stringify(server),
         })
         await this.fetchServers()
       } catch (e: any) {
@@ -95,9 +95,9 @@ export const useMcpStore = defineStore('mcp', {
         await fetchJson('/api/mcp/marketplace/import', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ source_url: sourceUrl })
+          body: JSON.stringify({ source_url: sourceUrl }),
         })
         await this.fetchMarketplace()
       } catch (e: any) {
@@ -112,7 +112,7 @@ export const useMcpStore = defineStore('mcp', {
       this.loading = true
       try {
         await fetchJson(`/api/mcp/marketplace/custom/${serverId}`, {
-          method: 'DELETE'
+          method: 'DELETE',
         })
         await this.fetchMarketplace()
       } catch (e: any) {
@@ -127,7 +127,7 @@ export const useMcpStore = defineStore('mcp', {
       this.loading = true
       try {
         await fetchJson(`/api/mcp/servers/${serverId}`, {
-          method: 'DELETE'
+          method: 'DELETE',
         })
         await this.fetchServers()
       } catch (e: any) {
@@ -142,24 +142,24 @@ export const useMcpStore = defineStore('mcp', {
       serverId: string,
       params: any,
       envVars: any,
-      definition?: McpServerDefinition
+      definition?: McpServerDefinition,
     ): Promise<McpConnectionResult> {
       try {
         return await fetchJson<McpConnectionResult>('/api/mcp/test-connection', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             server_id: serverId,
             params: params,
             env_vars: envVars,
-            definition
-          })
+            definition,
+          }),
         })
       } catch (e: any) {
         return { success: false, message: e.message }
       }
-    }
-  }
+    },
+  },
 })

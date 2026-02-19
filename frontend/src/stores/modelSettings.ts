@@ -78,15 +78,15 @@ export const useModelSettingsStore = defineStore('modelSettings', {
       code_worker_model: 'gemini-2.0-flash',
       voice_worker_model: 'gemini-flash-latest',
       scheduled_worker_model: 'gemini-flash-latest',
-      image_worker_model: 'gemini-2.5-flash-image'
+      image_worker_model: 'gemini-2.5-flash-image',
     } as RoleConfig,
     limitsConfig: {} as Record<string, any>,
     modelRoutingJson: {} as Record<string, any>,
-    
+
     providers: {} as Record<string, boolean>,
     sessionModels: {} as Record<string, string | null>,
     loading: false as boolean,
-    error: null as string | null
+    error: null as string | null,
   }),
   actions: {
     async loadAppSettings() {
@@ -95,12 +95,12 @@ export const useModelSettingsStore = defineStore('modelSettings', {
       try {
         const [settingsData, modelsData] = await Promise.all([
           fetchJson<AppSettingsResponse>('/api/settings'),
-          fetchJson<AvailableModelsResponse>('/api/available-models').catch(() => ({ models: [] }))
+          fetchJson<AvailableModelsResponse>('/api/available-models').catch(() => ({ models: [] })),
         ])
-        
+
         const data = settingsData
         this.availableModels = modelsData.models || []
-        
+
         this.models = data.settings?.models || []
         this.fastModels = data.settings?.tiers?.fast || []
         this.fallbackModels = data.settings?.tiers?.fallback || []
@@ -109,7 +109,7 @@ export const useModelSettingsStore = defineStore('modelSettings', {
         this.autoEscalate = Boolean(data.settings?.auto_escalate)
         this.emergencyMode = Boolean(data.settings?.emergency_mode)
         this.systemPrompt = data.settings?.system_prompt || ''
-        
+
         this.routingConfig = data.settings?.routing_config || {}
         this.roleConfig = data.settings?.role_config || {
           supervisor_model: 'gemini-2.5-pro',
@@ -117,11 +117,11 @@ export const useModelSettingsStore = defineStore('modelSettings', {
           code_worker_model: 'gemini-2.0-flash',
           voice_worker_model: 'gemini-flash-latest',
           scheduled_worker_model: 'gemini-flash-latest',
-          image_worker_model: 'gemini-2.5-flash-image'
+          image_worker_model: 'gemini-2.5-flash-image',
         }
         this.limitsConfig = data.settings?.limits_config || {}
         this.modelRoutingJson = data.settings?.model_routing_json || {}
-        
+
         this.providers = data.providers || {}
       } catch (e) {
         this.error = toErrorMessage(e)
@@ -132,7 +132,9 @@ export const useModelSettingsStore = defineStore('modelSettings', {
     async loadSessionModel(sessionId: string) {
       const sid = sessionId || 'default'
       try {
-        const data = await fetchJson<SessionSettingsResponse>(`/api/sessions/${encodeURIComponent(sid)}/settings`)
+        const data = await fetchJson<SessionSettingsResponse>(
+          `/api/sessions/${encodeURIComponent(sid)}/settings`,
+        )
         this.sessionModels[sid] = data.model_name ?? null
       } catch {
         this.sessionModels[sid] = null
@@ -145,7 +147,7 @@ export const useModelSettingsStore = defineStore('modelSettings', {
       await fetchJson(`/api/sessions/${encodeURIComponent(sid)}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_name: name })
+        body: JSON.stringify({ model_name: name }),
       })
       this.sessionModels[sid] = name
     },
@@ -166,7 +168,7 @@ export const useModelSettingsStore = defineStore('modelSettings', {
         const data = await fetchJson<AppSettingsResponse>('/api/settings', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
         })
         this.models = data.settings?.models || []
         this.fastModels = data.settings?.tiers?.fast || []
@@ -176,7 +178,7 @@ export const useModelSettingsStore = defineStore('modelSettings', {
         this.autoEscalate = Boolean(data.settings?.auto_escalate)
         this.emergencyMode = Boolean(data.settings?.emergency_mode)
         this.systemPrompt = data.settings?.system_prompt || ''
-        
+
         this.routingConfig = data.settings?.routing_config || {}
         this.roleConfig = data.settings?.role_config || {
           supervisor_model: 'gemini-2.5-pro',
@@ -184,11 +186,11 @@ export const useModelSettingsStore = defineStore('modelSettings', {
           code_worker_model: 'gemini-2.0-flash',
           voice_worker_model: 'gemini-flash-latest',
           scheduled_worker_model: 'gemini-flash-latest',
-          image_worker_model: 'gemini-2.5-flash-image'
+          image_worker_model: 'gemini-2.5-flash-image',
         }
         this.limitsConfig = data.settings?.limits_config || {}
         this.modelRoutingJson = data.settings?.model_routing_json || {}
-        
+
         this.providers = data.providers || {}
       } catch (e) {
         this.error = toErrorMessage(e)
@@ -196,6 +198,6 @@ export const useModelSettingsStore = defineStore('modelSettings', {
       } finally {
         this.loading = false
       }
-    }
-  }
+    },
+  },
 })

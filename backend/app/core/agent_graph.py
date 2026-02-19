@@ -170,9 +170,25 @@ class AgentGraph:
         supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts=self.user_facts)
         
         # Logging wrapper for Supervisor node
+        supervisor_call_count = {}  # Track calls per user message
+        
         async def logging_supervisor_node(state: AgentState):
             import logging
             logger = logging.getLogger("navibot.graph")
+            
+            # Get or initialize the supervisor call count for this thread
+            messages = state.get("messages", [])
+            user_msg_count = sum(1 for m in messages if hasattr(m, "type") and m.type == "human")
+            
+            # Get the last message to check if it's from a worker
+            last_msg = state.get("messages", [])[-1] if state.get("messages") else None
+            is_worker_response = hasattr(last_msg, "name") and last_msg.name in WORKERS
+            
+            # Force FINISH if this is the second supervisor call (worker already responded)
+            if user_msg_count > 0 and is_worker_response:
+                logger.info("[Graph] Supervisor forcing FINISH - worker already responded")
+                return {"next": "FINISH"}
+            
             logger.info(f"[Graph] Supervisor Input State: {state.get('messages')[-1] if state.get('messages') else 'Empty'}")
             
             result = await supervisor_node(state)

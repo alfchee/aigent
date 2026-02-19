@@ -20,4 +20,3 @@ describe('artifacts store', () => {
     expect(fetchSpy).toHaveBeenCalled()
   })
 })
-

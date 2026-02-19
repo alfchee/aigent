@@ -24,7 +24,7 @@ describe('ArtifactPanel', () => {
     store.sessionId = 's1'
 
     const wrapper = mount(ArtifactPanel, {
-      global: { plugins: [pinia] }
+      global: { plugins: [pinia] },
     })
 
     expect(wrapper.text()).toContain('2 new')
@@ -63,9 +63,9 @@ describe('ArtifactPanel', () => {
           removeEventListener: () => {},
           addListener: () => {},
           removeListener: () => {},
-          dispatchEvent: () => true
+          dispatchEvent: () => true,
         }
-      }
+      },
     })
 
     const pinia = initPinia()
@@ -80,6 +80,8 @@ describe('ArtifactPanel', () => {
     sessions.createSession = async () => 's1' as any
 
     const wrapper = mount(ArtifactPanel, { global: { plugins: [pinia] } })
-    expect(wrapper.get('[data-testid=\"sessions-sidebar\"]').attributes('style')).toContain('width: 250px')
+    expect(wrapper.get('[data-testid="sessions-sidebar"]').attributes('style')).toContain(
+      'width: 250px',
+    )
   })
 })

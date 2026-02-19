@@ -5,7 +5,7 @@ import ChatMessage from './ChatMessage.vue'
 describe('ChatMessage', () => {
   it('renders simple text', () => {
     const wrapper = mount(ChatMessage, {
-      props: { role: 'assistant', content: 'Hello' }
+      props: { role: 'assistant', content: 'Hello' },
     })
     expect(wrapper.text()).toContain('Hello')
   })
@@ -13,7 +13,7 @@ describe('ChatMessage', () => {
   it('renders tool call', () => {
     const content = 'Some text [tool_call] {"name": "test_tool"} [/tool_call]'
     const wrapper = mount(ChatMessage, {
-      props: { role: 'assistant', content }
+      props: { role: 'assistant', content },
     })
     expect(wrapper.text()).toContain('Some text')
     expect(wrapper.text()).toContain('Ejecutar: test_tool')
@@ -26,7 +26,7 @@ describe('ChatMessage', () => {
   it('renders tool result', () => {
     const content = '[tool_result] success [/tool_result]'
     const wrapper = mount(ChatMessage, {
-      props: { role: 'assistant', content }
+      props: { role: 'assistant', content },
     })
     expect(wrapper.text()).toContain('Resultado del Agente')
     expect(wrapper.text()).toContain('success')
@@ -39,7 +39,7 @@ describe('ChatMessage', () => {
   it('renders links with external attributes', () => {
     const content = 'Visit [Docs](https://example.com)'
     const wrapper = mount(ChatMessage, {
-      props: { role: 'assistant', content }
+      props: { role: 'assistant', content },
     })
     const link = wrapper.get('a')
     expect(link.attributes('target')).toBe('_blank')

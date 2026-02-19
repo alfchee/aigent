@@ -1,17 +1,20 @@
 import asyncio
 import fcntl
+import logging
 import os
 import time
 from typing import Any
 
 from telegram import Update
-from telegram.error import Conflict, BadRequest, Forbidden
+from telegram.error import Conflict, BadRequest, Forbidden, TelegramError
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 from app.channels.base import BaseChannel
 from app.core.agent import execute_agent_task
 from app.core.filesystem import SessionWorkspace
 
+
+logger = logging.getLogger("navibot.telegram")
 
 class TelegramChannel(BaseChannel):
     @classmethod
@@ -61,6 +64,9 @@ class TelegramChannel(BaseChannel):
         self.auto_send_artifacts = bool(settings.get("auto_send_artifacts", True))
         self.app = ApplicationBuilder().token(self.token).read_timeout(30).write_timeout(30).build()
         self._lock_file = None
+        self._queue_maxsize = int(os.getenv("NAVIBOT_TELEGRAM_QUEUE_SIZE", "100"))
+        self._task_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=self._queue_maxsize)
+        self._worker_task: asyncio.Task | None = None
         self._setup_handlers()
 
     def _setup_handlers(self) -> None:
@@ -76,54 +82,298 @@ class TelegramChannel(BaseChannel):
         if update.message is None or update.effective_chat is None:
             return
         user_text = update.message.text or ""
-        chat_id = str(update.effective_chat.id)
-        user_id = str(update.effective_user.id) if update.effective_user else chat_id
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id if update.effective_user else chat_id
         session_id = f"tg_{chat_id}"
-        
-        # Procesamiento asíncrono en segundo plano para evitar bloqueos de Telegram
-        asyncio.create_task(self._process_message_background(chat_id, user_text, session_id, user_id, context))
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(self._task_worker())
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        except Exception:
+            pass
+        payload = {
+            "chat_id": chat_id,
+            "user_text": user_text,
+            "session_id": session_id,
+            "user_id": user_id,
+            "context": context,
+        }
+        try:
+            self._task_queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            await context.bot.send_message(chat_id=chat_id, text="⚠️ Cola de tareas llena. Intenta nuevamente en unos segundos.")
+
+    async def _task_worker(self):
+        while True:
+            payload = await self._task_queue.get()
+            if payload is None:
+                self._task_queue.task_done()
+                break
+            await self._process_message_background(
+                payload["chat_id"],
+                payload["user_text"],
+                payload["session_id"],
+                payload["user_id"],
+                payload["context"],
+            )
+            self._task_queue.task_done()
 
     async def _process_message_background(self, chat_id, user_text, session_id, user_id, context):
+        start_ts = time.time()
+        chat_id_int = chat_id
+        user_id_int = user_id
         try:
             try:
-                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+                chat_id_int = int(chat_id)
             except Exception:
-                # Si falla el typing action, no bloqueamos el flujo
                 pass
-            
-            response_text = await execute_agent_task(user_text, session_id=session_id, memory_user_id=f"tg_user_{user_id}")
+            try:
+                user_id_int = int(user_id)
+            except Exception:
+                pass
+
+            logger.info(
+                "telegram_request_start",
+                extra={
+                    "chat_id": chat_id_int,
+                    "user_id": user_id_int,
+                    "session_id": session_id,
+                    "text_len": len(user_text or ""),
+                },
+            )
+
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id_int, action="typing")
+            except Exception:
+                pass
+
+            response_text = await execute_agent_task(
+                user_text,
+                session_id=session_id,
+                memory_user_id=f"tg_user_{user_id_int}",
+            )
             if not response_text:
+                logger.warning(
+                    "telegram_agent_empty_response",
+                    extra={"chat_id": chat_id_int, "session_id": session_id},
+                )
                 response_text = "✅ Tarea completada (sin respuesta de texto)."
 
-            if len(response_text) > 4000:
-                for x in range(0, len(response_text), 4000):
-                    await context.bot.send_message(chat_id=chat_id, text=response_text[x:x + 4000])
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=response_text)
-            
+            logger.info(
+                "telegram_agent_response",
+                extra={
+                    "chat_id": chat_id_int,
+                    "session_id": session_id,
+                    "response_len": len(response_text),
+                    "snippet": response_text[:120],
+                },
+            )
+
+            # DEBUG: Log before attempting to send response
+            logger.info(
+                "telegram_about_to_send_response",
+                extra={
+                    "chat_id": chat_id_int,
+                    "session_id": session_id,
+                    "has_response": bool(response_text),
+                },
+            )
+
+            async def send_text_once(target_id: int | str) -> None:
+                # Truncate very long messages to avoid Telegram timeouts
+                max_length = 4000
+                if len(response_text) > max_length:
+                    logger.info(
+                        "telegram_response_truncated",
+                        extra={
+                            "chat_id": target_id,
+                            "original_length": len(response_text),
+                            "truncated_to": max_length,
+                        },
+                    )
+                    truncated = response_text[:max_length] + f"\n\n[... Respuesta truncada ({len(response_text)} chars)]"
+                    for x in range(0, len(truncated), 4000):
+                        await context.bot.send_message(
+                            chat_id=target_id, text=truncated[x : x + 4000]
+                        )
+                else:
+                    await context.bot.send_message(chat_id=target_id, text=response_text)
+
+            async def send_text_with_retry(target_id: int | str, max_retries: int = 3) -> None:
+                delay = 1.0
+                attempt = 0
+                while True:
+                    attempt += 1
+                    try:
+                        logger.info(
+                            "telegram_send_attempt",
+                            extra={
+                                "chat_id": target_id,
+                                "session_id": session_id,
+                                "attempt": attempt,
+                            },
+                        )
+                        await send_text_once(target_id)
+                        logger.info(
+                            "telegram_send_success",
+                            extra={
+                                "chat_id": target_id,
+                                "session_id": session_id,
+                                "attempt": attempt,
+                            },
+                        )
+                        return
+                    except (BadRequest, Forbidden) as e:
+                        # Let outer logic decide how to handle these
+                        logger.warning(
+                            "telegram_send_auth_error",
+                            extra={
+                                "chat_id": target_id,
+                                "session_id": session_id,
+                                "attempt": attempt,
+                                "error": str(e),
+                            },
+                        )
+                        raise
+                    except TelegramError as e:
+                        logger.warning(
+                            "telegram_send_retry",
+                            extra={
+                                "chat_id": target_id,
+                                "session_id": session_id,
+                                "attempt": attempt,
+                                "delay": delay,
+                                "error": str(e),
+                            },
+                        )
+                        if attempt >= max_retries:
+                            logger.error(
+                                "telegram_send_all_retries_failed",
+                                extra={
+                                    "chat_id": target_id,
+                                    "session_id": session_id,
+                                    "max_retries": max_retries,
+                                    "last_error": str(e),
+                                },
+                            )
+                            raise
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, 8.0)
+
+            try:
+                await send_text_with_retry(chat_id_int)
+                
+                # Log successful delivery
+                logger.info(
+                    "telegram_response_delivered",
+                    extra={
+                        "chat_id": chat_id_int,
+                        "session_id": session_id,
+                    },
+                )
+                
+            except BadRequest as e:
+                logger.error(
+                    "telegram_delivery_badrequest",
+                    extra={
+                        "chat_id": chat_id_int,
+                        "user_id": user_id_int,
+                        "session_id": session_id,
+                        "error": str(e),
+                    },
+                )
+                if "Chat not found" in str(e) and user_id_int != chat_id_int:
+                    logger.warning(
+                        "telegram_chat_not_found_fallback",
+                        extra={
+                            "chat_id": chat_id_int,
+                            "user_id": user_id_int,
+                            "session_id": session_id,
+                        },
+                    )
+                    try:
+                        await send_text_with_retry(user_id_int)
+                    except Exception as fallback_error:
+                        logger.error(
+                            "telegram_fallback_send_failed",
+                            extra={
+                                "chat_id": chat_id_int,
+                                "user_id": user_id_int,
+                                "session_id": session_id,
+                                "error": str(fallback_error),
+                            },
+                        )
+                else:
+                    raise
+            except Forbidden as e:
+                logger.error(
+                    "telegram_delivery_forbidden",
+                    extra={
+                        "chat_id": chat_id_int,
+                        "user_id": user_id_int,
+                        "session_id": session_id,
+                        "error": str(e),
+                    },
+                )
+            except Exception as e:
+                # Catch-all for any other errors during send
+                logger.error(
+                    "telegram_send_catchall_error",
+                    exc_info=True,
+                    extra={
+                        "chat_id": chat_id_int,
+                        "session_id": session_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
+                )
+
             if self.auto_send_artifacts:
-                await self.check_and_send_artifacts(chat_id, session_id, context)
+                await self.check_and_send_artifacts(str(chat_id_int), session_id, context)
             await self._heartbeat()
+
+            duration = time.time() - start_ts
+            logger.info(
+                "telegram_request_complete",
+                extra={
+                    "chat_id": chat_id_int,
+                    "user_id": user_id_int,
+                    "session_id": session_id,
+                    "duration_seconds": round(duration, 3),
+                },
+            )
         except (BadRequest, Forbidden) as e:
-            # Handle "Chat not found" (BadRequest) or "Bot was blocked by the user" (Forbidden)
-            print(f"Telegram error for {chat_id}: {e}")
+            logger.warning(
+                "telegram_delivery_error",
+                extra={
+                    "chat_id": chat_id_int,
+                    "user_id": user_id_int,
+                    "session_id": session_id,
+                    "error": str(e),
+                },
+            )
         except Exception as e:
+            logger.error(
+                "telegram_unexpected_error",
+                exc_info=True,
+                extra={
+                    "chat_id": chat_id_int,
+                    "user_id": user_id_int,
+                    "session_id": session_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                },
+            )
             try:
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Error: {str(e)}")
-            except Exception:
-                pass
-            # These are errors we can't recover from by replying to the user (since they can't see it or we can't send it)
-            # We log it but don't crash or try to reply recursively
-            print(f"Telegram Error (ignored): {e}")
-            return
-        except Exception as e:
-            error_msg = str(e)
-            try:
-                await update.message.reply_text(f"⚠️ Error procesando tu solicitud: {error_msg}")
-            except Exception:
-                # If we can't reply with the error, just ignore
-                pass
-            await self._error(error_msg)
+                await context.bot.send_message(chat_id=chat_id_int, text=f"⚠️ Error: {str(e)}")
+            except Exception as notify_error:
+                logger.error(
+                    "telegram_error_notification_failed",
+                    extra={
+                        "chat_id": chat_id_int,
+                        "error": str(notify_error),
+                    },
+                )
 
     async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message is None or update.effective_chat is None:
@@ -192,6 +442,8 @@ class TelegramChannel(BaseChannel):
         try:
             await self.app.initialize()
             await self.app.start()
+            if self._worker_task is None or self._worker_task.done():
+                self._worker_task = asyncio.create_task(self._task_worker())
             try:
                 print(f"[{pid}] TelegramChannel {instance_id}: Starting polling...")
                 await self.app.updater.start_polling(drop_pending_updates=True, poll_interval=1.0)
@@ -217,6 +469,12 @@ class TelegramChannel(BaseChannel):
         await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()
+        if self._worker_task and not self._worker_task.done():
+            while self._task_queue.full():
+                await asyncio.sleep(0)
+            await self._task_queue.put(None)
+            await self._worker_task
+            self._worker_task = None
         if self._lock_file:
             try:
                 fcntl.flock(self._lock_file, fcntl.LOCK_UN)

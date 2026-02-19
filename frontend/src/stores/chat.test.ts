@@ -4,7 +4,7 @@ import { initPinia } from '../test/utils'
 import { useChatStore } from './chat'
 
 vi.mock('../lib/api', () => ({
-  fetchJson: vi.fn()
+  fetchJson: vi.fn(),
 }))
 
 describe('chat store history', () => {
@@ -17,11 +17,11 @@ describe('chat store history', () => {
       session_id: 's1',
       items: [
         { id: 1, role: 'user', content: 'hola', created_at: '2026-01-01T00:00:00Z' },
-        { id: 2, role: 'assistant', content: 'ok', created_at: '2026-01-01T00:00:01Z' }
+        { id: 2, role: 'assistant', content: 'ok', created_at: '2026-01-01T00:00:01Z' },
       ],
       has_more: false,
       next_before_id: 1,
-      limit: 50
+      limit: 50,
     })
 
     await store.loadSessionHistory('s1')
@@ -41,21 +41,21 @@ describe('chat store history', () => {
         session_id: 's1',
         items: [
           { id: 101, role: 'user', content: 'u1', created_at: null },
-          { id: 102, role: 'assistant', content: 'a1', created_at: null }
+          { id: 102, role: 'assistant', content: 'a1', created_at: null },
         ],
         has_more: true,
         next_before_id: 101,
-        limit: 50
+        limit: 50,
       })
       .mockResolvedValueOnce({
         session_id: 's1',
         items: [
           { id: 99, role: 'user', content: 'u0', created_at: null },
-          { id: 100, role: 'assistant', content: 'a0', created_at: null }
+          { id: 100, role: 'assistant', content: 'a0', created_at: null },
         ],
         has_more: false,
         next_before_id: 99,
-        limit: 50
+        limit: 50,
       })
 
     await store.loadSessionHistory('s1')
@@ -65,4 +65,3 @@ describe('chat store history', () => {
     expect(store.historyHasMore).toBe(false)
   })
 })
-

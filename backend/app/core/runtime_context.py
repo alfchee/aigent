@@ -43,6 +43,12 @@ def resolve_memory_user_id(explicit: Optional[str], session_id: Optional[str], h
     candidate = (explicit or "").strip()
     if candidate:
         return candidate
+    
+    # Check context var first (priority over env/session)
+    context_candidate = get_memory_user_id()
+    if context_candidate and context_candidate != "default":
+        return context_candidate
+        
     header_candidate = (header_value or "").strip()
     if header_candidate:
         return header_candidate
