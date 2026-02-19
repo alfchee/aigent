@@ -6,9 +6,40 @@ Built with a robust **Python backend** and powered by **LLMs (Large Language Mod
 
 ---
 
+## 🏗️ Architecture
+
+NaviBot uses a **Multi-Agent Supervisor Pattern** with specialized workers:
+
+```mermaid
+graph TD
+    User[User Message] --> Supervisor[Supervisor]
+    Supervisor -->|Web Search| WebNavigator[WebNavigator]
+    Supervisor -->|Calendar| CalendarManager[CalendarManager]
+    Supervisor -->|Drive/Sheets| GeneralAssistant[GeneralAssistant]
+    Supervisor -->|Images| ImageGenerator[ImageGenerator]
+    
+    WebNavigator --> Supervisor
+    CalendarManager --> Supervisor
+    GeneralAssistant --> Supervisor
+    ImageGenerator --> Supervisor
+    Supervisor --> User[Final Response]
+```
+
+### Workers
+
+| Worker | Responsibility | Tools |
+|--------|---------------|-------|
+| **WebNavigator** | Web searches, browsing public websites | `search_brave`, `search_duckduckgo_fallback`, `navigate`, `get_page_content`, `screenshot` |
+| **CalendarManager** | Calendar events, scheduling | `list_upcoming_events`, `create_calendar_event` |
+| **GeneralAssistant** | Google Drive, Sheets, code, memory, Telegram | `list_drive_files`, `search_drive`, `move_drive_file`, `create_google_spreadsheet`, `execute_python`, `recall_facts`, `save_fact`, `send_telegram_message` |
+| **ImageGenerator** | Image generation from text | `generate_image` |
+
+---
+
 ## 🚀 Key Features
 
 - **🧠 Intelligent Agent:** Uses advanced LLMs to understand intent, break down complex requests, and reason through multi-step tasks.
+- **Multi-Agent System:** Supervisor orchestrates specialized workers for optimal task handling.
 - **📂 Google Drive Integration:**
   - List, search, and organize files and folders.
   - Move files between directories.
@@ -25,6 +56,10 @@ Built with a robust **Python backend** and powered by **LLMs (Large Language Mod
   - Sandboxed Python environment to perform calculations, data analysis, and logic processing on the fly.
 - **💬 Telegram Interface:**
   - Native integration with Telegram for a seamless, mobile-friendly user experience.
+- **⚡ Ghost User Pattern (Scheduler):**
+  - Scheduled tasks run in isolated sessions (`ghost_scheduler_{job_id}`).
+  - Prevents DB locking conflicts with live user chats.
+  - Memory isolation - scheduler tasks cannot access human user memories.
 
 ---
 
