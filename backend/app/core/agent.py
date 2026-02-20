@@ -51,14 +51,14 @@ def _truncate_text(value: str, limit: int) -> str:
     return value[:limit] + "...[truncated]"
 
 def _prepare_tool_response(result: Any, limit: int) -> dict:
-    if isinstance(result, dict):
-        try:
+    try:
+        if isinstance(result, dict):
             payload = json.dumps(result, ensure_ascii=False)
-        except Exception:
-            payload = str(result)
-        if len(payload) <= limit:
-            return result
-        return {"result": _truncate_text(payload, limit)}
+            if len(payload) <= limit:
+                return {"result": result}  # Return the dict, not the string
+            return {"result": _truncate_text(payload, limit)}
+    except Exception:
+        pass
     return {"result": _truncate_text(str(result), limit)}
 
 class HistoryItem:
@@ -712,10 +712,35 @@ class NaviBot:
         # Initial message
         response = await chat.send_message(message)
         
+        # DEBUG: Log if response contains function calls
+        has_function_calls = False
+        if response and response.candidates and len(response.candidates) > 0:
+            first_candidate = response.candidates[0]
+            if first_candidate and first_candidate.content and first_candidate.content.parts:
+                for part in first_candidate.content.parts:
+                    if part.function_call:
+                        has_function_calls = True
+                        logger.info(f"[TOOL_CALL_DETECTED] Model requested function: {part.function_call.name}")
+        
+        if not has_function_calls:
+            logger.warning(f"[NO_TOOL_CALL] Model did not request any function calls. Message: {message[:100]}...")
+        
         # Manual ReAct Loop
         max_turns = 10
         for _ in range(max_turns):
-            if not response.candidates or not response.candidates[0].content.parts:
+            # Safe access to response.candidates and content.parts
+            if not response:
+                logger.warning("[TOOL_CALL] Response is None, breaking loop")
+                break
+            if not response.candidates:
+                break
+            if len(response.candidates) == 0:
+                break
+            if not response.candidates[0]:
+                break
+            if not response.candidates[0].content:
+                break
+            if not response.candidates[0].content.parts:
                 break
             
             function_calls = []
@@ -731,16 +756,19 @@ class NaviBot:
                 tool_name = fc.name
                 tool_args = fc.args
                 
+                logger.info(f"[TOOL_EXECUTION] Executing tool: {tool_name} with args: {tool_args}")
                 print(f"[Agent] Calling tool: {tool_name}")
                 
                 result = None
                 try:
                     if tool_name in self._session_tools:
                         func = self._session_tools[tool_name]
+                        print(f"[Agent] Executing tool: {tool_name} with args: {tool_args}")
                         if asyncio.iscoroutinefunction(func):
                             result = await func(**tool_args)
                         else:
                             result = func(**tool_args)
+                        print(f"[Agent] Tool result: {result[:200] if result else 'None'}...")
                     else:
                         result = f"Error: Tool '{tool_name}' not found."
                 except Exception as e:
@@ -759,23 +787,28 @@ class NaviBot:
                 )
             
             if tool_outputs:
+                print(f"[Agent] Sending {len(tool_outputs)} tool outputs to LLM...")
                 response = await chat.send_message(tool_outputs)
+                logger.info(f"[TOOL_CALL] LLM response after tool: candidates={len(response.candidates) if response and response.candidates else 0}")
             else:
                 break
 
         text = ""
         try:
-            text = response.text
+            if response:
+                text = response.text
         except Exception:
             # If response has no text (e.g. only function calls), accessing .text might raise or return None
             pass
             
-        if not text and response.candidates and response.candidates[0].content.parts:
+        if not text and response and response.candidates and len(response.candidates) > 0:
+            first_candidate = response.candidates[0]
             # Check for function calls in the final response (meaning we stopped before executing them)
-            parts = response.candidates[0].content.parts
-            fcs = [p.function_call for p in parts if p.function_call]
-            if fcs:
-                text = f"[System Note] I reached the maximum number of steps ({max_turns}) and had to stop. The last requested action was: {fcs[0].name}. Please try to refine your request."
+            if first_candidate and first_candidate.content and first_candidate.content.parts:
+                parts = first_candidate.content.parts
+                fcs = [p.function_call for p in parts if p.function_call]
+                if fcs:
+                    text = f"[System Note] I reached the maximum number of steps ({max_turns}) and had to stop. The last requested action was: {fcs[0].name}. Please try to refine your request."
         
         return text if text else "No response from agent (empty text)."
 

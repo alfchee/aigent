@@ -44,7 +44,7 @@ WORKER_PROMPTS = {
         "You are a versatile general assistant. You handle Google Workspace, file management, code execution, memory, and Telegram.\n"
         "Instructions:\n"
         "- GOOGLE DRIVE: Use 'search_drive', 'list_drive_files', 'download_file_from_drive', 'create_drive_folder', 'create_drive_file', 'delete_drive_file', 'copy_drive_file', 'get_drive_file_info', 'share_drive_file' to manage Drive files.\n"
-        "- GOOGLE SHEETS: Use 'create_google_spreadsheet', 'update_sheet_data' for spreadsheet operations.\n"
+        "- GOOGLE SHEETS: Use 'create_google_spreadsheet', 'update_sheet_data', 'list_spreadsheet_sheets', 'read_sheet_data' for spreadsheet operations. FIRST use 'list_spreadsheet_sheets' to discover existing sheets, then use 'read_sheet_data' to analyze data before creating summaries.\n"
         "- CODE EXECUTION: Use 'execute_python' to run code.\n"
         "- FILE MANAGEMENT: Use 'workspace' tools to manage session files.\n"
         "- MEMORY: Use 'recall_facts', 'save_fact' to store/retrieve long-term memory.\n"
@@ -93,7 +93,7 @@ class AgentGraph:
         self.worker_skills = {
             "WebNavigator": ["browser", "search", "reader"],
             "CalendarManager": ["calendar", "scheduler"],
-            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "memory", "telegram", "extra_tools"],
+            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "google_workspace_manager", "memory", "telegram", "extra_tools"],
             "ImageGenerator": ["image_generation"]
             # GeneralAssistant se lleva el resto o lo que definamos
         }

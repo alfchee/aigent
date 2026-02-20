@@ -20,6 +20,17 @@ SCOPES = ALL_SCOPES  # Alias for backward compatibility if needed within this fi
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREDS_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_service.json')
 
+# Global variable to store credentials for reuse
+_google_credentials = None
+_google_credentials_auth_mode = None
+
+def get_credentials() -> Any:
+    """Returns the cached Google credentials."""
+    global _google_credentials
+    if _google_credentials is None:
+        get_sheets_client()  # This will initialize _google_credentials
+    return _google_credentials
+
 from app.core.config_manager import get_settings
 
 try:
@@ -59,8 +70,13 @@ def _get_workspace_config() -> Dict[str, Any]:
 
 def get_sheets_client():
     _check_dependencies()
+    global _google_credentials, _google_credentials_auth_mode
     workspace_config = _get_workspace_config()
     auth_mode = workspace_config.get("auth_mode", "service_account")
+
+    # Return cached client if auth mode hasn't changed
+    if _google_credentials is not None and _google_credentials_auth_mode == auth_mode:
+        return gspread.authorize(_google_credentials)
 
     if auth_mode == "oauth":
         creds = get_google_credentials(SCOPES)
@@ -68,6 +84,8 @@ def get_sheets_client():
             raise RuntimeError(
                 "OAuth no configurado. Ejecuta get_google_oauth_authorization_url y luego set_google_oauth_token."
             )
+        _google_credentials = creds
+        _google_credentials_auth_mode = auth_mode
         return gspread.authorize(creds)
 
     if not os.path.exists(CREDS_PATH):
@@ -88,6 +106,8 @@ def get_sheets_client():
             )
         else:
             creds = ServiceAccountCredentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
+        _google_credentials = creds
+        _google_credentials_auth_mode = auth_mode
         return gspread.authorize(creds)
     except (ValueError, json.JSONDecodeError) as e:
         logger.error(f"Invalid credentials file format: {e}")
@@ -114,7 +134,8 @@ def _create_spreadsheet_with_retry(client, title: str):
 
 @retry(**RETRY_CONFIG)
 def _update_sheet_with_retry(worksheet, range_name, values):
-    return worksheet.update(range_name, values)
+    # Use named arguments to avoid deprecation warning and fix API call
+    return worksheet.update(values=values, range_name=range_name)
 
 @retry(**RETRY_CONFIG)
 def _open_sheet_with_retry(client, key):
@@ -194,7 +215,7 @@ async def create_google_spreadsheet(title: str, folder_id: Optional[str] = None)
         location_note = None
 
         try:
-            creds = client.auth
+            creds = get_credentials()
             resolved_folder_id = _resolve_folder_id(folder_id or default_folder_id, default_folder_name, creds)
             if resolved_folder_id:
                 _move_file_to_folder(spreadsheet.id, resolved_folder_id, creds)
@@ -207,7 +228,7 @@ async def create_google_spreadsheet(title: str, folder_id: Optional[str] = None)
 
         if owner_email:
             try:
-                creds = client.auth
+                creds = get_credentials()
                 _transfer_ownership(spreadsheet.id, owner_email, creds)
                 ownership_note = f"Propiedad transferida a {owner_email}."
             except HttpError as e:
@@ -238,6 +259,87 @@ async def create_google_spreadsheet(title: str, folder_id: Optional[str] = None)
         logger.exception("Error creating spreadsheet")
         return {"error": f"Fallo al crear hoja de cálculo: {str(e)}"}
 
+
+async def list_spreadsheet_sheets(spreadsheet_id: str) -> str:
+    """
+    Lists all worksheets (sheets) in a given Google Spreadsheet.
+    
+    This is useful to discover existing sheets before inserting data.
+    
+    Args:
+        spreadsheet_id: The document ID (can be obtained from the spreadsheet URL).
+        
+    Returns:
+        A string with the list of sheet names and their indices.
+    """
+    try:
+        client = get_sheets_client()
+        sh = _open_sheet_with_retry(client, spreadsheet_id)
+        
+        worksheets = sh.worksheets()
+        if not worksheets:
+            return "No worksheets found in this spreadsheet."
+        
+        result = f"Sheets in '{sh.title}':\n"
+        for idx, ws in enumerate(worksheets):
+            result += f"- [{idx}] {ws.title} (ID: {ws.id})\n"
+        
+        return result
+    except Exception as e:
+        logger.exception("Error listing spreadsheet sheets")
+        return f"Error listing sheets: {str(e)}"
+
+
+async def read_sheet_data(spreadsheet_id: str, range_name: str = "") -> str:
+    """
+    Reads data from a Google Spreadsheet.
+    
+    This is useful to analyze existing data before creating summaries or inserting new data.
+    
+    Args:
+        spreadsheet_id: The document ID (can be obtained from the spreadsheet URL).
+        range_name: The range to read (e.g., 'Sheet1!A1:Z100' or just 'Sheet1' for entire sheet).
+                   If empty, reads the entire first sheet.
+        
+    Returns:
+        A string with the data in a readable format, or an error message.
+    """
+    try:
+        client = get_sheets_client()
+        sh = _open_sheet_with_retry(client, spreadsheet_id)
+        
+        if '!' in range_name:
+            # Specific range provided
+            sheet_name, cell_range = range_name.split('!', 1)
+            worksheet = sh.worksheet(sheet_name)
+            data = worksheet.get(cell_range)
+        elif range_name:
+            # Sheet name provided, read all data
+            worksheet = sh.worksheet(range_name)
+            data = worksheet.get_all_values()
+        else:
+            # Read from first sheet
+            worksheet = sh.get_worksheet(0)
+            data = worksheet.get_all_values()
+        
+        if not data:
+            return "No data found in the specified range."
+        
+        # Format as readable text
+        result = f"Data from '{range_name or worksheet.title}' ({len(data)} rows):\n"
+        for row in data[:50]:  # Limit to first 50 rows for readability
+            result += "| " + " | ".join(str(cell) for cell in row) + " |\n"
+        
+        if len(data) > 50:
+            result += f"\n... ({len(data) - 50} more rows)"
+        
+        return result
+    except gspread.WorksheetNotFound as e:
+        return f"Error: Sheet not found. {str(e)}"
+    except Exception as e:
+        logger.exception("Error reading sheet data")
+        return f"Error reading sheet: {str(e)}"
+
 async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[List[Union[str, int, float]]]) -> str:
     """
     Inserts or updates data in an existing spreadsheet.
@@ -245,35 +347,62 @@ async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[L
     Args:
         spreadsheet_id: The document ID (can be obtained from the URL).
         range_name: The range (e.g. 'Sheet1!A1') or sheet name (e.g. 'Sheet1').
-        values: List of lists with data to insert [[f1c1, f1c2], [f2c1...]].
+        values: List of lists with data to insert [["cell1", "cell2"], ["row2cell1", "row2cell2"]].
+                IMPORTANT: Each cell must be a plain string, number, or boolean. Do NOT wrap values in dictionaries.
         
     Returns:
         A confirmation or error message.
     """
+    logger.info(f"update_sheet_data called: spreadsheet_id={spreadsheet_id}, range_name={range_name}, values_type={type(values)}, values_sample={str(values)[:200] if values else 'empty'}")
+    
     try:
+        # Sanitize values to ensure they are plain strings/numbers, not dictionaries
+        # This fixes the "Invalid values[0][0]: struct_value" error when LLM passes {"value": "Foo"}
+        sanitized_values = []
+        for row in values:
+            sanitized_row = []
+            for cell in row:
+                if isinstance(cell, dict):
+                    # Handle common LLM mistakes: extract value from {"value": "Foo"} or {"text": "Foo"}
+                    extracted = cell.get("value") or cell.get("text") or cell.get("content") or str(cell)
+                    logger.warning(f"LLM passed dict instead of value, extracted: {extracted}")
+                    sanitized_row.append(extracted)
+                elif cell is None:
+                    sanitized_row.append("")
+                else:
+                    sanitized_row.append(str(cell))
+            sanitized_values.append(sanitized_row)
+        
+        logger.info(f"Sanitized values: {sanitized_values[:2]}")
+        
         client = get_sheets_client()
         sh = _open_sheet_with_retry(client, spreadsheet_id)
+        logger.info(f"Opened spreadsheet: {sh.title}")
         
         if '!' in range_name:
             sheet_name, cell_range = range_name.split('!', 1)
             try:
                 worksheet = sh.worksheet(sheet_name)
                 target_range = cell_range or "A1"
-                _update_sheet_with_retry(worksheet, target_range, values)
+                logger.info(f"Updating sheet: {sheet_name}, range: {target_range}")
+                _update_sheet_with_retry(worksheet, target_range, sanitized_values)
             except gspread.WorksheetNotFound:
                  return f"Error: No se encontró la hoja '{sheet_name}'."
         else:
             # Assume it's a sheet name or default range
             try:
                 worksheet = sh.worksheet(range_name)
-                _update_sheet_with_retry(worksheet, 'A1', values)
+                logger.info(f"Updating sheet (by name): {range_name}")
+                _update_sheet_with_retry(worksheet, 'A1', sanitized_values)
             except gspread.WorksheetNotFound:
                 # Fallback to first sheet
+                logger.info("Sheet not found, falling back to first sheet")
                 worksheet = sh.get_worksheet(0)
-                _update_sheet_with_retry(worksheet, range_name, values)
+                _update_sheet_with_retry(worksheet, range_name, sanitized_values)
 
         return f"Datos actualizados exitosamente en '{range_name}'."
     except FileNotFoundError as e:
+        logger.error(f"FileNotFoundError in update_sheet_data: {e}")
         return str(e)
     except Exception as e:
         logger.exception("Error updating sheet data")
@@ -341,6 +470,8 @@ async def authorize_google_oauth_local_server() -> str:
 tools = [
     create_google_spreadsheet,
     update_sheet_data,
+    list_spreadsheet_sheets,
+    read_sheet_data,
     get_google_oauth_authorization_url,
     set_google_oauth_token,
     authorize_google_oauth_local_server
