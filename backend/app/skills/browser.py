@@ -5,6 +5,7 @@ from langchain_core.tools import tool
 
 from app.core.filesystem import SessionWorkspace
 from app.core.runtime_context import get_session_id, emit_event
+from app.core.content_processor import process_html, is_html_content
 
 _playwright = None
 _sessions: dict[str, dict] = {}
@@ -44,14 +45,25 @@ async def navigate(url: str):
 
 @tool
 async def get_page_content():
-    """Returns the text content of the current page."""
+    """Returns the text content of the current page in clean Markdown format.
+    
+    Uses MarkItDown to clean HTML and return only the semantic content.
+    """
     try:
         ctx = _ctx()
         if not ctx["page"]:
             return "No page open. Navigate first."
-        # We can optimize this to return simplified HTML or just text
+        # Get full HTML content
         content = await ctx["page"].content()
-        return content[:10000] # truncate for now
+        
+        # Check if it's HTML and process with MarkItDown
+        if is_html_content(content):
+            # Use MarkItDown for clean Markdown
+            markdown = process_html(content, max_length=15000)
+            return f"```markdown\n{markdown}\n```"
+        else:
+            # Return as-is if not HTML
+            return content[:10000]
     except Exception as e:
         return f"Error getting content: {str(e)}"
 

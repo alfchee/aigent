@@ -13,6 +13,7 @@ from app.api.settings import router as settings_router
 from app.api.channels import router as channels_router
 from app.api.mcp import router as mcp_router
 from app.api.scheduler import router as scheduler_router
+from app.api.cache import router as cache_router
 from app.channels.manager import channel_manager
 from app.core.bot_pool import bot_pool
 from app.core.config_manager import get_settings
@@ -100,6 +101,7 @@ app.include_router(settings_router)
 app.include_router(channels_router)
 app.include_router(mcp_router)
 app.include_router(scheduler_router)
+app.include_router(cache_router)
 if FRONTEND_ASSETS.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS)), name="assets")
 

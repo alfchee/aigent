@@ -16,6 +16,7 @@ from app.core.persistence import load_chat_history, save_chat_message
 from app.core.persistence_wrapper import wrap_tool
 from app.core.mcp_client import McpManager
 from app.core.agent_graph import AgentGraph
+from app.core import prompt_cache
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -694,11 +695,78 @@ class NaviBot:
             )
 
         # Create async chat session
-        self._chat_sessions[session_id] = self.client.aio.chats.create(
-            model=self.model_name,
-            config=tool_config,
-            history=history
-        )
+        # Try to use cached content for better performance and lower cost
+        cached_content_name = None
+        
+        # Convert tools to schema for caching
+        tools_schema = []
+        
+        # Add native tool schemas
+        for tool in native_tools:
+            try:
+                name = tool.name if hasattr(tool, 'name') else tool.__name__
+                description = tool.description if hasattr(tool, 'description') else ""
+                args_schema = {}
+                if hasattr(tool, 'args_schema') and tool.args_schema:
+                    try:
+                        if hasattr(tool.args_schema, 'model_json_schema'):
+                            args_schema = tool.args_schema.model_json_schema()
+                        elif hasattr(tool.args_schema, 'schema'):
+                            args_schema = tool.args_schema.schema()
+                    except Exception:
+                        pass
+                tools_schema.append({
+                    "name": name,
+                    "description": description,
+                    "parameters": args_schema
+                })
+            except Exception as e:
+                logger.warning(f"Failed to convert native tool to schema: {e}")
+        
+        # Add MCP tool schemas
+        for decl in mcp_declarations:
+            try:
+                tools_schema.append({
+                    "name": decl.name,
+                    "description": decl.description,
+                    "parameters": decl.parameters if hasattr(decl, 'parameters') else {}
+                })
+            except Exception as e:
+                logger.warning(f"Failed to convert MCP declaration to schema: {e}")
+        
+        # Try to get or create cache for GeneralAssistant
+        if tools_schema and system_instruction:
+            try:
+                cache_manager = prompt_cache.get_cache_manager()
+                cached_content_name = cache_manager.get_or_create_worker_cache(
+                    worker_name="GeneralAssistant",
+                    system_instruction=system_instruction,
+                    tools_schema=tools_schema
+                )
+                if cached_content_name:
+                    logger.info(f"Using cached content for session {session_id}: {cached_content_name}")
+            except Exception as e:
+                logger.warning(f"Failed to get/create cache: {e}")
+        
+        # Create chat with or without cached content
+        if cached_content_name:
+            self._chat_sessions[session_id] = self.client.aio.chats.create(
+                model=self.model_name,
+                config=types.GenerateContentConfig(
+                    tools=tools_payload,
+                    cached_content=cached_content_name,
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=True
+                    )
+                ),
+                history=history
+            )
+        else:
+            self._chat_sessions[session_id] = self.client.aio.chats.create(
+                model=self.model_name,
+                config=tool_config,
+                history=history
+            )
 
     async def send_message(self, message: str) -> str:
         from app.core.runtime_context import get_session_id

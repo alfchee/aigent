@@ -13,6 +13,8 @@ from app.core.graph_state import AgentState
 from app.core.skill_loader import SkillLoader
 from app.core.supervisor import create_supervisor_node, WORKERS
 from app.core.model_orchestrator import ModelOrchestrator
+from app.core import prompt_cache
+from app.core.conversation_summarizer import node_summarizer, get_summarizer
 
 # Cargar variables de entorno
 load_dotenv()
@@ -101,9 +103,13 @@ class AgentGraph:
         # 4. Construir el Grafo
         self.graph = self._build_graph()
 
-    def _get_llm(self, role_name: str) -> ChatGoogleGenerativeAI:
+    def _get_llm(self, role_name: str, cached_content: str = None) -> ChatGoogleGenerativeAI:
         """
         Returns a configured LLM instance for a specific role/worker.
+        
+        Args:
+            role_name: The role/worker name
+            cached_content: Optional cached content resource name for prompt caching
         """
         # Map worker names to config roles
         config_role = "supervisor"
@@ -127,12 +133,19 @@ class AgentGraph:
         
         final_model = self.model_name if role_name == "supervisor" else self.orchestrator.get_model_for_role(config_role)
         
-        return ChatGoogleGenerativeAI(
-            model=final_model,
-            google_api_key=self.api_key,
-            temperature=0,
-            convert_system_message_to_human=True
-        )
+        # Build LLM kwargs
+        llm_kwargs = {
+            "model": final_model,
+            "google_api_key": self.api_key,
+            "temperature": 0,
+            "convert_system_message_to_human": True
+        }
+        
+        # Add cached content if available
+        if cached_content:
+            llm_kwargs["cached_content"] = cached_content
+        
+        return ChatGoogleGenerativeAI(**llm_kwargs)
 
     def _create_agent_node(self, agent_name: str, tools: list):
         """Helper para crear un nodo agente."""
@@ -236,9 +249,55 @@ class AgentGraph:
             if worker_name == "GeneralAssistant" and self.user_facts:
                 system_prompt += f"\n\nFacts about the user:\n{self.user_facts}"
             
-            # Use specific LLM for this worker
-            worker_llm = self._get_llm(worker_name)
-            worker_agent = create_react_agent(worker_llm, worker_tools, prompt=system_prompt)
+            # Try to get or create cached content for this worker
+            cached_content = None
+            tools_schema = []
+            
+            # Convert tools to schema for caching
+            for tool in worker_tools:
+                try:
+                    name = tool.name if hasattr(tool, 'name') else tool.__name__
+                    description = tool.description if hasattr(tool, 'description') else ""
+                    args_schema = {}
+                    if hasattr(tool, 'args_schema') and tool.args_schema:
+                        try:
+                            if hasattr(tool.args_schema, 'model_json_schema'):
+                                args_schema = tool.args_schema.model_json_schema()
+                            elif hasattr(tool.args_schema, 'schema'):
+                                args_schema = tool.args_schema.schema()
+                        except Exception:
+                            pass
+                    tools_schema.append({
+                        "name": name,
+                        "description": description,
+                        "parameters": args_schema
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to convert tool to schema: {e}")
+            
+            # Try to get or create cache for this worker
+            if tools_schema and system_prompt:
+                try:
+                    cache_manager = prompt_cache.get_cache_manager()
+                    cached_content = cache_manager.get_or_create_worker_cache(
+                        worker_name=worker_name,
+                        system_instruction=system_prompt,
+                        tools_schema=tools_schema
+                    )
+                    if cached_content:
+                        logger.info(f"Using cached content for worker {worker_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to get/create cache for worker {worker_name}: {e}")
+            
+            # Use specific LLM for this worker (with or without cached content)
+            worker_llm = self._get_llm(worker_name, cached_content=cached_content)
+            
+            # When using cached content, we don't need to pass system prompt again
+            # because it's already in the cache
+            if cached_content:
+                worker_agent = create_react_agent(worker_llm, worker_tools, prompt=None)
+            else:
+                worker_agent = create_react_agent(worker_llm, worker_tools, prompt=system_prompt)
             
             # Definir la función del nodo
             # Usamos functools.partial para capturar worker_agent en el closure correctamente
@@ -265,8 +324,11 @@ class AgentGraph:
             workflow.add_node(worker_name, node_func)
 
         # 3. Definir Flujo (Aristas)
-        # El punto de entrada es el supervisor
-        workflow.add_edge(START, "supervisor")
+        # El punto de entrada es el summarizer (comprime historial si es muy largo)
+        # Luego va al supervisor para procesar
+        workflow.add_node("summarizer", node_summarizer)
+        workflow.add_edge(START, "summarizer")
+        workflow.add_edge("summarizer", "supervisor")
 
         # El supervisor decide a quién ir
         conditional_map = {k: k for k in WORKERS}

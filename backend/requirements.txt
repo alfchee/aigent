@@ -11,6 +11,7 @@ sse-starlette
 pypdf
 python-multipart
 markdownify
+markitdown
 pandas
 numpy
 matplotlib
