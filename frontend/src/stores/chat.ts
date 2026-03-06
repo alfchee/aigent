@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { ApiError, fetchJson } from '../lib/api'
+import { ApiError, NetworkError, TimeoutError, fetchJson } from '../lib/api'
 import { useSessionsStore } from './sessions'
 
 export type ChatMessage = {
@@ -103,6 +103,7 @@ export const useChatStore = defineStore('chat', {
         const data = await fetchJson<ChatResponse>('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          timeout: 120000, // 2 minutes timeout for agent operations
           body: JSON.stringify({
             message: trimmed,
             session_id: sessionId,
@@ -124,14 +125,27 @@ export const useChatStore = defineStore('chat', {
         } catch (error) {
           void error
         }
-      } catch (e) {
-        let msg = e instanceof Error ? e.message : String(e)
-        if (e instanceof ApiError) {
+      } catch (e: any) {
+        let msg = 'Error desconocido'
+
+        if (e instanceof TimeoutError) {
+          msg = 'La solicitud tardó demasiado. Por favor verifique su conexión e intente nuevamente.'
+        } else if (e instanceof NetworkError) {
+          msg = 'No se pudo conectar con el servidor. Verifique que el backend esté corriendo y accesible.'
+          if (e.originalError instanceof Error) {
+            msg += ` (${e.originalError.message})`
+          }
+        } else if (e instanceof ApiError) {
           const body = e.body as any
           if (typeof body === 'string' && body.trim()) msg = body
           else if (body && typeof body.detail === 'string') msg = body.detail
-          else msg = `HTTP ${e.status}`
+          else msg = `Error del servidor (HTTP ${e.status})`
+        } else if (e instanceof Error) {
+          msg = e.message
+        } else if (typeof e === 'string') {
+          msg = e
         }
+
         this.error = msg
         this.messages.push({ role: 'assistant', content: `Lo siento, hubo un error: ${msg}` })
       } finally {

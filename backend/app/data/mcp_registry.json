@@ -7,10 +7,10 @@
     "params": ["path"]
   },
   "github": {
-    "name": "GitHub Integration",
-    "description": "Search repositories, read commits, and manage issues.",
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "name": "GitHub Enhanced Integration",
+    "description": "Advanced GitHub integration with filtering, bulk PR operations, and project management.",
+    "command": "python",
+    "args": ["-m", "app.mcp_servers.github_enhanced"],
     "env_vars": ["GITHUB_PERSONAL_ACCESS_TOKEN"]
   },
   "postgres": {

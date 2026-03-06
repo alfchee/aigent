@@ -748,10 +748,16 @@ class NaviBot:
             except Exception as e:
                 logger.warning(f"Failed to get/create cache: {e}")
         
+        # Determine model to use
+        model_to_use = self.model_name
+        if model_to_use == "gemini-2.5-flash-image":
+            logger.warning(f"Model {model_to_use} does not support tools. Switching to gemini-flash-latest for agent execution.")
+            model_to_use = "gemini-flash-latest"
+
         # Create chat with or without cached content
         if cached_content_name:
             self._chat_sessions[session_id] = self.client.aio.chats.create(
-                model=self.model_name,
+                model=model_to_use,
                 config=types.GenerateContentConfig(
                     tools=tools_payload,
                     cached_content=cached_content_name,
@@ -763,7 +769,7 @@ class NaviBot:
             )
         else:
             self._chat_sessions[session_id] = self.client.aio.chats.create(
-                model=self.model_name,
+                model=model_to_use,
                 config=tool_config,
                 history=history
             )
