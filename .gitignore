@@ -73,3 +73,9 @@ pnpm-lock.yaml
 brain/
 .trae/
 backend/navi_memory_qdrant/collection/mem0/storage.sqlite
+
+# Secure Skills (User provided)
+secure_skills/*
+!secure_skills/README.md
+!secure_skills/MANIFEST.json.example
+!secure_skills/simple_math/
