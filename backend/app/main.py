@@ -86,6 +86,10 @@ class ChatResponse(BaseModel):
     termination_reason: str | None = None
     execution_time_seconds: float | None = None
 
+def _validate_session_id(session_id: str):
+    if session_id is None or not str(session_id).strip() or session_id == "default":
+        raise HTTPException(status_code=400, detail="session_id es requerido y no puede ser 'default'")
+
 @app.get("/")
 async def root():
     if _frontend_enabled():
@@ -515,6 +519,8 @@ async def chat_stream(request: ChatRequest, http_request: Request):
     """
     from sse_starlette.sse import EventSourceResponse
     import json
+    _validate_session_id(request.session_id)
+    print(f"[API] /api/chat/stream session_id={request.session_id}")
     
     async def event_generator():
         # Create event queue for communication between agent and SSE stream
