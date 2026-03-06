@@ -1,0 +1,59 @@
+name: main-release
+on:
+  push:
+    branches:
+      - main
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Bump version and changelog
+        run: |
+          python - <<'PY'
+          from datetime import date
+          from pathlib import Path
+          import subprocess
+          version_file = Path("VERSION")
+          changelog_file = Path("CHANGELOG.md")
+          if not version_file.exists():
+              version_file.write_text("0.1.0\n", encoding="utf-8")
+          current = version_file.read_text(encoding="utf-8").strip()
+          parts = current.split(".")
+          if len(parts) != 3 or not all(p.isdigit() for p in parts):
+              raise SystemExit(f"Invalid VERSION format: {current}")
+          major, minor, patch = map(int, parts)
+          patch += 1
+          new_version = f"{major}.{minor}.{patch}"
+          version_file.write_text(f"{new_version}\n", encoding="utf-8")
+          log = subprocess.check_output(["git", "log", "--pretty=%s", "--no-merges", f"v{current}..HEAD"]).decode("utf-8").strip()
+          lines = [line for line in log.splitlines() if line]
+          entry = "\n".join([f"- {line}" for line in lines]) if lines else "- Actualización automática"
+          header = f"## v{new_version} - {date.today().isoformat()}"
+          if changelog_file.exists():
+              existing = changelog_file.read_text(encoding="utf-8")
+          else:
+              existing = "# Changelog\n"
+          changelog = f"{existing}\n{header}\n{entry}\n"
+          changelog_file.write_text(changelog.strip() + "\n", encoding="utf-8")
+          PY
+      - name: Commit release files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION CHANGELOG.md
+          git commit -m "chore(release): v$(cat VERSION)" || exit 0
+          git push origin main
+      - name: Tag release
+        run: |
+          VERSION=$(cat VERSION)
+          TAG="v${VERSION}"
+          git tag -a "$TAG" -m "release $TAG"
+          git push origin "$TAG"

@@ -1,256 +1,177 @@
-import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
-import { fetchEventSource } from '@microsoft/fetch-event-source';
-import type { 
-  Message, 
-  LogEntry, 
-  StreamStatus, 
-  BackendEvent, 
-  ThinkingPayload, 
-  ToolCallPayload, 
-  ObservationPayload, 
-  ResponsePayload 
-} from '../types/chat';
+import { defineStore } from 'pinia'
 
-export const useChatStore = defineStore('chat', () => {
-  // State
-  const messages = ref<Message[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: 'Hello! I am NaviBot. I am ready to help you with your tasks.',
-      timestamp: Date.now()
-    }
-  ]);
-  
-  const logs = ref<LogEntry[]>([]); // Keeping global logs for now, might be useful for debug
-  const status = ref<StreamStatus>('idle');
-  const currentThought = ref<string>('');
-  const abortController = ref<AbortController | null>(null);
-  
-  // Getters
-  const isStreaming = computed(() => status.value === 'connecting' || status.value === 'streaming');
-  const hasLogs = computed(() => logs.value.length > 0);
+import { ApiError, NetworkError, TimeoutError, fetchJson } from '../lib/api'
+import { useSessionsStore } from './sessions'
 
-  // Actions
-  function getSessionId(): string {
-    let id = localStorage.getItem('chat_session_id');
-    if (!id) {
-      id = crypto.randomUUID();
-      localStorage.setItem('chat_session_id', id);
-    }
-    return id;
-  }
+export type ChatMessage = {
+  id?: number
+  role: 'user' | 'assistant'
+  content: string
+  created_at?: string | null
+}
 
-  function addLog(type: LogEntry['type'], title: string, details?: any) {
-    logs.value.push({
-      id: crypto.randomUUID(),
-      type,
-      title,
-      details,
-      timestamp: Date.now(),
-      expanded: true
-    });
-  }
+type ChatResponse = {
+  response: string
+}
 
-  function addMessageLog(msgId: string, type: LogEntry['type'], title: string, details?: any) {
-    const msg = messages.value.find(m => m.id === msgId);
-    if (msg) {
-      if (!msg.steps) msg.steps = [];
-      msg.steps.push({
-        id: crypto.randomUUID(),
-        type,
-        title,
-        details,
-        timestamp: Date.now(),
-        expanded: false // Default collapsed in message view
-      });
-    }
-    // Also add to global logs for now
-    addLog(type, title, details);
-  }
+type SessionMessagesResponse = {
+  session_id: string
+  items: Array<{
+    id: number
+    role: 'user' | 'assistant'
+    content: string
+    created_at: string | null
+    corrupted?: boolean
+  }>
+  has_more: boolean
+  next_before_id: number | null
+  limit: number
+}
 
-  function stopGeneration() {
-    if (abortController.value) {
-      abortController.value.abort();
-      abortController.value = null;
-    }
-    status.value = 'completed'; // Or 'cancelled' if we had that state
-    currentThought.value = '';
-    
-    // Find the last streaming message and mark it as done
-    const lastMsg = messages.value.find(m => m.isStreaming);
-    if (lastMsg) {
-      lastMsg.isStreaming = false;
-    }
-  }
+export type ChatLog = {
+  id: string
+  title: string
+  type: 'thinking' | 'tool' | 'success' | 'error' | 'info'
+  timestamp: number
+  message?: string
+  details?: any
+  expanded?: boolean
+}
 
-  async function sendMessage(content: string) {
-    if (isStreaming.value || !content.trim()) return;
-
-    // 1. Add User Message
-    messages.value.push({
-      id: crypto.randomUUID(),
-      role: 'user',
-      content,
-      timestamp: Date.now()
-    });
-
-    // 2. Prepare for Assistant Response
-    status.value = 'connecting';
-    const assistantMsgId = crypto.randomUUID();
-    messages.value.push({
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      isStreaming: true,
-      steps: []
-    });
-    
-    currentThought.value = '';
-    
-    // Init AbortController
-    abortController.value = new AbortController();
-
-    try {
-      await fetchEventSource('/api/chat/stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: content,
-          session_id: getSessionId(),
-          use_react_loop: true
-        }),
-        signal: abortController.value.signal,
-        async onopen(response) {
-          if (response.ok) {
-            status.value = 'streaming';
-            return; // everything's good
-          } else {
-            status.value = 'error';
-            throw new Error(`Failed to connect: ${response.statusText}`);
-          }
-        },
-        onmessage(msg) {
-          if (msg.event === 'FatalError') {
-            throw new Error(msg.data);
-          }
-          if (!msg.data) return;
-
-          try {
-            const parsedData = JSON.parse(msg.data);
-            // Construct the internal event object using the SSE event name as the type
-            const event: BackendEvent = {
-              type: msg.event as any, // Cast to any or EventType if strictly typed
-              data: parsedData,
-              timestamp: parsedData.timestamp
-            };
-            handleBackendEvent(event, assistantMsgId);
-          } catch (e) {
-            console.error('Failed to parse SSE data:', e);
-          }
-        },
-        onclose() {
-          finalizeStream(assistantMsgId);
-        },
-        onerror(err) {
-          if (abortController.value?.signal.aborted) {
-             // Ignore if aborted manually
-             return;
-          }
-          status.value = 'error';
-          addMessageLog(assistantMsgId, 'error', 'Connection Error', err);
-          throw err; // rethrow to stop retries by default, or handle logic
+export const useChatStore = defineStore('chat', {
+  state: () => ({
+    messages: [
+      { role: 'assistant', content: 'Hello! I am Navibot. How can I help you today?' },
+    ] as ChatMessage[],
+    isLoading: false as boolean,
+    isStreaming: false as boolean,
+    currentThought: '' as string,
+    logs: [] as ChatLog[],
+    error: null as string | null,
+    isHistoryLoading: false as boolean,
+    historyError: null as string | null,
+    historyHasMore: false as boolean,
+    historyNextBeforeId: null as number | null,
+  }),
+  actions: {
+    stopGeneration() {
+      // TODO: Implement abort controller for fetch
+      this.isLoading = false
+      this.isStreaming = false
+    },
+    async loadSessionHistory(sessionId: string) {
+      this.isHistoryLoading = true
+      this.historyError = null
+      try {
+        const data = await fetchJson<SessionMessagesResponse>(
+          `/api/sessions/${encodeURIComponent(sessionId || 'default')}/messages?limit=50`,
+        )
+        const items = (data.items || []).map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          created_at: m.created_at,
+        }))
+        this.messages =
+          items.length > 0
+            ? items
+            : [{ role: 'assistant', content: 'Hello! I am Navibot. How can I help you today?' }]
+        this.historyHasMore = Boolean(data.has_more)
+        this.historyNextBeforeId = data.has_more ? data.next_before_id : null
+      } catch (e) {
+        this.historyError = e instanceof Error ? e.message : String(e)
+      } finally {
+        this.isHistoryLoading = false
+      }
+    },
+    async loadMoreHistory(sessionId: string) {
+      if (this.isHistoryLoading || !this.historyHasMore || !this.historyNextBeforeId) return
+      this.isHistoryLoading = true
+      this.historyError = null
+      try {
+        const data = await fetchJson<SessionMessagesResponse>(
+          `/api/sessions/${encodeURIComponent(sessionId || 'default')}/messages?limit=50&before_id=${this.historyNextBeforeId}`,
+        )
+        const items = (data.items || []).map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          created_at: m.created_at,
+        }))
+        if (items.length > 0) {
+          this.messages = [...items, ...this.messages]
         }
-      });
-    } catch (err: any) {
-       if (abortController.value?.signal.aborted) {
-         console.log('Stream aborted by user');
-         return;
-       }
-      console.error('Stream error:', err);
-      status.value = 'error';
-      finalizeStream(assistantMsgId);
-    }
-  }
+        this.historyHasMore = Boolean(data.has_more)
+        this.historyNextBeforeId = data.has_more ? data.next_before_id : null
+      } catch (e) {
+        this.historyError = e instanceof Error ? e.message : String(e)
+      } finally {
+        this.isHistoryLoading = false
+      }
+    },
+    async sendMessage(message: string, sessionId?: string, modelName?: string) {
+      const trimmed = message.trim()
+      if (!trimmed || this.isLoading) return
 
-  function handleBackendEvent(event: BackendEvent, msgId: string) {
-    // Update transient thought
-    const msg = messages.value.find(m => m.id === msgId);
-    
-    switch (event.type) {
-      case 'start':
-        addMessageLog(msgId, 'info', 'Process Started');
-        break;
-        
-      case 'iteration_start':
-        const iterData = event.data as ThinkingPayload;
-        addMessageLog(msgId, 'info', `Iteration ${iterData.iteration || '?'}`, iterData);
-        break;
-        
-      case 'thinking':
-        const thinkData = event.data as ThinkingPayload;
-        currentThought.value = thinkData.message;
-        if (msg) msg.currentThought = thinkData.message;
-        addMessageLog(msgId, 'thinking', 'Thinking', thinkData.message);
-        break;
-        
-      case 'tool_call':
-        const toolData = event.data as ToolCallPayload;
-        addMessageLog(msgId, 'tool', `Calling Tool: ${toolData.tool_name}`, toolData.arguments);
-        currentThought.value = `Executing ${toolData.tool_name}...`;
-        if (msg) msg.currentThought = `Executing ${toolData.tool_name}...`;
-        break;
-        
-      case 'observation':
-        const obsData = event.data as ObservationPayload;
-        addMessageLog(msgId, 'success', `Tool Result`, obsData.result);
-        break;
-        
-      case 'response':
-        const respData = event.data as ResponsePayload;
-        // Append text to the current message
-        if (msg) {
-          msg.content += respData.text;
-          // Clear transient thought when responding
-          msg.currentThought = undefined;
-          currentThought.value = 'Responding...';
+      const currentSessionId = sessionId || 'default'
+
+      this.messages.push({ role: 'user', content: trimmed })
+      this.isLoading = true
+      this.error = null
+      try {
+        const model_name = (modelName || '').trim()
+        const memory_user_id = (localStorage.getItem('navibot_memory_user_id') || '').trim()
+        const data = await fetchJson<ChatResponse>('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 120000, // 2 minutes timeout for agent operations
+          body: JSON.stringify({
+            message: trimmed,
+            session_id: currentSessionId,
+            model_name: model_name || undefined,
+            memory_user_id: memory_user_id || undefined,
+          }),
+        })
+        this.messages.push({
+          role: 'assistant',
+          content: data.response || 'No response from agent.',
+        })
+        try {
+          const userCount = this.messages.filter((m) => m.role === 'user').length
+          const assistantCount = this.messages.filter((m) => m.role === 'assistant').length
+          if (userCount === 1 && assistantCount === 2) {
+            const sessions = useSessionsStore()
+            await sessions.autotitle(currentSessionId)
+          }
+        } catch (error) {
+          void error
         }
-        break;
-        
-      case 'completion':
-      case 'final':
-        // Task done
-        break;
-        
-      case 'error':
-        addMessageLog(msgId, 'error', 'Backend Error', event.data);
-        break;
-    }
-  }
+      } catch (e: any) {
+        let msg = 'Unknown error'
 
-  function finalizeStream(msgId: string) {
-    status.value = 'completed';
-    currentThought.value = '';
-    abortController.value = null;
-    const msg = messages.value.find(m => m.id === msgId);
-    if (msg) {
-      msg.isStreaming = false;
-      msg.currentThought = undefined;
-    }
-  }
+        if (e instanceof TimeoutError) {
+          msg = 'The request took too long. Please check your connection and try again.'
+        } else if (e instanceof NetworkError) {
+          msg = 'Could not connect to the server. Check that the backend is running and accessible.'
+          if (e.originalError instanceof Error) {
+            msg += ` (${e.originalError.message})`
+          }
+        } else if (e instanceof ApiError) {
+          const body = e.body as any
+          if (typeof body === 'string' && body.trim()) msg = body
+          else if (body && typeof body.detail === 'string') msg = body.detail
+          else msg = `Server error (HTTP ${e.status})`
+        } else if (e instanceof Error) {
+          msg = e.message
+        } else if (typeof e === 'string') {
+          msg = e
+        }
 
-  return {
-    messages,
-    logs,
-    status,
-    currentThought,
-    isStreaming,
-    hasLogs,
-    sendMessage,
-    stopGeneration
-  };
-});
+        this.error = msg
+        this.messages.push({ role: 'assistant', content: `Sorry, there was an error: ${msg}` })
+      } finally {
+        this.isLoading = false
+      }
+    },
+  },
+})

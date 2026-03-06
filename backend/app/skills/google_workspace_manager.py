@@ -1,0 +1,478 @@
+import os
+import json
+import logging
+from typing import List, Union, Optional, Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+logger = logging.getLogger(__name__)
+
+from app.core.google_auth import (
+    get_google_credentials,
+    get_authorization_url,
+    save_credentials_from_code,
+    ALL_SCOPES,
+    ensure_oauth_dependencies,
+    check_google_dependencies
+)
+
+SCOPES = ALL_SCOPES  # Alias for backward compatibility if needed within this file
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CREDS_PATH = os.path.join(BASE_DIR, 'core', 'credentials', 'google_service.json')
+
+# Global variable to store credentials for reuse
+_google_credentials = None
+_google_credentials_auth_mode = None
+
+def get_credentials() -> Any:
+    """Returns the cached Google credentials."""
+    global _google_credentials
+    if _google_credentials is None:
+        get_sheets_client()  # This will initialize _google_credentials
+    return _google_credentials
+
+from app.core.config_manager import get_settings
+
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+    from google.auth.exceptions import TransportError, RefreshError
+    GSPREAD_AVAILABLE = True
+except ImportError:
+    GSPREAD_AVAILABLE = False
+
+try:
+    from google.oauth2.credentials import Credentials as UserCredentials
+    # Request and InstalledAppFlow imports moved to google_auth, but might be needed for type hinting or local checks
+    OAUTH_AVAILABLE = True
+except ImportError:
+    OAUTH_AVAILABLE = False
+
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GOOGLE_API_AVAILABLE = True
+except ImportError:
+    GOOGLE_API_AVAILABLE = False
+    class HttpError(Exception):
+        pass
+
+def _check_dependencies():
+    if not GSPREAD_AVAILABLE:
+        raise ImportError("The 'gspread' library is required but not installed.")
+
+def _get_workspace_config() -> Dict[str, Any]:
+    try:
+        settings = get_settings()
+        return settings.google_workspace_config or {}
+    except Exception:
+        return {}
+
+def get_sheets_client():
+    _check_dependencies()
+    global _google_credentials, _google_credentials_auth_mode
+    workspace_config = _get_workspace_config()
+    auth_mode = workspace_config.get("auth_mode", "service_account")
+
+    # Return cached client if auth mode hasn't changed
+    if _google_credentials is not None and _google_credentials_auth_mode == auth_mode:
+        return gspread.authorize(_google_credentials)
+
+    if auth_mode == "oauth":
+        creds = get_google_credentials(SCOPES)
+        if not creds:
+            raise RuntimeError(
+                "OAuth no configurado. Ejecuta get_google_oauth_authorization_url y luego set_google_oauth_token."
+            )
+        _google_credentials = creds
+        _google_credentials_auth_mode = auth_mode
+        return gspread.authorize(creds)
+
+    if not os.path.exists(CREDS_PATH):
+        error_msg = (
+            f"No se encontró el archivo de credenciales en: {CREDS_PATH}. "
+            "Por favor, coloca tu 'google_service.json' en esa ubicación."
+        )
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+
+    try:
+        delegated_user_email = workspace_config.get("delegated_user_email")
+        if delegated_user_email:
+            creds = ServiceAccountCredentials.from_service_account_file(
+                CREDS_PATH,
+                scopes=SCOPES,
+                subject=delegated_user_email
+            )
+        else:
+            creds = ServiceAccountCredentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
+        _google_credentials = creds
+        _google_credentials_auth_mode = auth_mode
+        return gspread.authorize(creds)
+    except (ValueError, json.JSONDecodeError) as e:
+        logger.error(f"Invalid credentials file format: {e}")
+        raise RuntimeError(f"El archivo de credenciales es inválido: {str(e)}")
+    except Exception as e:
+        logger.error(f"Authentication failed: {e}")
+        raise RuntimeError(f"Error al autenticar con Google Workspace: {str(e)}")
+
+# Retry configuration: exponential backoff, max 3 attempts, retry on specific API errors
+RETRY_CONFIG = {
+    "stop": stop_after_attempt(3),
+    "wait": wait_exponential(multiplier=1, min=2, max=10),
+    "retry": retry_if_exception_type((Exception,)) # We can refine this if we import specific exceptions
+}
+
+if GSPREAD_AVAILABLE:
+    # Refine retry exceptions if modules are available
+    from gspread.exceptions import APIError, GSpreadException
+    RETRY_CONFIG["retry"] = retry_if_exception_type((APIError, GSpreadException, TransportError, RefreshError))
+
+@retry(**RETRY_CONFIG)
+def _create_spreadsheet_with_retry(client, title: str):
+    return client.create(title)
+
+@retry(**RETRY_CONFIG)
+def _update_sheet_with_retry(worksheet, range_name, values):
+    # Use named arguments to avoid deprecation warning and fix API call
+    return worksheet.update(values=values, range_name=range_name)
+
+@retry(**RETRY_CONFIG)
+def _open_sheet_with_retry(client, key):
+    return client.open_by_key(key)
+
+def _get_drive_service(creds):
+    if not GOOGLE_API_AVAILABLE:
+        raise ImportError("The 'google-api-python-client' library is required but not installed.")
+    return build("drive", "v3", credentials=creds)
+
+def _resolve_folder_id(folder_id: Optional[str], folder_name: Optional[str], creds) -> Optional[str]:
+    if folder_id:
+        return folder_id
+    if not folder_name:
+        return None
+    service = _get_drive_service(creds)
+    safe_name = folder_name.replace("'", "\\'")
+    query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{safe_name}' and trashed = false"
+    results = service.files().list(q=query, fields="files(id, name)", pageSize=1).execute()
+    files = results.get("files", [])
+    if not files:
+        return None
+    return files[0].get("id")
+
+def _move_file_to_folder(file_id: str, folder_id: str, creds) -> None:
+    service = _get_drive_service(creds)
+    file_meta = service.files().get(fileId=file_id, fields="parents").execute()
+    previous_parents = ",".join(file_meta.get("parents", []))
+    service.files().update(
+        fileId=file_id,
+        addParents=folder_id,
+        removeParents=previous_parents,
+        fields="id, parents"
+    ).execute()
+
+def _transfer_ownership(file_id: str, owner_email: str, creds) -> None:
+    service = _get_drive_service(creds)
+    permission = {
+        "type": "user",
+        "role": "owner",
+        "emailAddress": owner_email,
+    }
+    service.permissions().create(
+        fileId=file_id,
+        body=permission,
+        transferOwnership=True,
+        sendNotificationEmail=False
+    ).execute()
+
+async def create_google_spreadsheet(title: str, folder_id: Optional[str] = None) -> dict:
+    """
+    Creates a new spreadsheet in Google Sheets and returns its URL and ID.
+    
+    Args:
+        title: The title of the new document.
+        
+    Returns:
+        A dictionary with 'url' and 'id' of the created document.
+    """
+    try:
+        workspace_config = _get_workspace_config()
+        owner_email = workspace_config.get("owner_email")
+        delegated_user_email = workspace_config.get("delegated_user_email")
+        default_folder_id = workspace_config.get("default_drive_folder_id")
+        default_folder_name = workspace_config.get("default_drive_folder_name")
+
+        client = get_sheets_client()
+        spreadsheet = _create_spreadsheet_with_retry(client, title)
+        
+        # Share logic
+        try:
+            spreadsheet.share(None, perm_type='anyone', role='writer')
+        except Exception as e:
+            logger.warning(f"Failed to share spreadsheet publicly: {e}")
+
+        ownership_note = None
+        location_note = None
+
+        try:
+            creds = get_credentials()
+            resolved_folder_id = _resolve_folder_id(folder_id or default_folder_id, default_folder_name, creds)
+            if resolved_folder_id:
+                _move_file_to_folder(spreadsheet.id, resolved_folder_id, creds)
+                location_note = "Movido a la carpeta destino."
+            elif folder_id or default_folder_id or default_folder_name:
+                location_note = "No se encontró la carpeta destino."
+        except Exception as e:
+            logger.error(f"Move to folder failed: {e}")
+            location_note = "No se pudo mover a la carpeta destino."
+
+        if owner_email:
+            try:
+                creds = get_credentials()
+                _transfer_ownership(spreadsheet.id, owner_email, creds)
+                ownership_note = f"Propiedad transferida a {owner_email}."
+            except HttpError as e:
+                logger.error(f"Ownership transfer failed: {e}")
+                ownership_note = f"No se pudo transferir la propiedad a {owner_email}."
+            except Exception as e:
+                logger.error(f"Ownership transfer error: {e}")
+                ownership_note = f"No se pudo transferir la propiedad a {owner_email}."
+        elif delegated_user_email:
+            ownership_note = f"Creado bajo la cuenta delegada {delegated_user_email}."
+
+        notes = " ".join([n for n in [ownership_note, location_note] if n])
+        return {
+            "url": spreadsheet.url,
+            "id": spreadsheet.id,
+            "message": (
+                f"Hoja creada. [Ver Google Sheet]({spreadsheet.url}). Nota: Se ha compartido como 'cualquiera con el enlace' para que puedas verla."
+                if not notes
+                else f"Hoja creada. [Ver Google Sheet]({spreadsheet.url}). {notes}"
+            )
+        }
+    except FileNotFoundError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        error_str = str(e).lower()
+        if "quota" in error_str or "storage" in error_str:
+            return {"error": "Fallo al crear hoja de cálculo: cuota de Drive excedida para la cuenta propietaria."}
+        logger.exception("Error creating spreadsheet")
+        return {"error": f"Fallo al crear hoja de cálculo: {str(e)}"}
+
+
+async def list_spreadsheet_sheets(spreadsheet_id: str) -> str:
+    """
+    Lists all worksheets (sheets) in a given Google Spreadsheet.
+    
+    This is useful to discover existing sheets before inserting data.
+    
+    Args:
+        spreadsheet_id: The document ID (can be obtained from the spreadsheet URL).
+        
+    Returns:
+        A string with the list of sheet names and their indices.
+    """
+    try:
+        client = get_sheets_client()
+        sh = _open_sheet_with_retry(client, spreadsheet_id)
+        
+        worksheets = sh.worksheets()
+        if not worksheets:
+            return "No worksheets found in this spreadsheet."
+        
+        result = f"Sheets in '{sh.title}':\n"
+        for idx, ws in enumerate(worksheets):
+            result += f"- [{idx}] {ws.title} (ID: {ws.id})\n"
+        
+        return result
+    except Exception as e:
+        logger.exception("Error listing spreadsheet sheets")
+        return f"Error listing sheets: {str(e)}"
+
+
+async def read_sheet_data(spreadsheet_id: str, range_name: str = "") -> str:
+    """
+    Reads data from a Google Spreadsheet.
+    
+    This is useful to analyze existing data before creating summaries or inserting new data.
+    
+    Args:
+        spreadsheet_id: The document ID (can be obtained from the spreadsheet URL).
+        range_name: The range to read (e.g., 'Sheet1!A1:Z100' or just 'Sheet1' for entire sheet).
+                   If empty, reads the entire first sheet.
+        
+    Returns:
+        A string with the data in a readable format, or an error message.
+    """
+    try:
+        client = get_sheets_client()
+        sh = _open_sheet_with_retry(client, spreadsheet_id)
+        
+        if '!' in range_name:
+            # Specific range provided
+            sheet_name, cell_range = range_name.split('!', 1)
+            worksheet = sh.worksheet(sheet_name)
+            data = worksheet.get(cell_range)
+        elif range_name:
+            # Sheet name provided, read all data
+            worksheet = sh.worksheet(range_name)
+            data = worksheet.get_all_values()
+        else:
+            # Read from first sheet
+            worksheet = sh.get_worksheet(0)
+            data = worksheet.get_all_values()
+        
+        if not data:
+            return "No data found in the specified range."
+        
+        # Format as readable text
+        result = f"Data from '{range_name or worksheet.title}' ({len(data)} rows):\n"
+        for row in data[:50]:  # Limit to first 50 rows for readability
+            result += "| " + " | ".join(str(cell) for cell in row) + " |\n"
+        
+        if len(data) > 50:
+            result += f"\n... ({len(data) - 50} more rows)"
+        
+        return result
+    except gspread.WorksheetNotFound as e:
+        return f"Error: Sheet not found. {str(e)}"
+    except Exception as e:
+        logger.exception("Error reading sheet data")
+        return f"Error reading sheet: {str(e)}"
+
+async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[List[Union[str, int, float]]]) -> str:
+    """
+    Inserts or updates data in an existing spreadsheet.
+    
+    Args:
+        spreadsheet_id: The document ID (can be obtained from the URL).
+        range_name: The range (e.g. 'Sheet1!A1') or sheet name (e.g. 'Sheet1').
+        values: List of lists with data to insert [["cell1", "cell2"], ["row2cell1", "row2cell2"]].
+                IMPORTANT: Each cell must be a plain string, number, or boolean. Do NOT wrap values in dictionaries.
+        
+    Returns:
+        A confirmation or error message.
+    """
+    logger.info(f"update_sheet_data called: spreadsheet_id={spreadsheet_id}, range_name={range_name}, values_type={type(values)}, values_sample={str(values)[:200] if values else 'empty'}")
+    
+    try:
+        # Sanitize values to ensure they are plain strings/numbers, not dictionaries
+        # This fixes the "Invalid values[0][0]: struct_value" error when LLM passes {"value": "Foo"}
+        sanitized_values = []
+        for row in values:
+            sanitized_row = []
+            for cell in row:
+                if isinstance(cell, dict):
+                    # Handle common LLM mistakes: extract value from {"value": "Foo"} or {"text": "Foo"}
+                    extracted = cell.get("value") or cell.get("text") or cell.get("content") or str(cell)
+                    logger.warning(f"LLM passed dict instead of value, extracted: {extracted}")
+                    sanitized_row.append(extracted)
+                elif cell is None:
+                    sanitized_row.append("")
+                else:
+                    sanitized_row.append(str(cell))
+            sanitized_values.append(sanitized_row)
+        
+        logger.info(f"Sanitized values: {sanitized_values[:2]}")
+        
+        client = get_sheets_client()
+        sh = _open_sheet_with_retry(client, spreadsheet_id)
+        logger.info(f"Opened spreadsheet: {sh.title}")
+        
+        if '!' in range_name:
+            sheet_name, cell_range = range_name.split('!', 1)
+            try:
+                worksheet = sh.worksheet(sheet_name)
+                target_range = cell_range or "A1"
+                logger.info(f"Updating sheet: {sheet_name}, range: {target_range}")
+                _update_sheet_with_retry(worksheet, target_range, sanitized_values)
+            except gspread.WorksheetNotFound:
+                 return f"Error: No se encontró la hoja '{sheet_name}'."
+        else:
+            # Assume it's a sheet name or default range
+            try:
+                worksheet = sh.worksheet(range_name)
+                logger.info(f"Updating sheet (by name): {range_name}")
+                _update_sheet_with_retry(worksheet, 'A1', sanitized_values)
+            except gspread.WorksheetNotFound:
+                # Fallback to first sheet
+                logger.info("Sheet not found, falling back to first sheet")
+                worksheet = sh.get_worksheet(0)
+                _update_sheet_with_retry(worksheet, range_name, sanitized_values)
+
+        return f"Datos actualizados exitosamente en '{range_name}'."
+    except FileNotFoundError as e:
+        logger.error(f"FileNotFoundError in update_sheet_data: {e}")
+        return str(e)
+    except Exception as e:
+        logger.exception("Error updating sheet data")
+        return f"Error al actualizar datos: {str(e)}"
+
+async def get_google_oauth_authorization_url() -> str:
+    """
+    Generates and returns the OAuth2 authorization URL for Google Workspace.
+    Use this when you need to ask the user to authenticate.
+    """
+    try:
+        url = get_authorization_url(SCOPES)
+        return (
+            f"Autoriza aquí: [Abrir URL OAuth]({url})\n\n"
+            f"URL (copia y pega si el enlace no funciona): `{url}`\n\n"
+            "**INSTRUCCIONES:**\n"
+            "1. Haz clic en el enlace y autoriza la aplicación.\n"
+            "2. Al finalizar, serás redirigido automáticamente y la autenticación se completará sola.\n"
+            "3. **Si ves un error de 'No se puede conectar'** en `localhost:8080`, copia la URL de la barra de direcciones y pégala aquí usando `set_google_oauth_token` como respaldo."
+        )
+    except Exception as e:
+        return f"Error al generar URL OAuth: {str(e)}"
+
+async def set_google_oauth_token(auth_code: str) -> str:
+    """
+    Saves the OAuth2 token provided by the user after authorization.
+    Args:
+        auth_code: The verification code obtained from the authorization URL.
+    """
+    try:
+        # Limpieza básica por si el usuario pega la URL completa o tiene espacios
+        clean_code = auth_code.strip()
+        if "code=" in clean_code:
+            # Extraer solo el código si viene en formato URL
+            try:
+                from urllib.parse import parse_qs, urlparse
+                # Si es una URL completa
+                if "?" in clean_code:
+                    parsed = urlparse(clean_code)
+                    query = parse_qs(parsed.query)
+                    clean_code = query.get("code", [clean_code])[0]
+                else:
+                    # Si es solo el query string o parte de él
+                    # Hack simple: split por code= y tomar lo siguiente hasta & o final
+                    part = clean_code.split("code=")[1]
+                    clean_code = part.split("&")[0]
+            except Exception:
+                pass # Fallback to original input if parsing fails
+                
+        save_credentials_from_code(clean_code, SCOPES)
+        return "Token OAuth guardado correctamente. Ahora puedes usar las herramientas de Google Workspace (Drive, Calendar, Sheets)."
+    except Exception as e:
+        return f"Error al guardar token OAuth: {str(e)}"
+
+async def authorize_google_oauth_local_server() -> str:
+    """
+    DEPRECATED: Use the manual flow with get_google_oauth_authorization_url.
+    This function now only returns the URL to avoid blocking.
+    """
+    try:
+        return await get_google_oauth_authorization_url() + "\n\nNota: El modo de servidor local ha sido reemplazado por el flujo manual para asegurar que veas este mensaje. Por favor usa la URL de arriba y luego copia el código de autorización usando 'set_google_oauth_token'."
+    except Exception as e:
+        return f"Error al iniciar flujo OAuth: {str(e)}"
+
+tools = [
+    create_google_spreadsheet,
+    update_sheet_data,
+    list_spreadsheet_sheets,
+    read_sheet_data,
+    get_google_oauth_authorization_url,
+    set_google_oauth_token,
+    authorize_google_oauth_local_server
+]

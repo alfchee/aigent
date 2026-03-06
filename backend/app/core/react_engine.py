@@ -80,7 +80,8 @@ class ReActLoop:
         })
         
         # Start chat session
-        await self.agent.start_chat(session_id=self.session_id)
+        from app.core.runtime_context import get_session_id
+        await self.agent.ensure_session(session_id=get_session_id())
         
         current_prompt = initial_prompt
         final_response = None
@@ -284,7 +285,11 @@ class ReActLoop:
         if self.iterations >= self.max_iterations and termination_reason == "unknown":
             termination_reason = "max_iterations"
             self._log_trace(f"[MAX ITERATIONS] Reached limit of {self.max_iterations}")
-        
+            if not final_response:
+                # Try to construct a helpful message from the last tool result or trace
+                last_trace = self.reasoning_trace[-1] if self.reasoning_trace else "No trace available"
+                final_response = f"⚠️ No pude completar la tarea en {self.max_iterations} pasos. Último estado: {last_trace}"
+
         execution_time = time.time() - self.start_time
         
         # Emit completion event

@@ -18,7 +18,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/
 lib64/
 parts/
 sdist/
@@ -31,7 +31,21 @@ wheels/
 venv/
 ENV/
 scheduler.db
-backend/user_data/
+navibot.db
+backend/workspace_data/
+backend/app/core/credentials/
+backend/navi_memory_db/
+navi_memory_db/
+backend/logs/
+backend/app/settings/active_mcp.json
+backend/app/settings/scheduler_logs.jsonl
+backend/navi_memory_qdrant/
+backend/navi_memory_db/
+navi_memory_qdrant/
+workspace_data/
+logs/
+*.har
+docs/fetch_debugging.md
 
 # Node.js (Frontend)
 node_modules/
@@ -43,6 +57,7 @@ dist-ssr/
 .nitro/
 .cache/
 .vite-inspect/
+frontend/test-results/
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
@@ -57,3 +72,4 @@ pnpm-lock.yaml
 .gemini/
 brain/
 .trae/
+backend/navi_memory_qdrant/collection/mem0/storage.sqlite
