@@ -9,10 +9,10 @@ from langchain_core.utils.function_calling import convert_to_openai_function
 WORKERS = ["WebNavigator", "CalendarManager", "GeneralAssistant", "ImageGenerator"]
 
 WORKER_DESCRIPTIONS = {
-    "WebNavigator": "Realiza búsquedas en internet y navega por sitios web.",
-    "CalendarManager": "Gestiona el calendario, agenda eventos y consulta horarios.",
-    "GeneralAssistant": "Maneja charla general, preguntas simples, ejecución de código, gestión de archivos y memoria. Úsalo por defecto para interacciones generales.",
-    "ImageGenerator": "Genera imágenes a partir de descripciones."
+    "WebNavigator": "Performs web searches (internet) and navigates public websites for information. Use for: searching the web, browsing public websites, reading online articles.",
+    "CalendarManager": "Manages calendar, schedules events, and checks availability. Use for: creating calendar events, listing upcoming events, checking schedules.",
+    "GeneralAssistant": "Handles Google Drive, Google Sheets, file management, code execution, memory, and Telegram. Use for: searching Drive files, managing Google Sheets, reading/writing files, running code, saving memories, sending Telegram messages. This is the DEFAULT for most tasks including Google Workspace operations.",
+    "ImageGenerator": "Generates images from text descriptions. Use for: creating images, artwork, visual content."
 }
 
 # Definir el esquema de salida del Supervisor
@@ -20,13 +20,25 @@ class RouteResponse(TypedDict):
     next: Literal["WebNavigator", "CalendarManager", "GeneralAssistant", "ImageGenerator", "FINISH"]
 
 system_prompt = (
-    "Eres un supervisor encargado de gestionar una conversación entre los"
-    " siguientes trabajadores:\n{worker_desc}\n\n"
-    "Dada la solicitud del usuario, responde con el siguiente trabajador para actuar."
-    " Cada trabajador realizará una tarea y responderá con sus resultados y estado."
-    " SIEMPRE selecciona un trabajador si la solicitud del usuario requiere una respuesta o acción."
-    " Solo responde con FINISH si la tarea ya ha sido completada satisfactoriamente por un trabajador y no se requiere más interacción."
-    " Para saludos, preguntas generales o conversaciones, envía a GeneralAssistant."
+    "You are a supervisor responsible for managing a conversation between the following workers:\n{worker_desc}\n\n"
+    "CRITICAL INSTRUCTIONS - YOU MUST FOLLOW THESE RULES:\n"
+    "1. Analyze the LAST message in the conversation.\n"
+    "2. If the last message is a response from a worker to the user (contains readable text for the user), you MUST respond with 'FINISH' IMMEDIATELY.\n"
+    "3. If the user just spoke, select the most appropriate worker to respond.\n"
+    "4. If a worker needs help from another, select that other worker.\n"
+    "5. NEVER select the same worker again if they have already responded to the user.\n"
+    "6. If a worker has completed a task (executed tools, generated content, answered questions), you MUST return 'FINISH'.\n"
+    "7. For simple greetings ('Hello', 'Good morning') that have already been responded to, respond 'FINISH'.\n"
+    "8. IMPORTANT: The 'GeneralAssistant' worker handles general tasks. If it provided useful response, use 'FINISH'.\n\n"
+    "ROUTING RULES - FOLLOW THESE MANDATORY RULES:\n"
+    "- For GOOGLE DRIVE requests (find folder, search files, list files, create folders): use GeneralAssistant\n"
+    "- For GOOGLE SHEETS/SPREADSHEET requests: use GeneralAssistant\n"
+    "- For GOOGLE CALENDAR requests: use CalendarManager\n"
+    "- For INTERNET WEB SEARCH (not Drive): use WebNavigator\n"
+    "- For BROWSING PUBLIC WEBSITES: use WebNavigator\n"
+    "- For IMAGE GENERATION: use ImageGenerator\n"
+    "- For CODE EXECUTION, FILE MANAGEMENT, MEMORY, TELEGRAM: use GeneralAssistant\n"
+    "- Default for most tasks: GeneralAssistant\n"
 )
 
 options = ["FINISH"] + WORKERS
@@ -57,7 +69,7 @@ def create_supervisor_node(llm: ChatGoogleGenerativeAI, members: List[str], user
     # Build descriptions block
     worker_desc_block = ""
     for worker_name in members:
-        desc = WORKER_DESCRIPTIONS.get(worker_name, "Asistente genérico")
+        desc = WORKER_DESCRIPTIONS.get(worker_name, "Generic assistant")
         worker_desc_block += f"- {worker_name}: {desc}\n"
 
     prompt = ChatPromptTemplate.from_messages(
@@ -81,8 +93,8 @@ def create_supervisor_node(llm: ChatGoogleGenerativeAI, members: List[str], user
         | JsonOutputFunctionsParser()
     )
 
-    def supervisor_node(state: AgentState):
-        result = supervisor_chain.invoke(state)
+    async def supervisor_node(state: AgentState):
+        result = await supervisor_chain.ainvoke(state)
         return result
 
     return supervisor_node

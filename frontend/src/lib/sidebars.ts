@@ -5,7 +5,10 @@ export function sidebarWidthPx(state: SidebarState): number {
   return 250
 }
 
-export function normalizeSidebarState(value: unknown, fallback: SidebarState = 'normal'): SidebarState {
+export function normalizeSidebarState(
+  value: unknown,
+  fallback: SidebarState = 'normal',
+): SidebarState {
   if (value === 'collapsed' || value === 'normal') return value as SidebarState
   return fallback
 }

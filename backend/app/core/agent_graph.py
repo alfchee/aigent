@@ -13,6 +13,8 @@ from app.core.graph_state import AgentState
 from app.core.skill_loader import SkillLoader
 from app.core.supervisor import create_supervisor_node, WORKERS
 from app.core.model_orchestrator import ModelOrchestrator
+from app.core import prompt_cache
+from app.core.conversation_summarizer import node_summarizer, get_summarizer
 
 # Cargar variables de entorno
 load_dotenv()
@@ -20,45 +22,49 @@ load_dotenv()
 # Configurar logging
 logger = logging.getLogger(__name__)
 
-# Prompts de Sistema para cada Trabajador
+# System Prompts for each Worker
 WORKER_PROMPTS = {
     "WebNavigator": (
-        "Eres un especialista en navegación web. Tu objetivo es buscar información, "
-        "leer contenido de páginas y sintetizar respuestas precisas.\n"
-        "Instrucciones:\n"
-        "- Utiliza 'search' para encontrar fuentes relevantes.\n"
-        "- Utiliza 'browser' para navegar y extraer contenido detallado cuando sea necesario.\n"
-        "- Si la información es extensa, resume los puntos clave.\n"
-        "- Cita las fuentes (URLs) de donde obtuviste la información."
+        "You are a web navigation specialist. Your goal is to search for information on the public internet, "
+        "browse websites, and synthesize accurate responses.\n"
+        "Instructions:\n"
+        "- Use 'search_brave' or 'search_duckduckgo_fallback' to find relevant sources on the web.\n"
+        "- Use 'navigate', 'get_page_content', 'screenshot' to browse and extract detailed content from public websites.\n"
+        "- If the information is extensive, summarize the key points.\n"
+        "- Cite the sources (URLs) where you got the information.\n"
+        "IMPORTANT: Do NOT use these tools for Google Drive or Google Sheets - those are handled by GeneralAssistant."
     ),
     "CalendarManager": (
-        "Eres el gestor de calendario y agenda. Tu responsabilidad es organizar el tiempo del usuario.\n"
-        "Instrucciones:\n"
-        "- Siempre verifica la fecha y hora actual antes de agendar o consultar eventos relativos (como 'mañana').\n"
-        "- Usa formato ISO 8601 (YYYY-MM-DDTHH:MM:SS) para las fechas.\n"
-        "- Al listar eventos, sé claro y ordenado.\n"
-        "- Si hay conflictos de horario, avisa al usuario."
+        "You are a calendar and schedule manager. Your responsibility is to organize the user's time.\n"
+        "Instructions:\n"
+        "- Always verify the current date and time before scheduling or checking events relative to dates (like 'tomorrow').\n"
+        "- Use ISO 8601 format (YYYY-MM-DDTHH:MM:SS) for dates.\n"
+        "- When listing events, be clear and organized.\n"
+        "- If there are scheduling conflicts, notify the user."
     ),
     "GeneralAssistant": (
-        "Eres un asistente general versátil. Te encargas de tareas del sistema, ejecución de código, "
-        "gestión de archivos y memoria.\n"
-        "Instrucciones:\n"
-        "- Si te piden ejecutar código, usa las herramientas de 'code_execution'.\n"
-        "- Para manipular archivos, usa las herramientas de 'workspace'.\n"
-        "- Si necesitas recordar algo para el futuro, usa las herramientas de 'memory'.\n"
-        "- Sé proactivo y busca la solución más eficiente."
+        "You are a versatile general assistant. You handle Google Workspace, file management, code execution, memory, and Telegram.\n"
+        "Instructions:\n"
+        "- GOOGLE DRIVE: Use 'search_drive', 'list_drive_files', 'download_file_from_drive', 'create_drive_folder', 'create_drive_file', 'delete_drive_file', 'copy_drive_file', 'get_drive_file_info', 'share_drive_file' to manage Drive files.\n"
+        "- GOOGLE SHEETS: Use 'create_google_spreadsheet', 'update_sheet_data', 'list_spreadsheet_sheets', 'read_sheet_data' for spreadsheet operations. FIRST use 'list_spreadsheet_sheets' to discover existing sheets, then use 'read_sheet_data' to analyze data before creating summaries.\n"
+        "- CODE EXECUTION: Use 'execute_python' to run code.\n"
+        "- FILE MANAGEMENT: Use 'workspace' tools to manage session files.\n"
+        "- MEMORY: Use 'recall_facts', 'save_fact' to store/retrieve long-term memory.\n"
+        "- TELEGRAM: Use 'send_telegram_message' to send messages.\n"
+        "- Be proactive and seek the most efficient solution.\n"
+        "IMPORTANT: For web searches (internet), use WebNavigator. For calendar, use CalendarManager."
     ),
     "ImageGenerator": (
-        "Eres un especialista en generación de imágenes a partir de descripciones textuales.\n"
-        "Instrucciones:\n"
-        "- Usa la herramienta 'generate_image' para crear imágenes.\n"
-        "- Si faltan detalles (estilo, relación de aspecto), pide aclaración.\n"
-        "- Devuelve el resultado indicando la ruta del archivo generado."
+        "You are a specialist in generating images from textual descriptions.\n"
+        "Instructions:\n"
+        "- Use the 'generate_image' tool to create images.\n"
+        "- If details are missing (style, aspect ratio), ask for clarification.\n"
+        "- Return the result indicating the path of the generated file."
     )
 }
 
 class AgentGraph:
-    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None, user_facts: str = ""):
+    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None, user_facts: str = "", checkpointer = None):
         """
         Inicializa el Grafo Multi-Agente con Supervisor.
         """
@@ -66,6 +72,7 @@ class AgentGraph:
         self.api_key = os.getenv("GOOGLE_API_KEY")
         self.extra_tools = extra_tools or []
         self.user_facts = user_facts
+        self.checkpointer = checkpointer
         self.orchestrator = ModelOrchestrator()
         
         if not self.api_key:
@@ -88,7 +95,7 @@ class AgentGraph:
         self.worker_skills = {
             "WebNavigator": ["browser", "search", "reader"],
             "CalendarManager": ["calendar", "scheduler"],
-            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "memory", "telegram", "extra_tools"],
+            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "google_workspace_manager", "memory", "telegram", "extra_tools"],
             "ImageGenerator": ["image_generation"]
             # GeneralAssistant se lleva el resto o lo que definamos
         }
@@ -96,9 +103,13 @@ class AgentGraph:
         # 4. Construir el Grafo
         self.graph = self._build_graph()
 
-    def _get_llm(self, role_name: str) -> ChatGoogleGenerativeAI:
+    def _get_llm(self, role_name: str, cached_content: str = None) -> ChatGoogleGenerativeAI:
         """
         Returns a configured LLM instance for a specific role/worker.
+        
+        Args:
+            role_name: The role/worker name
+            cached_content: Optional cached content resource name for prompt caching
         """
         # Map worker names to config roles
         config_role = "supervisor"
@@ -122,12 +133,19 @@ class AgentGraph:
         
         final_model = self.model_name if role_name == "supervisor" else self.orchestrator.get_model_for_role(config_role)
         
-        return ChatGoogleGenerativeAI(
-            model=final_model,
-            google_api_key=self.api_key,
-            temperature=0,
-            convert_system_message_to_human=True
-        )
+        # Build LLM kwargs
+        llm_kwargs = {
+            "model": final_model,
+            "google_api_key": self.api_key,
+            "temperature": 0,
+            "convert_system_message_to_human": True
+        }
+        
+        # Add cached content if available
+        if cached_content:
+            llm_kwargs["cached_content"] = cached_content
+        
+        return ChatGoogleGenerativeAI(**llm_kwargs)
 
     def _create_agent_node(self, agent_name: str, tools: list):
         """Helper para crear un nodo agente."""
@@ -167,7 +185,42 @@ class AgentGraph:
         # Use specific LLM for supervisor
         supervisor_llm = self._get_llm("supervisor")
         supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts=self.user_facts)
-        workflow.add_node("supervisor", supervisor_node)
+        
+        # Logging wrapper for Supervisor node
+        supervisor_call_count = {}  # Track calls per user message
+        
+        async def logging_supervisor_node(state: AgentState):
+            import logging
+            logger = logging.getLogger("navibot.graph")
+            
+            # Get or initialize the supervisor call count for this thread
+            messages = state.get("messages", [])
+            user_msg_count = sum(1 for m in messages if hasattr(m, "type") and m.type == "human")
+            
+            # Get the last message to check if it's from a worker
+            last_msg = state.get("messages", [])[-1] if state.get("messages") else None
+            is_worker_response = hasattr(last_msg, "name") and last_msg.name in WORKERS
+            
+            # Force FINISH if this is the second supervisor call (worker already responded)
+            if user_msg_count > 0 and is_worker_response:
+                logger.info("[Graph] Supervisor forcing FINISH - worker already responded")
+                return {"next": "FINISH"}
+            
+            logger.info(f"[Graph] Supervisor Input State: {state.get('messages')[-1] if state.get('messages') else 'Empty'}")
+            
+            result = await supervisor_node(state)
+            
+            # Log routing decision
+            if isinstance(result, dict) and "next" in result:
+                logger.info(f"Supervisor decided to call: -{result['next']} with arguments: {state.get('messages', [])[-1].content[:200] if state.get('messages') else 'Empty'}")
+            elif hasattr(result, "next"):
+                logger.info(f"Supervisor decided to call: -{result.next} with arguments: {state.get('messages', [])[-1].content[:200] if state.get('messages') else 'Empty'}")
+            else:
+                logger.info(f"Supervisor Result: {result}")
+                
+            return result
+            
+        workflow.add_node("supervisor", logging_supervisor_node)
 
         # 2. Crear Nodos de Trabajadores
         for worker_name in WORKERS:
@@ -190,21 +243,79 @@ class AgentGraph:
             # Lo envolvemos en una función nodo.
             
             # Obtener prompt del sistema
-            system_prompt = WORKER_PROMPTS.get(worker_name, "Eres un asistente útil.")
+            system_prompt = WORKER_PROMPTS.get(worker_name, "You are a helpful assistant.")
             
             # Inyectar hechos del usuario si es el asistente general
             if worker_name == "GeneralAssistant" and self.user_facts:
-                system_prompt += f"\n\nHechos sobre el usuario:\n{self.user_facts}"
+                system_prompt += f"\n\nFacts about the user:\n{self.user_facts}"
             
-            # Use specific LLM for this worker
-            worker_llm = self._get_llm(worker_name)
-            worker_agent = create_react_agent(worker_llm, worker_tools, prompt=system_prompt)
+            # Try to get or create cached content for this worker
+            cached_content = None
+            tools_schema = []
+            
+            # Convert tools to schema for caching
+            for tool in worker_tools:
+                try:
+                    name = tool.name if hasattr(tool, 'name') else tool.__name__
+                    description = tool.description if hasattr(tool, 'description') else ""
+                    args_schema = {}
+                    if hasattr(tool, 'args_schema') and tool.args_schema:
+                        try:
+                            if hasattr(tool.args_schema, 'model_json_schema'):
+                                args_schema = tool.args_schema.model_json_schema()
+                            elif hasattr(tool.args_schema, 'schema'):
+                                args_schema = tool.args_schema.schema()
+                        except Exception:
+                            pass
+                    tools_schema.append({
+                        "name": name,
+                        "description": description,
+                        "parameters": args_schema
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to convert tool to schema: {e}")
+            
+            # Try to get or create cache for this worker
+            if tools_schema and system_prompt:
+                try:
+                    cache_manager = prompt_cache.get_cache_manager()
+                    cached_content = cache_manager.get_or_create_worker_cache(
+                        worker_name=worker_name,
+                        system_instruction=system_prompt,
+                        tools_schema=tools_schema
+                    )
+                    if cached_content:
+                        logger.info(f"Using cached content for worker {worker_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to get/create cache for worker {worker_name}: {e}")
+            
+            # Use specific LLM for this worker (with or without cached content)
+            worker_llm = self._get_llm(worker_name, cached_content=cached_content)
+            
+            # When using cached content, we don't need to pass system prompt again
+            # because it's already in the cache
+            if cached_content:
+                worker_agent = create_react_agent(worker_llm, worker_tools, prompt=None)
+            else:
+                worker_agent = create_react_agent(worker_llm, worker_tools, prompt=system_prompt)
             
             # Definir la función del nodo
             # Usamos functools.partial para capturar worker_agent en el closure correctamente
             async def node_func(state: AgentState, agent=worker_agent, name=worker_name):
+                import logging
+                logger = logging.getLogger(f"navibot.worker.{name}")
+                
+                # Log entry
+                last_msg = state["messages"][-1]
+                logger.info(f"[Graph Worker:{name}] Processing: {last_msg.content[:100]}...")
+                
                 # Invocar al agente con el estado actual
                 result = await agent.ainvoke(state)
+                
+                # Log output
+                last_response = result["messages"][-1]
+                logger.info(f"[Graph Worker:{name}] Completed. Response: {last_response.content[:100]}...")
+                
                 # Devolver el último mensaje generado por el agente
                 return {"messages": [
                     HumanMessage(content=result["messages"][-1].content, name=name)
@@ -213,8 +324,11 @@ class AgentGraph:
             workflow.add_node(worker_name, node_func)
 
         # 3. Definir Flujo (Aristas)
-        # El punto de entrada es el supervisor
-        workflow.add_edge(START, "supervisor")
+        # El punto de entrada es el summarizer (comprime historial si es muy largo)
+        # Luego va al supervisor para procesar
+        workflow.add_node("summarizer", node_summarizer)
+        workflow.add_edge(START, "summarizer")
+        workflow.add_edge("summarizer", "supervisor")
 
         # El supervisor decide a quién ir
         conditional_map = {k: k for k in WORKERS}
@@ -230,7 +344,7 @@ class AgentGraph:
         for worker_name in WORKERS:
             workflow.add_edge(worker_name, "supervisor")
 
-        return workflow.compile()
+        return workflow.compile(checkpointer=self.checkpointer)
 
     def get_runnable(self):
         return self.graph

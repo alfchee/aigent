@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -15,6 +16,7 @@ from app.core.persistence import load_chat_history, save_chat_message
 from app.core.persistence_wrapper import wrap_tool
 from app.core.mcp_client import McpManager
 from app.core.agent_graph import AgentGraph
+from app.core import prompt_cache
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -50,14 +52,14 @@ def _truncate_text(value: str, limit: int) -> str:
     return value[:limit] + "...[truncated]"
 
 def _prepare_tool_response(result: Any, limit: int) -> dict:
-    if isinstance(result, dict):
-        try:
+    try:
+        if isinstance(result, dict):
             payload = json.dumps(result, ensure_ascii=False)
-        except Exception:
-            payload = str(result)
-        if len(payload) <= limit:
-            return result
-        return {"result": _truncate_text(payload, limit)}
+            if len(payload) <= limit:
+                return {"result": result}  # Return the dict, not the string
+            return {"result": _truncate_text(payload, limit)}
+    except Exception:
+        pass
     return {"result": _truncate_text(str(result), limit)}
 
 class HistoryItem:
@@ -226,40 +228,63 @@ class NaviBot:
             
             fields = {}
             if "properties" in schema:
+                required_fields = schema.get("required", [])
                 for prop_name, prop_def in schema["properties"].items():
                     prop_type = str
-                    # Simple type mapping
+                    
+                    # Robust type mapping
                     t = prop_def.get("type")
                     if t == "integer": prop_type = int
                     elif t == "number": prop_type = float
                     elif t == "boolean": prop_type = bool
+                    elif t == "object": prop_type = Dict[str, Any]
                     elif t == "array": 
-                        # Handle array items type for Pydantic/Gemini
                         items_def = prop_def.get("items", {})
                         it = items_def.get("type")
-                        item_type = str
-                        if it == "integer": item_type = int
+                        item_type = Any
+                        
+                        if it == "string": item_type = str
+                        elif it == "integer": item_type = int
                         elif it == "number": item_type = float
                         elif it == "boolean": item_type = bool
-                        elif it == "object": item_type = dict
-                        elif it == "array": item_type = list # Nested arrays might need recursion
+                        elif it == "object": item_type = Dict[str, Any]
+                        elif it == "array": item_type = List[Any]
+                        else:
+                            # Fallback to string for array items if type is unspecified
+                            # This prevents "items: missing field" error in Gemini
+                            logger.warning(f"MCP Tool {name}: Array property '{prop_name}' has unspecified item type. Defaulting to str.")
+                            item_type = str
                         
                         prop_type = List[item_type]
-                    elif t == "object": prop_type = dict
                     
+                    # Handle Optional fields
+                    is_required = prop_name in required_fields
                     description_field = prop_def.get("description", "")
-                    fields[prop_name] = (prop_type, Field(description=description_field))
+                    
+                    if is_required:
+                        fields[prop_name] = (prop_type, Field(..., description=description_field))
+                    else:
+                        fields[prop_name] = (Optional[prop_type], Field(None, description=description_field))
             
             # Create dynamic model
             # Note: This is basic and might fail for complex schemas
             try:
                 ArgsModel = create_model(f"{name}Schema", **fields)
                 
+                # Define a proper async wrapper function instead of functools.partial
+                # to satisfy Google GenAI / LangChain introspection requirements
+                async def _mcp_tool_wrapper(**kwargs):
+                    return await self._call_mcp_tool(name=name, **kwargs)
+                
+                # Set metadata for introspection
+                _mcp_tool_wrapper.__name__ = name
+                _mcp_tool_wrapper.__doc__ = description
+                
                 tool = StructuredTool(
                     name=name,
                     description=description,
                     func=None, # Sync func
-                    coroutine=functools.partial(self._call_mcp_tool, name=name), # Async func with captured name
+                    coroutine=_mcp_tool_wrapper, # Proper async wrapper
                     args_schema=ArgsModel
                 )
                 lc_tools.append(tool)
@@ -318,34 +343,100 @@ class NaviBot:
         # Ideally, SkillLoader should wrap tools or AgentGraph should.
         # For now, let's assume standard logging is enough or we rely on the graph's output.
         
-        agent_graph = AgentGraph(model_name=self.model_name, extra_tools=mcp_lc_tools, user_facts=user_facts_str)
-        graph = agent_graph.get_runnable()
+        # Setup Checkpointer
+        os.makedirs("workspace_data", exist_ok=True)
+        db_path = "workspace_data/checkpoints.db"
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
         
-        # 5. Execute Graph (Streaming)
-        inputs = {"messages": lc_messages}
-        final_state = inputs
-        
-        async for state in graph.astream(inputs, stream_mode="values"):
-            final_state = state
-            if state["messages"]:
-                last_msg = state["messages"][-1]
-                node_name = getattr(last_msg, 'name', 'unknown')
-                print(f"[Graph] State update. Last msg from: {node_name}")
-                if event_callback:
-                    await event_callback({"type": "step", "node": node_name, "content": last_msg.content[:50]})
+        async with AsyncSqliteSaver.from_conn_string(db_path) as memory:
+            agent_graph = AgentGraph(
+                model_name=self.model_name, 
+                extra_tools=mcp_lc_tools, 
+                user_facts=user_facts_str,
+                checkpointer=memory
+            )
+            graph = agent_graph.get_runnable()
+            
+            # 5. Execute Graph (Streaming)
+            config = {"configurable": {"thread_id": session_id}}
+            
+            # Logic to avoid duplicating history if resuming
+            checkpoint = await memory.aget(config)
+            
+            if checkpoint:
+                # We are resuming/continuing. 
+                # Only pass the NEW message.
+                inputs = {"messages": [HumanMessage(content=message)]}
+            else:
+                # First run for this thread_id
+                inputs = {"messages": lc_messages}
 
-        # 6. Extract New Messages and Save to DB
-        new_messages = final_state["messages"][len(lc_messages):] # Messages added during execution
+            # IMPORTANT: Calculate start index BEFORE execution to avoid issues if lc_messages is modified in place
+            # or if references change. We want to capture messages added AFTER this point.
+            start_index = len(lc_messages)
+            final_state = inputs
+            step_count = 0
+            async for state in graph.astream(inputs, config=config, stream_mode="values"):
+                final_state = state
+                step_count += 1
+                if state["messages"]:
+                    last_msg = state["messages"][-1]
+                    node_name = getattr(last_msg, "name", "unknown")
+                    if event_callback:
+                        await event_callback({"type": "step", "node": node_name, "content": last_msg.content[:50]})
+                if step_count >= max_iterations:
+                    logger.warning("Agent graph reached max_iterations; stopping execution early.")
+                    break
+
+            # 6. Extract New Messages and Save to DB
+            
+            # Logic for extracting new messages:
+            # - If inputs was just the new user message (resuming):
+            #   final_state["messages"] contains ALL history + new user msg + new AI msgs.
+            #   We want to capture the new user msg and everything after it.
+            #   However, lc_messages contained the FULL history from DB + new user msg.
+            #   So len(lc_messages) represents the count of messages we KNEW about before execution.
+            #   Wait, if we are resuming, 'inputs' is just [HumanMessage]. 
+            #   But 'final_state["messages"]' will contain the full history from checkpoint + inputs + new outputs.
+            #   The DB history (lc_messages) has: [Old1, Old2, ..., NewUserMsg].
+            #   The Checkpoint history (final_state) has: [Old1, Old2, ..., NewUserMsg, AIResponse...].
+            #   So slicing from len(lc_messages)-1 gives us [NewUserMsg, AIResponse...].
+            #   We want to save NewUserMsg and subsequent AI responses.
+            
+            # BUT, we are manually saving the user message below at line 426.
+            # If we include it in 'new_messages', we might process it twice in the loop?
+            # Let's check the loop.
+            
+            # The loop (line 432) iterates over 'new_messages'.
+            # Inside the loop:
+            # - AIMessage -> saved as 'model'
+            # - ToolMessage -> saved as 'function'
+            # - HumanMessage -> saved as 'model' (as text response from worker)
+            
+            # The User Message we injected is a HumanMessage.
+            # If we include it in 'new_messages', the loop will encounter it.
+            # It will hit the 'elif isinstance(msg, HumanMessage):' block.
+            # It will save it as 'model' response: "[user] content".
+            # This is WRONG. The user's input should not be saved as a model response.
+            
+            # Fix: We should exclude the user's input message from 'new_messages' loop processing
+            # because we save it explicitly as 'user' role at line 426.
+            
+            # So we should slice from len(lc_messages).
+            # lc_messages = [Old..., NewUserMsg] (length N)
+            # final_state = [Old..., NewUserMsg, AI...] (length N + M)
+            #   final_state[N:] gives [AI...].
         
-        # Save User Message first (it was added to inputs but not DB)
-        # Actually, main.py might expect us to NOT save it if it does it?
-        # main.py does NOT save the user message before calling send_message.
-        # It relies on history sync after call.
-        # So we should SAVE it here or ensure it's in the returned history?
-        # If we save it here, main.py sync will see it.
+        # start_index is now calculated BEFORE execution (line 373)
         
-        # Let's save everything generated, including the user message we processed.
-        # User message:
+        # Safety check: if for some reason final_state has fewer messages (shouldn't happen),
+        # prevent negative slicing or errors.
+        if start_index > len(final_state["messages"]):
+             start_index = len(final_state["messages"])
+             
+        new_messages = final_state["messages"][start_index:] 
+    
+        # Save User Message explicitly
         save_chat_message(session_id, "user", message)
         
         response_text = ""
@@ -389,11 +480,12 @@ class NaviBot:
                  # Sometimes agents return HumanMessage as "result from agent"
                  # We treat it as assistant text for the user?
                  # Or "model"?
-                 # In our graph, workers return HumanMessage with name=worker_name.
-                 # We should save this as model response text.
-                 content_obj = {"role": "model", "parts": [{"text": f"[{msg.name}] {msg.content}"}]}
-                 save_chat_message(session_id, "model", content_obj)
-                 response_text = msg.content
+                # We should save this as model response text.
+                content_obj = {"role": "model", "parts": [{"text": f"[{msg.name}] {msg.content}"}]}
+                save_chat_message(session_id, "model", content_obj)
+                response_text = msg.content
+    
+        logger.info(f"[Agent] Execution complete. Response len: {len(response_text)}. Content snippet: {response_text[:100]}...")
 
         return {
             "response": response_text,
@@ -603,11 +695,84 @@ class NaviBot:
             )
 
         # Create async chat session
-        self._chat_sessions[session_id] = self.client.aio.chats.create(
-            model=self.model_name,
-            config=tool_config,
-            history=history
-        )
+        # Try to use cached content for better performance and lower cost
+        cached_content_name = None
+        
+        # Convert tools to schema for caching
+        tools_schema = []
+        
+        # Add native tool schemas
+        for tool in native_tools:
+            try:
+                name = tool.name if hasattr(tool, 'name') else tool.__name__
+                description = tool.description if hasattr(tool, 'description') else ""
+                args_schema = {}
+                if hasattr(tool, 'args_schema') and tool.args_schema:
+                    try:
+                        if hasattr(tool.args_schema, 'model_json_schema'):
+                            args_schema = tool.args_schema.model_json_schema()
+                        elif hasattr(tool.args_schema, 'schema'):
+                            args_schema = tool.args_schema.schema()
+                    except Exception:
+                        pass
+                tools_schema.append({
+                    "name": name,
+                    "description": description,
+                    "parameters": args_schema
+                })
+            except Exception as e:
+                logger.warning(f"Failed to convert native tool to schema: {e}")
+        
+        # Add MCP tool schemas
+        for decl in mcp_declarations:
+            try:
+                tools_schema.append({
+                    "name": decl.name,
+                    "description": decl.description,
+                    "parameters": decl.parameters if hasattr(decl, 'parameters') else {}
+                })
+            except Exception as e:
+                logger.warning(f"Failed to convert MCP declaration to schema: {e}")
+        
+        # Try to get or create cache for GeneralAssistant
+        if tools_schema and system_instruction:
+            try:
+                cache_manager = prompt_cache.get_cache_manager()
+                cached_content_name = cache_manager.get_or_create_worker_cache(
+                    worker_name="GeneralAssistant",
+                    system_instruction=system_instruction,
+                    tools_schema=tools_schema
+                )
+                if cached_content_name:
+                    logger.info(f"Using cached content for session {session_id}: {cached_content_name}")
+            except Exception as e:
+                logger.warning(f"Failed to get/create cache: {e}")
+        
+        # Determine model to use
+        model_to_use = self.model_name
+        if model_to_use == "gemini-2.5-flash-image":
+            logger.warning(f"Model {model_to_use} does not support tools. Switching to gemini-flash-latest for agent execution.")
+            model_to_use = "gemini-flash-latest"
+
+        # Create chat with or without cached content
+        if cached_content_name:
+            self._chat_sessions[session_id] = self.client.aio.chats.create(
+                model=model_to_use,
+                config=types.GenerateContentConfig(
+                    tools=tools_payload,
+                    cached_content=cached_content_name,
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=True
+                    )
+                ),
+                history=history
+            )
+        else:
+            self._chat_sessions[session_id] = self.client.aio.chats.create(
+                model=model_to_use,
+                config=tool_config,
+                history=history
+            )
 
     async def send_message(self, message: str) -> str:
         from app.core.runtime_context import get_session_id
@@ -621,10 +786,35 @@ class NaviBot:
         # Initial message
         response = await chat.send_message(message)
         
+        # DEBUG: Log if response contains function calls
+        has_function_calls = False
+        if response and response.candidates and len(response.candidates) > 0:
+            first_candidate = response.candidates[0]
+            if first_candidate and first_candidate.content and first_candidate.content.parts:
+                for part in first_candidate.content.parts:
+                    if part.function_call:
+                        has_function_calls = True
+                        logger.info(f"[TOOL_CALL_DETECTED] Model requested function: {part.function_call.name}")
+        
+        if not has_function_calls:
+            logger.warning(f"[NO_TOOL_CALL] Model did not request any function calls. Message: {message[:100]}...")
+        
         # Manual ReAct Loop
         max_turns = 10
         for _ in range(max_turns):
-            if not response.candidates or not response.candidates[0].content.parts:
+            # Safe access to response.candidates and content.parts
+            if not response:
+                logger.warning("[TOOL_CALL] Response is None, breaking loop")
+                break
+            if not response.candidates:
+                break
+            if len(response.candidates) == 0:
+                break
+            if not response.candidates[0]:
+                break
+            if not response.candidates[0].content:
+                break
+            if not response.candidates[0].content.parts:
                 break
             
             function_calls = []
@@ -640,16 +830,19 @@ class NaviBot:
                 tool_name = fc.name
                 tool_args = fc.args
                 
+                logger.info(f"[TOOL_EXECUTION] Executing tool: {tool_name} with args: {tool_args}")
                 print(f"[Agent] Calling tool: {tool_name}")
                 
                 result = None
                 try:
                     if tool_name in self._session_tools:
                         func = self._session_tools[tool_name]
+                        print(f"[Agent] Executing tool: {tool_name} with args: {tool_args}")
                         if asyncio.iscoroutinefunction(func):
                             result = await func(**tool_args)
                         else:
                             result = func(**tool_args)
+                        print(f"[Agent] Tool result: {result[:200] if result else 'None'}...")
                     else:
                         result = f"Error: Tool '{tool_name}' not found."
                 except Exception as e:
@@ -668,23 +861,28 @@ class NaviBot:
                 )
             
             if tool_outputs:
+                print(f"[Agent] Sending {len(tool_outputs)} tool outputs to LLM...")
                 response = await chat.send_message(tool_outputs)
+                logger.info(f"[TOOL_CALL] LLM response after tool: candidates={len(response.candidates) if response and response.candidates else 0}")
             else:
                 break
 
         text = ""
         try:
-            text = response.text
+            if response:
+                text = response.text
         except Exception:
             # If response has no text (e.g. only function calls), accessing .text might raise or return None
             pass
             
-        if not text and response.candidates and response.candidates[0].content.parts:
+        if not text and response and response.candidates and len(response.candidates) > 0:
+            first_candidate = response.candidates[0]
             # Check for function calls in the final response (meaning we stopped before executing them)
-            parts = response.candidates[0].content.parts
-            fcs = [p.function_call for p in parts if p.function_call]
-            if fcs:
-                text = f"[System Note] I reached the maximum number of steps ({max_turns}) and had to stop. The last requested action was: {fcs[0].name}. Please try to refine your request."
+            if first_candidate and first_candidate.content and first_candidate.content.parts:
+                parts = first_candidate.content.parts
+                fcs = [p.function_call for p in parts if p.function_call]
+                if fcs:
+                    text = f"[System Note] I reached the maximum number of steps ({max_turns}) and had to stop. The last requested action was: {fcs[0].name}. Please try to refine your request."
         
         return text if text else "No response from agent (empty text)."
 
@@ -751,10 +949,28 @@ async def execute_agent_task(user_text: str, session_id: str, memory_user_id: st
         await agent.ensure_session(session_id)
         
         # Execute the task
-        result = await agent.send_message_with_graph(user_text)
+        try:
+            result = await agent.send_message_with_graph(user_text)
+        except Exception as agent_error:
+            logger.error(
+                "execute_agent_task_graph_error",
+                exc_info=True,
+                extra={
+                    "session_id": session_id,
+                    "error": str(agent_error),
+                    "error_type": type(agent_error).__name__,
+                },
+            )
+            raise
         
         # Return the response text
-        return result.get("response", "")
+        response = result.get("response", "")
+        if not response:
+            logger.warning(
+                "execute_agent_task_empty_response",
+                extra={"session_id": session_id},
+            )
+        return response
     finally:
         reset_session_id(session_token)
         reset_memory_user_id(memory_token)

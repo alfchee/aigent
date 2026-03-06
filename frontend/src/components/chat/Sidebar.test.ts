@@ -14,7 +14,7 @@ describe('Sidebar', () => {
 
     const wrapper = mount(Sidebar, {
       props: { activeSessionId: 's0', sidebarState: 'normal' },
-      global: { plugins: [pinia] }
+      global: { plugins: [pinia] },
     })
 
     expect(wrapper.text()).toContain('T1')
@@ -31,10 +31,12 @@ describe('Sidebar', () => {
 
     const wrapper = mount(Sidebar, {
       props: { activeSessionId: 's0', sidebarState: 'collapsed' },
-      global: { plugins: [pinia] }
+      global: { plugins: [pinia] },
     })
 
-    expect(wrapper.get('[data-testid="sessions-sidebar"]').attributes('style')).toContain('width: 50px')
+    expect(wrapper.get('[data-testid="sessions-sidebar"]').attributes('style')).toContain(
+      'width: 50px',
+    )
     expect(wrapper.text()).toContain('chat_bubble_outline')
   })
 
@@ -46,7 +48,7 @@ describe('Sidebar', () => {
 
     const wrapper = mount(Sidebar, {
       props: { activeSessionId: 's0', sidebarState: 'normal' },
-      global: { plugins: [pinia] }
+      global: { plugins: [pinia] },
     })
 
     await wrapper.find('button[title="Eliminar sesión"]').trigger('click')

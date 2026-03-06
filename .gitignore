@@ -41,6 +41,11 @@ backend/app/settings/active_mcp.json
 backend/app/settings/scheduler_logs.jsonl
 backend/navi_memory_qdrant/
 backend/navi_memory_db/
+navi_memory_qdrant/
+workspace_data/
+logs/
+*.har
+docs/fetch_debugging.md
 
 # Node.js (Frontend)
 node_modules/
@@ -67,3 +72,4 @@ pnpm-lock.yaml
 .gemini/
 brain/
 .trae/
+backend/navi_memory_qdrant/collection/mem0/storage.sqlite

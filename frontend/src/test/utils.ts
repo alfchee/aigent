@@ -5,4 +5,3 @@ export function initPinia() {
   setActivePinia(pinia)
   return pinia
 }
-

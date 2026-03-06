@@ -12,16 +12,16 @@ def execute_python(
     max_attempts: int = 3,
 ) -> str:
     """
-    Ejecuta código Python en un entorno seguro y aislado.
+    Executes Python code in a secure and isolated environment.
     
     Args:
-        code: El código Python a ejecutar.
-        timeout_seconds: Tiempo máximo de ejecución.
-        auto_correct: Si es True, intenta corregir errores comunes.
-        max_attempts: Número máximo de intentos de corrección.
+        code: The Python code to execute.
+        timeout_seconds: Maximum execution time.
+        auto_correct: If True, attempts to fix common errors.
+        max_attempts: Maximum number of correction attempts.
         
     Returns:
-        JSON string con el resultado de la ejecución (stdout, stderr, created_files).
+        JSON string with the execution result (stdout, stderr, created_files).
     """
     try:
         session_id = get_session_id()

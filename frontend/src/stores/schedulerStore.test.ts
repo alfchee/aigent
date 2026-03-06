@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useSchedulerStore } from './schedulerStore'
 
 vi.mock('../lib/api', () => ({
-  fetchJson: vi.fn()
+  fetchJson: vi.fn(),
 }))
 
 const jobsPayload = [
@@ -18,8 +18,8 @@ const jobsPayload = [
     next_run_time: null,
     last_run_time: null,
     trigger: { type: 'interval', seconds: 60 },
-    paused: false
-  }
+    paused: false,
+  },
 ]
 
 const logsPayload = [
@@ -34,8 +34,8 @@ const logsPayload = [
     error: '',
     started_at: '2026-02-13T23:00:00Z',
     finished_at: '2026-02-13T23:00:02Z',
-    duration_seconds: 2
-  }
+    duration_seconds: 2,
+  },
 ]
 
 describe('scheduler store', () => {

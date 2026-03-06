@@ -59,7 +59,7 @@ export const useArtifactsStore = defineStore('artifacts', {
     error: null as string | null,
     unreadCount: 0 as number,
     toasts: [] as Toast[],
-    _eventSource: null as EventSource | null
+    _eventSource: null as EventSource | null,
   }),
   actions: {
     setSessionId(sessionId: string) {
@@ -82,7 +82,9 @@ export const useArtifactsStore = defineStore('artifacts', {
       try {
         const targetId = this.viewSessionId || this.sessionId
         const params = this.viewAllowArchived ? '?allow_archived=true' : ''
-        const data = await fetchJson<ArtifactListResponse>(`/api/files/${encodeURIComponent(targetId)}${params}`)
+        const data = await fetchJson<ArtifactListResponse>(
+          `/api/files/${encodeURIComponent(targetId)}${params}`,
+        )
         this.files = data.files
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e)
@@ -95,7 +97,7 @@ export const useArtifactsStore = defineStore('artifacts', {
         const targetId = this.viewSessionId || this.sessionId
         const params = this.viewAllowArchived ? '?allow_archived=true' : ''
         const data = await fetchJson<{ session_id: string; items: ArtifactTrashEntry[] }>(
-          `/api/artifacts/trash?session_id=${encodeURIComponent(targetId)}${params}`
+          `/api/artifacts/trash?session_id=${encodeURIComponent(targetId)}${params}`,
         )
         this.trash = data.items
       } catch (e) {
@@ -110,7 +112,7 @@ export const useArtifactsStore = defineStore('artifacts', {
         if (this.viewAllowArchived) params.set('allow_archived', 'true')
         params.set('limit', String(limit))
         const data = await fetchJson<{ session_id: string; items: ArtifactAuditEntry[] }>(
-          `/api/artifacts/audit?${params.toString()}`
+          `/api/artifacts/audit?${params.toString()}`,
         )
         this.audit = data.items
       } catch (e) {
@@ -123,7 +125,7 @@ export const useArtifactsStore = defineStore('artifacts', {
         path,
         reason: reason || null,
         actor: 'user',
-        allow_archived: this.viewAllowArchived
+        allow_archived: this.viewAllowArchived,
       }
       const data = await fetchJson<{
         trash_id: string
@@ -134,7 +136,7 @@ export const useArtifactsStore = defineStore('artifacts', {
       }>('/api/artifacts/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       })
       await Promise.all([this.fetchArtifacts(), this.fetchTrash(), this.fetchAudit(20)])
       return data
@@ -144,15 +146,15 @@ export const useArtifactsStore = defineStore('artifacts', {
         session_id: this.viewSessionId || this.sessionId,
         trash_id: trashId,
         actor: 'user',
-        allow_archived: this.viewAllowArchived
+        allow_archived: this.viewAllowArchived,
       }
       const data = await fetchJson<{ path: string; size_bytes: number; restored_at: string }>(
         '/api/artifacts/restore',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        }
+          body: JSON.stringify(payload),
+        },
       )
       await Promise.all([this.fetchArtifacts(), this.fetchTrash(), this.fetchAudit(20)])
       return data
@@ -222,6 +224,6 @@ export const useArtifactsStore = defineStore('artifacts', {
       if (kb < 1024) return `${kb.toFixed(1)} KB`
       const mb = kb / 1024
       return `${mb.toFixed(1)} MB`
-    }
-  }
+    },
+  },
 })

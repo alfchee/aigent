@@ -38,10 +38,11 @@ const highlighted = computed(() => {
 </script>
 
 <template>
-  <pre class="text-sm overflow-auto border border-slate-200 rounded bg-white p-3"><code class="hljs" v-html="highlighted" /></pre>
+  <pre
+    class="text-sm overflow-auto border border-slate-200 rounded bg-white p-3"
+  ><code class="hljs" v-html="highlighted" /></pre>
 </template>
 
 <style>
 @import url('highlight.js/styles/github.css');
 </style>
-

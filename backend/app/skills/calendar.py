@@ -28,8 +28,8 @@ def get_calendar_service():
 @tool
 async def list_upcoming_events(max_results: int = 5):
     """
-    Lista los próximos eventos de tu calendario principal.
-    Útil para responder: '¿Qué tengo que hacer hoy?'
+    Lists the upcoming events from your primary calendar.
+    Useful for answering: 'What do I have to do today?'
     """
     try:
         service = get_calendar_service()
@@ -70,9 +70,9 @@ async def list_upcoming_events(max_results: int = 5):
 @tool
 async def create_calendar_event(summary: str, start_iso: str, end_iso: str, description: str = ""):
     """
-    Crea un evento en el calendario.
-    IMPORTANTE: El Agente debe generar las fechas en formato ISO 8601
-    (Ej: '2023-10-27T10:00:00')
+    Creates an event in the calendar.
+    IMPORTANT: The Agent must generate dates in ISO 8601 format
+    (e.g: '2023-10-27T10:00:00')
     """
     try:
         service = get_calendar_service()
@@ -122,16 +122,16 @@ async def update_calendar_event(
     attendees: Optional[List[str]] = None
 ) -> str:
     """
-    Actualiza un evento existente en el calendario.
+    Updates an existing event in the calendar.
     
     Args:
-        event_id: ID del evento a actualizar.
-        summary: Nuevo título (opcional).
-        description: Nueva descripción (opcional).
-        start_iso: Nueva fecha de inicio en ISO 8601 (opcional).
-        end_iso: Nueva fecha de fin en ISO 8601 (opcional).
-        location: Nueva ubicación (opcional).
-        attendees: Lista de emails de asistentes (opcional, reemplaza la lista anterior).
+        event_id: ID of the event to update.
+        summary: New title (optional).
+        description: New description (optional).
+        start_iso: New start date in ISO 8601 (optional).
+        end_iso: New end date in ISO 8601 (optional).
+        location: New location (optional).
+        attendees: List of attendee emails (optional, replaces previous list).
     """
     try:
         service = get_calendar_service()
@@ -191,10 +191,10 @@ async def update_calendar_event(
 @tool
 async def delete_calendar_event(event_id: str) -> str:
     """
-    Elimina un evento del calendario.
+    Deletes an event from the calendar.
     
     Args:
-        event_id: ID del evento a eliminar.
+        event_id: ID of the event to delete.
     """
     try:
         service = get_calendar_service()

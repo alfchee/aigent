@@ -5,12 +5,11 @@ export default defineConfig({
   timeout: 60_000,
   use: {
     baseURL: 'http://localhost:5173',
-    trace: 'on-first-retry'
+    trace: 'on-first-retry',
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'firefox', use: { browserName: 'firefox' } },
-    { name: 'webkit', use: { browserName: 'webkit' } }
-  ]
+    { name: 'webkit', use: { browserName: 'webkit' } },
+  ],
 })
-

@@ -9,15 +9,15 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
-    exclude: ['e2e/**', 'node_modules/**']
+    exclude: ['e2e/**', 'node_modules/**'],
   },
   server: {
     proxy: {
       '/api': {
         target: 'http://localhost:8231',
         changeOrigin: true,
-        rewrite: (path: string) => path.replace(/^\/api/, '/api')
-      }
-    }
-  }
+        rewrite: (path: string) => path.replace(/^\/api/, '/api'),
+      },
+    },
+  },
 })

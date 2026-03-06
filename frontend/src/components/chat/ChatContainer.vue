@@ -40,10 +40,13 @@ const modelOptions = computed(() => {
   return options
 })
 const availableModelMap = computed(() => {
-  return modelSettings.availableModels.reduce<Record<string, { display_name?: string }>>((acc, model) => {
-    acc[model.id] = model
-    return acc
-  }, {})
+  return modelSettings.availableModels.reduce<Record<string, { display_name?: string }>>(
+    (acc, model) => {
+      acc[model.id] = model
+      return acc
+    },
+    {},
+  )
 })
 
 const scrollRef = ref<HTMLElement | null>(null)
@@ -69,14 +72,14 @@ const MODEL_LABELS: Record<string, string> = {
   'gemini-3-flash-preview': 'Fast (Gemini 3 Flash Preview)',
   'gemini-flash-latest': 'Fast (Gemini Flash Latest)',
   'gemini-3-pro-preview': 'Pro (Gemini 3 Pro Preview)',
-  'gemini-2.5-pro': 'Pro (Gemini 2.5 Pro)'
+  'gemini-2.5-pro': 'Pro (Gemini 2.5 Pro)',
 }
 
 const MODEL_ICONS: Record<string, string> = {
   'gemini-3-flash-preview': '⚡',
   'gemini-flash-latest': '⚡',
   'gemini-3-pro-preview': '🧠',
-  'gemini-2.5-pro': '🧠'
+  'gemini-2.5-pro': '🧠',
 }
 
 function normalizeModelLabel(label: string) {
@@ -120,7 +123,7 @@ watch(
   async (sid) => {
     await syncModelForSession(sid)
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 watch(
@@ -132,7 +135,7 @@ watch(
     if (!sessionModel && modelSettings.currentModel) {
       selectedModel.value = modelSettings.currentModel
     }
-  }
+  },
 )
 
 watch(
@@ -142,9 +145,10 @@ watch(
     const sid = artifacts.sessionId || 'default'
     try {
       await modelSettings.setSessionModel(sid, next)
-    } catch {
+    } catch (error) {
+      void error
     }
-  }
+  },
 )
 
 watch(
@@ -152,13 +156,16 @@ watch(
   async () => {
     await nextTick()
     scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight })
-  }
+  },
 )
 </script>
 
 <template>
   <div class="h-full flex flex-col bg-slate-50 overflow-hidden">
-    <div ref="scrollRef" class="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 flex flex-col items-center bg-slate-50/50 bg-pattern">
+    <div
+      ref="scrollRef"
+      class="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 flex flex-col items-center bg-slate-50/50 bg-pattern"
+    >
       <div class="w-full max-w-3xl space-y-6">
         <div class="flex items-center justify-center">
           <button
@@ -178,17 +185,26 @@ watch(
         <div
           v-for="(msg, index) in messages"
           :key="msg.id ?? index"
-          :class="['flex w-full animate-in fade-in slide-in-from-bottom-2 duration-300', msg.role === 'user' ? 'justify-end' : 'justify-start']"
+          :class="[
+            'flex w-full animate-in fade-in slide-in-from-bottom-2 duration-300',
+            msg.role === 'user' ? 'justify-end' : 'justify-start',
+          ]"
         >
           <ChatMessage :role="msg.role" :content="msg.content" />
         </div>
 
         <div v-if="isLoading" class="flex justify-start animate-pulse">
-          <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-md flex items-center gap-3">
+          <div
+            class="bg-white p-4 rounded-2xl border border-slate-100 shadow-md flex items-center gap-3"
+          >
             <div class="flex gap-1">
               <span class="w-2 h-2 bg-sky-400 rounded-full animate-bounce"></span>
-              <span class="w-2 h-2 bg-sky-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-              <span class="w-2 h-2 bg-sky-400 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+              <span
+                class="w-2 h-2 bg-sky-400 rounded-full animate-bounce [animation-delay:0.2s]"
+              ></span>
+              <span
+                class="w-2 h-2 bg-sky-400 rounded-full animate-bounce [animation-delay:0.4s]"
+              ></span>
             </div>
             <span class="text-xs text-slate-500 font-medium">Pensando...</span>
           </div>
@@ -219,11 +235,16 @@ watch(
                   :disabled="isLoading || !modelSettings.models.length"
                   title="Modelo"
                 >
-                  <option v-for="m in modelOptions" :key="m" :value="m">{{ modelOptionLabel(m) }}</option>
+                  <option v-for="m in modelOptions" :key="m" :value="m">
+                    {{ modelOptionLabel(m) }}
+                  </option>
                 </select>
-                <span class="material-icons-outlined text-sm text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
+                <span
+                  class="material-icons-outlined text-sm text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                  >expand_more</span
+                >
               </div>
-              <button 
+              <button
                 type="button"
                 @click="showModelDetails = !showModelDetails"
                 class="p-1 text-slate-400 hover:text-sky-500 hover:bg-slate-100 rounded-full transition-colors"
@@ -233,10 +254,25 @@ watch(
                 <span class="material-icons-outlined text-sm">info</span>
               </button>
             </div>
-            <div v-if="showModelDetails" class="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-500">
-              <span v-if="effectiveModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Usando: {{ modelLabel(effectiveModel) }} ({{ effectiveSource }})</span>
-              <span v-if="primaryModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Principal: {{ modelLabel(primaryModel) }}</span>
-              <span v-if="fallbackModel" class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">Fallback: {{ modelLabel(fallbackModel) }}</span>
+            <div
+              v-if="showModelDetails"
+              class="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-500"
+            >
+              <span
+                v-if="effectiveModel"
+                class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200"
+                >Usando: {{ modelLabel(effectiveModel) }} ({{ effectiveSource }})</span
+              >
+              <span
+                v-if="primaryModel"
+                class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200"
+                >Principal: {{ modelLabel(primaryModel) }}</span
+              >
+              <span
+                v-if="fallbackModel"
+                class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200"
+                >Fallback: {{ modelLabel(fallbackModel) }}</span
+              >
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -262,7 +298,9 @@ watch(
               :aria-label="isExpanded ? 'Contraer editor' : 'Expandir editor'"
               @click="toggleExpand"
             >
-              <span class="material-icons-outlined text-lg">{{ isExpanded ? 'unfold_less' : 'unfold_more' }}</span>
+              <span class="material-icons-outlined text-lg">{{
+                isExpanded ? 'unfold_less' : 'unfold_more'
+              }}</span>
             </button>
             <button
               type="button"
@@ -270,7 +308,10 @@ watch(
               class="p-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg transition-colors shadow-sm flex items-center justify-center disabled:opacity-50 disabled:bg-slate-300"
               @click="send"
             >
-              <span class="material-icons-outlined text-lg transform -rotate-45 translate-x-0.5 -translate-y-0.5">send</span>
+              <span
+                class="material-icons-outlined text-lg transform -rotate-45 translate-x-0.5 -translate-y-0.5"
+                >send</span
+              >
             </button>
           </div>
         </div>

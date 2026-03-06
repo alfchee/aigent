@@ -2,79 +2,79 @@
 
 ```yaml
 - generic [ref=e3]:
-  - banner [ref=e4]:
-    - generic [ref=e5]:
-      - generic [ref=e7]: near_me
-      - heading "Navibot" [level=1] [ref=e8]
-      - generic [ref=e9]: v2.0
-    - generic [ref=e10]:
-      - generic [ref=e11]:
-        - generic [ref=e12]:
-          - generic [ref=e13]: fingerprint
-          - generic [ref=e14]: s_27bbjf1az8nj_mlh35w68
-        - link "settings (opens in a new tab)" [ref=e15] [cursor=pointer]:
-          - /url: /settings
-          - generic [ref=e16]: settings
-          - text: ↗
-      - button "dark_mode" [ref=e18] [cursor=pointer]:
-        - generic [ref=e19]: dark_mode
-  - main [ref=e20]:
-    - generic [ref=e21]:
-      - generic [ref=e23]:
-        - complementary [ref=e24]:
-          - generic [ref=e25]:
-            - generic [ref=e26]: Sesiones
-            - generic [ref=e27]:
-              - button "compare_arrows" [ref=e28] [cursor=pointer]:
-                - generic [ref=e29]: compare_arrows
-              - button "add New" [ref=e30] [cursor=pointer]:
-                - generic [ref=e31]: add
-                - text: New
-          - generic [ref=e32]: Cargando…
-        - generic [ref=e34]:
-          - generic [ref=e38]:
-            - generic [ref=e40]: Navibot
-            - paragraph [ref=e44]: ¡Hola! Soy Navibot. ¿En qué puedo ayudarte hoy?
-          - generic [ref=e45]:
-            - generic [ref=e46]:
-              - textbox "Escribe un mensaje..." [ref=e47]
-              - generic [ref=e48]:
-                - generic [ref=e49]:
-                  - combobox "Modelo" [ref=e50] [cursor=pointer]:
-                    - option "⚡ Fast (Gemini 3 Flash Preview)"
-                    - option "⚡ Fast (Gemini Flash Latest)"
-                    - option "🧠 Pro (Gemini 3 Pro Preview)"
-                    - option "🧠 Pro (Gemini 2.5 Pro)"
-                  - generic: expand_more
-                - generic [ref=e51]:
-                  - generic [ref=e52]:
-                    - button "location_on" [disabled] [ref=e53]:
-                      - generic [ref=e54]: location_on
-                    - button "add_to_drive" [disabled] [ref=e55]:
-                      - generic [ref=e56]: add_to_drive
-                  - button "send" [disabled] [ref=e57]:
-                    - generic [ref=e58]: send
-            - generic [ref=e59]: © 2026 Navibot Agent
-      - separator [ref=e60]
-      - generic [ref=e63]:
-        - generic [ref=e64]:
-          - generic [ref=e65]:
-            - generic [ref=e66]:
-              - generic [ref=e67]: Artefactos
-              - generic [ref=e68]: "0"
-            - generic [ref=e69]:
-              - button "view_sidebar" [ref=e70] [cursor=pointer]:
-                - generic [ref=e71]: view_sidebar
-              - button "chevron_right" [ref=e72] [cursor=pointer]:
-                - generic [ref=e73]: chevron_right
-          - generic [ref=e74]:
-            - generic [ref=e75] [cursor=pointer]:
-              - generic [ref=e76]: upload_file
-              - text: Subir
-            - button "refresh Refrescar" [ref=e77] [cursor=pointer]:
-              - generic [ref=e78]: refresh
-              - text: Refrescar
-        - generic [ref=e79]:
-          - generic [ref=e81]: Aún no hay artefactos en esta sesión.
-          - generic [ref=e83]: Selecciona un archivo para previsualizarlo.
+    - banner [ref=e4]:
+        - generic [ref=e5]:
+            - generic [ref=e7]: near_me
+            - heading "Navibot" [level=1] [ref=e8]
+            - generic [ref=e9]: v2.0
+        - generic [ref=e10]:
+            - generic [ref=e11]:
+                - generic [ref=e12]:
+                    - generic [ref=e13]: fingerprint
+                    - generic [ref=e14]: s_27bbjf1az8nj_mlh35w68
+                - link "settings (opens in a new tab)" [ref=e15] [cursor=pointer]:
+                    - /url: /settings
+                    - generic [ref=e16]: settings
+                    - text: ↗
+            - button "dark_mode" [ref=e18] [cursor=pointer]:
+                - generic [ref=e19]: dark_mode
+    - main [ref=e20]:
+        - generic [ref=e21]:
+            - generic [ref=e23]:
+                - complementary [ref=e24]:
+                    - generic [ref=e25]:
+                        - generic [ref=e26]: Sesiones
+                        - generic [ref=e27]:
+                            - button "compare_arrows" [ref=e28] [cursor=pointer]:
+                                - generic [ref=e29]: compare_arrows
+                            - button "add New" [ref=e30] [cursor=pointer]:
+                                - generic [ref=e31]: add
+                                - text: New
+                    - generic [ref=e32]: Cargando…
+                - generic [ref=e34]:
+                    - generic [ref=e38]:
+                        - generic [ref=e40]: Navibot
+                        - paragraph [ref=e44]: ¡Hola! Soy Navibot. ¿En qué puedo ayudarte hoy?
+                    - generic [ref=e45]:
+                        - generic [ref=e46]:
+                            - textbox "Escribe un mensaje..." [ref=e47]
+                            - generic [ref=e48]:
+                                - generic [ref=e49]:
+                                    - combobox "Modelo" [ref=e50] [cursor=pointer]:
+                                        - option "⚡ Fast (Gemini 3 Flash Preview)"
+                                        - option "⚡ Fast (Gemini Flash Latest)"
+                                        - option "🧠 Pro (Gemini 3 Pro Preview)"
+                                        - option "🧠 Pro (Gemini 2.5 Pro)"
+                                    - generic: expand_more
+                                - generic [ref=e51]:
+                                    - generic [ref=e52]:
+                                        - button "location_on" [disabled] [ref=e53]:
+                                            - generic [ref=e54]: location_on
+                                        - button "add_to_drive" [disabled] [ref=e55]:
+                                            - generic [ref=e56]: add_to_drive
+                                    - button "send" [disabled] [ref=e57]:
+                                        - generic [ref=e58]: send
+                        - generic [ref=e59]: © 2026 Navibot Agent
+            - separator [ref=e60]
+            - generic [ref=e63]:
+                - generic [ref=e64]:
+                    - generic [ref=e65]:
+                        - generic [ref=e66]:
+                            - generic [ref=e67]: Artefactos
+                            - generic [ref=e68]: '0'
+                        - generic [ref=e69]:
+                            - button "view_sidebar" [ref=e70] [cursor=pointer]:
+                                - generic [ref=e71]: view_sidebar
+                            - button "chevron_right" [ref=e72] [cursor=pointer]:
+                                - generic [ref=e73]: chevron_right
+                    - generic [ref=e74]:
+                        - generic [ref=e75] [cursor=pointer]:
+                            - generic [ref=e76]: upload_file
+                            - text: Subir
+                        - button "refresh Refrescar" [ref=e77] [cursor=pointer]:
+                            - generic [ref=e78]: refresh
+                            - text: Refrescar
+                - generic [ref=e79]:
+                    - generic [ref=e81]: Aún no hay artefactos en esta sesión.
+                    - generic [ref=e83]: Selecciona un archivo para previsualizarlo.
 ```

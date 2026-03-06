@@ -18,7 +18,9 @@ export type ChannelSpec = {
   capabilities: string[]
   supports_polling: boolean
   supports_webhook: boolean
-  settings_schema: { fields?: Array<{ key: string; label: string; type: string; required?: boolean }> }
+  settings_schema: {
+    fields?: Array<{ key: string; label: string; type: string; required?: boolean }>
+  }
   enabled: boolean
   settings: Record<string, any>
   status?: ChannelStatus | null
@@ -47,7 +49,7 @@ export const useChannelsStore = defineStore('channels', {
     error: null as string | null,
     validating: {} as Record<string, boolean>,
     validationErrors: {} as Record<string, string[]>,
-    _eventSource: null as EventSource | null
+    _eventSource: null as EventSource | null,
   }),
   actions: {
     async loadChannels() {
@@ -62,14 +64,22 @@ export const useChannelsStore = defineStore('channels', {
         this.loading = false
       }
     },
-    async validateChannel(channelId: string, settings: Record<string, any>, checkConnection = false) {
+    async validateChannel(
+      channelId: string,
+      settings: Record<string, any>,
+      checkConnection = false,
+    ) {
       this.validationErrors[channelId] = []
       this.validating[channelId] = true
       try {
         const data = await fetchJson<ValidateResponse>('/api/channels/validate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ channel_id: channelId, settings, check_connection: checkConnection })
+          body: JSON.stringify({
+            channel_id: channelId,
+            settings,
+            check_connection: checkConnection,
+          }),
         })
         this.validationErrors[channelId] = data.errors || []
         return data
@@ -84,7 +94,7 @@ export const useChannelsStore = defineStore('channels', {
       const data = await fetchJson<ToggleResponse>('/api/channels/enable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel_id: channelId, settings })
+        body: JSON.stringify({ channel_id: channelId, settings }),
       })
       await this.loadChannels()
       return data
@@ -93,7 +103,7 @@ export const useChannelsStore = defineStore('channels', {
       const data = await fetchJson<ToggleResponse>('/api/channels/disable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channel_id: channelId })
+        body: JSON.stringify({ channel_id: channelId }),
       })
       await this.loadChannels()
       return data
@@ -109,7 +119,8 @@ export const useChannelsStore = defineStore('channels', {
           if (channel) {
             channel.status = payload
           }
-        } catch {
+        } catch (error) {
+          void error
         }
       })
       es.addEventListener('heartbeat', (evt) => {
@@ -119,7 +130,8 @@ export const useChannelsStore = defineStore('channels', {
           if (channel) {
             channel.status = payload
           }
-        } catch {
+        } catch (error) {
+          void error
         }
       })
       es.addEventListener('error', () => {
@@ -131,6 +143,6 @@ export const useChannelsStore = defineStore('channels', {
         this._eventSource.close()
         this._eventSource = null
       }
-    }
-  }
+    },
+  },
 })

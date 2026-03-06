@@ -46,11 +46,11 @@ def schedule_cron_task(prompt: str, cron: str, session_id: str = "default", use_
 
 def list_job_logs(job_id: str | None = None, limit: int = 200) -> str:
     """
-    Lista los logs de ejecuciones de tareas programadas.
+    Lists the execution logs of scheduled tasks.
     
     Args:
-        job_id: ID opcional para filtrar por trabajo específico.
-        limit: Número máximo de logs a retornar.
+        job_id: Optional ID to filter by specific job.
+        limit: Maximum number of logs to return.
     """
     logs = scheduler_service.list_logs(job_id=job_id, limit=limit)
     return json.dumps({"job_id": job_id, "logs": logs}, ensure_ascii=False)
@@ -58,10 +58,10 @@ def list_job_logs(job_id: str | None = None, limit: int = 200) -> str:
 
 def get_last_job_result(job_id: str) -> str:
     """
-    Obtiene el último resultado de ejecución de una tarea.
+    Gets the last execution result of a task.
     
     Args:
-        job_id: El ID de la tarea.
+        job_id: The task ID.
     """
     logs = scheduler_service.list_logs(job_id=job_id, limit=1)
     last = logs[-1] if logs else None
@@ -70,8 +70,8 @@ def get_last_job_result(job_id: str) -> str:
 
 def list_scheduled_jobs() -> str:
     """
-    Lista las tareas programadas activas (jobs).
-    Retorna una lista con ID, nombre, prompt, próxima ejecución, etc.
+    Lists the active scheduled tasks (jobs).
+    Returns a list with ID, name, prompt, next execution, etc.
     """
     jobs = scheduler_service.list_jobs()
     return json.dumps(jobs, ensure_ascii=False)
@@ -79,11 +79,11 @@ def list_scheduled_jobs() -> str:
 
 def delete_scheduled_job(job_id: str) -> str:
     """
-    Elimina una tarea programada por su ID.
-    Retorna un mensaje de éxito o error.
+    Deletes a scheduled task by its ID.
+    Returns a success or error message.
     
     Args:
-        job_id: El ID de la tarea a eliminar.
+        job_id: The ID of the task to delete.
     """
     success = scheduler_service.delete_job(job_id)
     if success:

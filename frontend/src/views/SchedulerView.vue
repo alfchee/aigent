@@ -2,7 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
-import { useSchedulerStore, type SchedulerJob, type SchedulerTrigger } from '../stores/schedulerStore'
+import {
+  useSchedulerStore,
+  type SchedulerJob,
+  type SchedulerTrigger,
+} from '../stores/schedulerStore'
 
 const store = useSchedulerStore()
 const search = ref('')
@@ -46,12 +50,14 @@ const filteredJobs = computed(() => {
   })
 })
 
-const jobsStartIndex = computed(() => Math.max(0, Math.floor(jobsScrollTop.value / jobRowHeight) - overscan))
-const jobsVisibleCount = computed(() =>
-  Math.ceil(jobsViewportHeight.value / jobRowHeight) + overscan * 2
+const jobsStartIndex = computed(() =>
+  Math.max(0, Math.floor(jobsScrollTop.value / jobRowHeight) - overscan),
+)
+const jobsVisibleCount = computed(
+  () => Math.ceil(jobsViewportHeight.value / jobRowHeight) + overscan * 2,
 )
 const visibleJobs = computed(() =>
-  filteredJobs.value.slice(jobsStartIndex.value, jobsStartIndex.value + jobsVisibleCount.value)
+  filteredJobs.value.slice(jobsStartIndex.value, jobsStartIndex.value + jobsVisibleCount.value),
 )
 const jobsTopPadding = computed(() => jobsStartIndex.value * jobRowHeight)
 const jobsBottomPadding = computed(() => {
@@ -59,12 +65,14 @@ const jobsBottomPadding = computed(() => {
   return Math.max(0, remaining * jobRowHeight)
 })
 
-const logsStartIndex = computed(() => Math.max(0, Math.floor(logsScrollTop.value / logRowHeight) - overscan))
-const logsVisibleCount = computed(() =>
-  Math.ceil(logsViewportHeight.value / logRowHeight) + overscan * 2
+const logsStartIndex = computed(() =>
+  Math.max(0, Math.floor(logsScrollTop.value / logRowHeight) - overscan),
+)
+const logsVisibleCount = computed(
+  () => Math.ceil(logsViewportHeight.value / logRowHeight) + overscan * 2,
 )
 const visibleLogs = computed(() =>
-  logs.value.slice(logsStartIndex.value, logsStartIndex.value + logsVisibleCount.value)
+  logs.value.slice(logsStartIndex.value, logsStartIndex.value + logsVisibleCount.value),
 )
 const logsTopPadding = computed(() => logsStartIndex.value * logRowHeight)
 const logsBottomPadding = computed(() => {
@@ -142,16 +150,18 @@ watch(
     updateViewports()
     const durationMs = performance.now() - start
     const improvementPct =
-      lastJobsRenderMs.value !== null ? ((lastJobsRenderMs.value - durationMs) / lastJobsRenderMs.value) * 100 : null
+      lastJobsRenderMs.value !== null
+        ? ((lastJobsRenderMs.value - durationMs) / lastJobsRenderMs.value) * 100
+        : null
     if (isDev) {
       console.debug('[scheduler] jobs render update', {
         durationMs: Number(durationMs.toFixed(2)),
-        improvementPct: improvementPct !== null ? Number(improvementPct.toFixed(2)) : null
+        improvementPct: improvementPct !== null ? Number(improvementPct.toFixed(2)) : null,
       })
     }
     lastJobsRenderMs.value = durationMs
   },
-  { deep: true }
+  { deep: true },
 )
 
 watch(
@@ -162,16 +172,18 @@ watch(
     updateViewports()
     const durationMs = performance.now() - start
     const improvementPct =
-      lastLogsRenderMs.value !== null ? ((lastLogsRenderMs.value - durationMs) / lastLogsRenderMs.value) * 100 : null
+      lastLogsRenderMs.value !== null
+        ? ((lastLogsRenderMs.value - durationMs) / lastLogsRenderMs.value) * 100
+        : null
     if (isDev) {
       console.debug('[scheduler] logs render update', {
         durationMs: Number(durationMs.toFixed(2)),
-        improvementPct: improvementPct !== null ? Number(improvementPct.toFixed(2)) : null
+        improvementPct: improvementPct !== null ? Number(improvementPct.toFixed(2)) : null,
       })
     }
     lastLogsRenderMs.value = durationMs
   },
-  { deep: true }
+  { deep: true },
 )
 
 onMounted(async () => {
@@ -192,12 +204,20 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-    <header class="p-4 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm sticky top-0 z-10">
+    <header
+      class="p-4 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm sticky top-0 z-10"
+    >
       <div class="flex items-center gap-3">
-        <RouterLink to="/" class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50">
+        <RouterLink
+          to="/"
+          class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+        >
           Volver
         </RouterLink>
-        <RouterLink to="/settings" class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50">
+        <RouterLink
+          to="/settings"
+          class="text-xs px-3 py-2 rounded border border-slate-200 bg-white hover:bg-slate-50"
+        >
           Configuración
         </RouterLink>
         <div class="text-sm font-semibold text-slate-800">Scheduler Dashboard</div>
@@ -212,7 +232,10 @@ onBeforeUnmount(() => {
     </header>
 
     <main class="flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full space-y-6">
-      <div v-show="error" class="text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-4">
+      <div
+        v-show="error"
+        class="text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-4"
+      >
         {{ error }}
       </div>
 
@@ -232,9 +255,7 @@ onBeforeUnmount(() => {
             <option value="active">Activos</option>
             <option value="paused">Pausados</option>
           </select>
-          <div class="text-xs text-slate-500">
-            {{ filteredJobs.length }} job(s)
-          </div>
+          <div class="text-xs text-slate-500">{{ filteredJobs.length }} job(s)</div>
         </div>
 
         <div v-show="jobsSectionLoading" class="space-y-2">
@@ -244,78 +265,87 @@ onBeforeUnmount(() => {
         </div>
 
         <transition name="fade">
-          <div v-show="!jobsSectionLoading" ref="jobsContainer" class="overflow-auto border border-slate-200 rounded-lg h-[420px]" @scroll="onJobsScroll">
+          <div
+            v-show="!jobsSectionLoading"
+            ref="jobsContainer"
+            class="overflow-auto border border-slate-200 rounded-lg h-[420px]"
+            @scroll="onJobsScroll"
+          >
             <table class="min-w-full text-xs text-slate-700">
-            <thead class="bg-slate-100 text-slate-700 uppercase tracking-wider">
-              <tr>
-                <th class="text-left px-3 py-2">Job</th>
-                <th class="text-left px-3 py-2">Periodicidad</th>
-                <th class="text-left px-3 py-2">Próxima</th>
-                <th class="text-left px-3 py-2">Última</th>
-                <th class="text-left px-3 py-2">Estado</th>
-                <th class="text-left px-3 py-2">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-show="jobsTopPadding > 0" aria-hidden="true">
-                <td :style="{ height: `${jobsTopPadding}px` }" colspan="6"></td>
-              </tr>
-              <tr
-                v-for="job in visibleJobs"
-                :key="job.id"
-                class="odd:bg-white even:bg-slate-50 hover:bg-slate-100 cursor-pointer"
-                @click="selectJob(job)"
-              >
-                <td class="px-3 py-2">
-                  <div class="font-semibold text-slate-900">{{ job.name }}</div>
-                  <div class="text-[10px] text-slate-500 break-all">{{ job.id }}</div>
-                  <div class="text-[10px] text-slate-500">{{ job.session_id }}</div>
-                </td>
-                <td class="px-3 py-2">{{ formatTrigger(job.trigger) }}</td>
-                <td class="px-3 py-2 text-[11px]">{{ job.next_run_time || '—' }}</td>
-                <td class="px-3 py-2 text-[11px]">{{ job.last_run_time || '—' }}</td>
-                <td class="px-3 py-2">
-                  <span
-                    class="text-[10px] font-semibold px-2 py-1 rounded"
-                    :class="job.paused ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'"
-                  >
-                    {{ job.paused ? 'PAUSADO' : 'ACTIVO' }}
-                  </span>
-                </td>
-                <td class="px-3 py-2">
-                  <div class="flex items-center gap-2">
-                    <button
-                      v-if="!job.paused"
-                      class="text-xs px-2 py-1 rounded bg-slate-200 hover:bg-slate-300"
-                      @click.stop="pauseJob(job)"
+              <thead class="bg-slate-100 text-slate-700 uppercase tracking-wider">
+                <tr>
+                  <th class="text-left px-3 py-2">Job</th>
+                  <th class="text-left px-3 py-2">Periodicidad</th>
+                  <th class="text-left px-3 py-2">Próxima</th>
+                  <th class="text-left px-3 py-2">Última</th>
+                  <th class="text-left px-3 py-2">Estado</th>
+                  <th class="text-left px-3 py-2">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-show="jobsTopPadding > 0" aria-hidden="true">
+                  <td :style="{ height: `${jobsTopPadding}px` }" colspan="6"></td>
+                </tr>
+                <tr
+                  v-for="job in visibleJobs"
+                  :key="job.id"
+                  class="odd:bg-white even:bg-slate-50 hover:bg-slate-100 cursor-pointer"
+                  @click="selectJob(job)"
+                >
+                  <td class="px-3 py-2">
+                    <div class="font-semibold text-slate-900">{{ job.name }}</div>
+                    <div class="text-[10px] text-slate-500 break-all">{{ job.id }}</div>
+                    <div class="text-[10px] text-slate-500">{{ job.session_id }}</div>
+                  </td>
+                  <td class="px-3 py-2">{{ formatTrigger(job.trigger) }}</td>
+                  <td class="px-3 py-2 text-[11px]">{{ job.next_run_time || '—' }}</td>
+                  <td class="px-3 py-2 text-[11px]">{{ job.last_run_time || '—' }}</td>
+                  <td class="px-3 py-2">
+                    <span
+                      class="text-[10px] font-semibold px-2 py-1 rounded"
+                      :class="
+                        job.paused
+                          ? 'bg-slate-200 text-slate-600'
+                          : 'bg-emerald-100 text-emerald-700'
+                      "
                     >
-                      Pausar
-                    </button>
-                    <button
-                      v-else
-                      class="text-xs px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800"
-                      @click.stop="resumeJob(job)"
-                    >
-                      Reanudar
-                    </button>
-                    <button
-                      class="text-xs px-2 py-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-700"
-                      @click.stop="deleteJob(job)"
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-show="jobsBottomPadding > 0" aria-hidden="true">
-                <td :style="{ height: `${jobsBottomPadding}px` }" colspan="6"></td>
-              </tr>
-              <tr v-show="filteredJobs.length === 0">
-                <td colspan="6" class="px-3 py-6 text-center text-slate-500 text-sm">
-                  No hay jobs programados
-                </td>
-              </tr>
-            </tbody>
+                      {{ job.paused ? 'PAUSADO' : 'ACTIVO' }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2">
+                    <div class="flex items-center gap-2">
+                      <button
+                        v-if="!job.paused"
+                        class="text-xs px-2 py-1 rounded bg-slate-200 hover:bg-slate-300"
+                        @click.stop="pauseJob(job)"
+                      >
+                        Pausar
+                      </button>
+                      <button
+                        v-else
+                        class="text-xs px-2 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-800"
+                        @click.stop="resumeJob(job)"
+                      >
+                        Reanudar
+                      </button>
+                      <button
+                        class="text-xs px-2 py-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-700"
+                        @click.stop="deleteJob(job)"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-show="jobsBottomPadding > 0" aria-hidden="true">
+                  <td :style="{ height: `${jobsBottomPadding}px` }" colspan="6"></td>
+                </tr>
+                <tr v-show="filteredJobs.length === 0">
+                  <td colspan="6" class="px-3 py-6 text-center text-slate-500 text-sm">
+                    No hay jobs programados
+                  </td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </transition>
@@ -343,45 +373,60 @@ onBeforeUnmount(() => {
         </div>
 
         <transition name="fade">
-          <div v-show="!logsSectionLoading" ref="logsContainer" class="overflow-auto border border-slate-200 rounded-lg h-[420px]" @scroll="onLogsScroll">
+          <div
+            v-show="!logsSectionLoading"
+            ref="logsContainer"
+            class="overflow-auto border border-slate-200 rounded-lg h-[420px]"
+            @scroll="onLogsScroll"
+          >
             <table class="min-w-full text-xs text-slate-700">
-            <thead class="bg-slate-100 text-slate-700 uppercase tracking-wider">
-              <tr>
-                <th class="text-left px-3 py-2">Estado</th>
-                <th class="text-left px-3 py-2">Inicio</th>
-                <th class="text-left px-3 py-2">Duración</th>
-                <th class="text-left px-3 py-2">Resultado</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-show="logsTopPadding > 0" aria-hidden="true">
-                <td :style="{ height: `${logsTopPadding}px` }" colspan="4"></td>
-              </tr>
-              <tr v-for="log in visibleLogs" :key="`${log.started_at}-${log.job_id}`" class="odd:bg-white even:bg-slate-50">
-                <td class="px-3 py-2">
-                  <span
-                    class="text-[10px] font-semibold px-2 py-1 rounded"
-                    :class="log.status === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'"
-                  >
-                    {{ log.status }}
-                  </span>
-                </td>
-                <td class="px-3 py-2 text-[11px]">{{ log.started_at }}</td>
-                <td class="px-3 py-2 text-[11px]">{{ log.duration_seconds }}s</td>
-                <td class="px-3 py-2 text-[11px]">
-                  <div class="font-medium text-slate-800 line-clamp-2">{{ log.response || log.error }}</div>
-                  <div class="text-[10px] text-slate-500">{{ log.prompt }}</div>
-                </td>
-              </tr>
-              <tr v-show="logsBottomPadding > 0" aria-hidden="true">
-                <td :style="{ height: `${logsBottomPadding}px` }" colspan="4"></td>
-              </tr>
-              <tr v-show="logs.length === 0">
-                <td colspan="4" class="px-3 py-6 text-center text-slate-500 text-sm">
-                  No hay ejecuciones registradas
-                </td>
-              </tr>
-            </tbody>
+              <thead class="bg-slate-100 text-slate-700 uppercase tracking-wider">
+                <tr>
+                  <th class="text-left px-3 py-2">Estado</th>
+                  <th class="text-left px-3 py-2">Inicio</th>
+                  <th class="text-left px-3 py-2">Duración</th>
+                  <th class="text-left px-3 py-2">Resultado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-show="logsTopPadding > 0" aria-hidden="true">
+                  <td :style="{ height: `${logsTopPadding}px` }" colspan="4"></td>
+                </tr>
+                <tr
+                  v-for="log in visibleLogs"
+                  :key="`${log.started_at}-${log.job_id}`"
+                  class="odd:bg-white even:bg-slate-50"
+                >
+                  <td class="px-3 py-2">
+                    <span
+                      class="text-[10px] font-semibold px-2 py-1 rounded"
+                      :class="
+                        log.status === 'success'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-rose-100 text-rose-700'
+                      "
+                    >
+                      {{ log.status }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-[11px]">{{ log.started_at }}</td>
+                  <td class="px-3 py-2 text-[11px]">{{ log.duration_seconds }}s</td>
+                  <td class="px-3 py-2 text-[11px]">
+                    <div class="font-medium text-slate-800 line-clamp-2">
+                      {{ log.response || log.error }}
+                    </div>
+                    <div class="text-[10px] text-slate-500">{{ log.prompt }}</div>
+                  </td>
+                </tr>
+                <tr v-show="logsBottomPadding > 0" aria-hidden="true">
+                  <td :style="{ height: `${logsBottomPadding}px` }" colspan="4"></td>
+                </tr>
+                <tr v-show="logs.length === 0">
+                  <td colspan="4" class="px-3 py-6 text-center text-slate-500 text-sm">
+                    No hay ejecuciones registradas
+                  </td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </transition>

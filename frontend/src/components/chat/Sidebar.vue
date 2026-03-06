@@ -2,7 +2,12 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { useSessionsStore } from '../../stores/sessions'
-import { isCollapsed as isCollapsedState, nextSidebarState, sidebarWidthPx, type SidebarState } from '../../lib/sidebars'
+import {
+  isCollapsed as isCollapsedState,
+  nextSidebarState,
+  sidebarWidthPx,
+  type SidebarState,
+} from '../../lib/sidebars'
 
 const props = defineProps<{
   activeSessionId: string
@@ -76,8 +81,13 @@ onMounted(() => {
           leave-from-class="opacity-100 scale-100"
           leave-to-class="opacity-0 scale-95"
         >
-          <div class="w-full max-w-sm rounded-2xl bg-white shadow-xl border border-slate-200 p-5">
-            <div class="text-sm font-semibold text-slate-800 mb-2">¿Está seguro de que desea eliminar esta sesión?</div>
+          <div
+            v-if="isDeleteOpen"
+            class="w-full max-w-sm rounded-2xl bg-white shadow-xl border border-slate-200 p-5"
+          >
+            <div class="text-sm font-semibold text-slate-800 mb-2">
+              ¿Está seguro de que desea eliminar esta sesión?
+            </div>
             <div class="text-xs text-slate-500 mb-4">Esta acción no se puede deshacer.</div>
             <div class="flex flex-col sm:flex-row gap-2 sm:justify-end">
               <button
@@ -100,8 +110,14 @@ onMounted(() => {
       </div>
     </Transition>
     <div class="p-4 border-b border-slate-200 flex items-center justify-between">
-      <div v-if="!collapsed" class="text-xs font-bold text-slate-500 uppercase tracking-wider">Sesiones</div>
-      <div v-else class="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate" title="Sesiones">
+      <div v-if="!collapsed" class="text-xs font-bold text-slate-500 uppercase tracking-wider">
+        Sesiones
+      </div>
+      <div
+        v-else
+        class="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate"
+        title="Sesiones"
+      >
         Ses.
       </div>
       <div class="flex gap-2">
@@ -136,22 +152,28 @@ onMounted(() => {
         :key="s.id"
         class="group session-item flex items-center p-3 rounded-lg cursor-pointer transition-colors"
         :class="[
-          s.id === props.activeSessionId ? 'bg-sky-50 border border-sky-100' : 'hover:bg-gray-100 border border-transparent',
-          collapsed ? 'session-item-collapsed justify-center' : ''
+          s.id === props.activeSessionId
+            ? 'bg-sky-50 border border-sky-100'
+            : 'hover:bg-gray-100 border border-transparent',
+          collapsed ? 'session-item-collapsed justify-center' : '',
         ]"
-        :data-tooltip="collapsed ? (s.title || 'Nueva Conversación') : ''"
-        :aria-label="collapsed ? (s.title || 'Nueva Conversación') : undefined"
+        :data-tooltip="collapsed ? s.title || 'Nueva Conversación' : ''"
+        :aria-label="collapsed ? s.title || 'Nueva Conversación' : undefined"
         role="button"
         tabindex="0"
         @click="emit('select', s.id)"
       >
         <div :class="['flex-1 min-w-0', collapsed ? 'pr-0' : 'pr-2']">
           <div v-if="!collapsed">
-            <h3 class="text-sm font-medium text-slate-900 truncate">{{ s.title || 'Nueva Conversación' }}</h3>
+            <h3 class="text-sm font-medium text-slate-900 truncate">
+              {{ s.title || 'Nueva Conversación' }}
+            </h3>
             <p class="text-xs text-slate-500 truncate mt-0.5 font-mono">{{ s.id }}</p>
           </div>
           <div v-else class="flex items-center justify-center">
-            <span class="material-icons-outlined text-2xl leading-6 text-slate-600">chat_bubble_outline</span>
+            <span class="material-icons-outlined text-2xl leading-6 text-slate-600"
+              >chat_bubble_outline</span
+            >
           </div>
         </div>
         <button
@@ -186,7 +208,9 @@ onMounted(() => {
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   transition-delay: 0s;
   z-index: 20;
 }

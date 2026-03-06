@@ -1,0 +1,13 @@
+{
+  "name": "navibot",
+  "private": true,
+  "scripts": {
+    "prepare": "husky install",
+    "lint:python": "flake8 backend",
+    "lint:frontend": "npm --prefix frontend run lint",
+    "lint": "npm run lint:python && npm run lint:frontend"
+  },
+  "devDependencies": {
+    "husky": "^9.0.11"
+  }
+}
