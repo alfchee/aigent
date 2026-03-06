@@ -46,10 +46,10 @@ async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptions): Pr
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeout)
-    
+
     // Combine user signal with timeout signal if needed (simplified here)
     // Note: If init.signal is provided and aborted, we should respect it.
-    
+
     try {
       const res = await fetch(input, {
         ...init,
@@ -63,17 +63,17 @@ async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptions): Pr
 
       // Handle Timeout
       if (err.name === 'AbortError') {
-         // Check if the user passed a signal that is aborted
-         if (init?.signal?.aborted) {
-           throw err // User aborted manually
-         }
-         // Otherwise it's our timeout
-         throw new TimeoutError(timeout)
+        // Check if the user passed a signal that is aborted
+        if (init?.signal?.aborted) {
+          throw err // User aborted manually
+        }
+        // Otherwise it's our timeout
+        throw new TimeoutError(timeout)
       }
 
       // If it's not a network error (e.g. strict CORS might throw), we might still want to retry if it's transient.
       // But usually fetch throws TypeError for network issues.
-      
+
       const isNetworkError = err instanceof TypeError || err.name === 'TypeError'
       if (!isNetworkError) {
         throw err // Logic error or other non-retriable error
@@ -89,7 +89,7 @@ async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptions): Pr
 
   throw new NetworkError(
     `Network request failed after ${retries + 1} attempts. Please check your connection.`,
-    lastError
+    lastError,
   )
 }
 

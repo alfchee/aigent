@@ -37,11 +37,15 @@ class TestGoogleWorkspaceManager(unittest.IsolatedAsyncioTestCase):
     @patch('app.skills.google_workspace_manager._transfer_ownership')
     @patch('app.skills.google_workspace_manager.get_sheets_client')
     @patch('app.skills.google_workspace_manager._create_spreadsheet_with_retry')
-    async def test_create_google_spreadsheet_transfer_ownership(self, mock_create, mock_get_client, mock_transfer, mock_get_config):
+    @patch('app.skills.google_workspace_manager.get_credentials')
+    async def test_create_google_spreadsheet_transfer_ownership(self, mock_get_creds, mock_create, mock_get_client, mock_transfer, mock_get_config):
         mock_get_config.return_value = {"owner_email": "owner@example.com"}
         mock_client = MagicMock()
         mock_client.auth = MagicMock()
         mock_get_client.return_value = mock_client
+        
+        # Mock get_credentials to return a valid object (e.g. client.auth)
+        mock_get_creds.return_value = mock_client.auth
 
         mock_spreadsheet = MagicMock()
         mock_spreadsheet.url = "http://mock.url"

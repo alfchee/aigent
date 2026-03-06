@@ -129,9 +129,11 @@ export const useChatStore = defineStore('chat', {
         let msg = 'Error desconocido'
 
         if (e instanceof TimeoutError) {
-          msg = 'La solicitud tardó demasiado. Por favor verifique su conexión e intente nuevamente.'
+          msg =
+            'La solicitud tardó demasiado. Por favor verifique su conexión e intente nuevamente.'
         } else if (e instanceof NetworkError) {
-          msg = 'No se pudo conectar con el servidor. Verifique que el backend esté corriendo y accesible.'
+          msg =
+            'No se pudo conectar con el servidor. Verifique que el backend esté corriendo y accesible.'
           if (e.originalError instanceof Error) {
             msg += ` (${e.originalError.message})`
           }

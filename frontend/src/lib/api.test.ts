@@ -22,12 +22,10 @@ describe('fetchJson', () => {
   })
 
   it('should retry on network error and succeed', async () => {
-    fetchMock
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ success: true }),
-      })
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+    })
 
     const data = await fetchJson('/test', { retries: 2, retryDelay: 10 })
     expect(data).toEqual({ success: true })
@@ -43,30 +41,30 @@ describe('fetchJson', () => {
 
   it('should throw TimeoutError on timeout', async () => {
     vi.useFakeTimers()
-    
-    fetchMock.mockImplementation(async (url, options) => {
-        const signal = options.signal
-        return new Promise((_, reject) => {
-            if (signal.aborted) {
-                 const err = new Error('The user aborted a request.')
-                 err.name = 'AbortError'
-                 reject(err)
-                 return
-            }
-            signal.addEventListener('abort', () => {
-                const err = new Error('The user aborted a request.')
-                err.name = 'AbortError'
-                reject(err)
-            })
+
+    fetchMock.mockImplementation(async (_url, options) => {
+      const signal = options.signal
+      return new Promise((_, reject) => {
+        if (signal.aborted) {
+          const err = new Error('The user aborted a request.')
+          err.name = 'AbortError'
+          reject(err)
+          return
+        }
+        signal.addEventListener('abort', () => {
+          const err = new Error('The user aborted a request.')
+          err.name = 'AbortError'
+          reject(err)
         })
+      })
     })
 
     const promise = fetchJson('/test', { timeout: 100, retries: 0 })
-    
+
     vi.advanceTimersByTime(200)
-    
+
     await expect(promise).rejects.toThrow(TimeoutError)
-    
+
     vi.useRealTimers()
   })
 
