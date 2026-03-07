@@ -79,3 +79,4 @@ secure_skills/*
 !secure_skills/README.md
 !secure_skills/MANIFEST.json.example
 !secure_skills/simple_math/
+

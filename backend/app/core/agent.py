@@ -8,6 +8,9 @@ from google.genai import types
 from typing import List, Callable, Any, Dict, Optional, Union
 import functools
 from dotenv import load_dotenv
+from app.core.db import SessionLocal, engine, Base
+from app.core.models import ChatSession, ChatMessage
+from app.core.serialization import content_to_dict, dict_to_content
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
@@ -69,6 +72,9 @@ class HistoryItem:
     
     def __repr__(self):
         return f"HistoryItem(role={self.role}, parts={self.parts})"
+
+# Create tables if they don't exist
+Base.metadata.create_all(bind=engine)
 
 class NaviBot:
     def __init__(self, model_name: str = "gemini-flash-latest"):
@@ -908,6 +914,7 @@ class NaviBot:
     async def send_message_with_react(
         self, 
         message: str,
+        session_id: str = "default",
         max_iterations: int = 10,
         timeout_seconds: int = 300,
         event_callback: Optional[Callable] = None

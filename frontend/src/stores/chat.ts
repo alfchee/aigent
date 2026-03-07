@@ -28,12 +28,25 @@ type SessionMessagesResponse = {
   limit: number
 }
 
+export type ChatLog = {
+  id: string
+  title: string
+  type: 'thinking' | 'tool' | 'success' | 'error' | 'info'
+  timestamp: number
+  message?: string
+  details?: any
+  expanded?: boolean
+}
+
 export const useChatStore = defineStore('chat', {
   state: () => ({
     messages: [
-      { role: 'assistant', content: '¡Hola! Soy Navibot. ¿En qué puedo ayudarte hoy?' },
+      { role: 'assistant', content: 'Hello! I am Navibot. How can I help you today?' },
     ] as ChatMessage[],
     isLoading: false as boolean,
+    isStreaming: false as boolean,
+    currentThought: '' as string,
+    logs: [] as ChatLog[],
     error: null as string | null,
     isHistoryLoading: false as boolean,
     historyError: null as string | null,
@@ -41,6 +54,11 @@ export const useChatStore = defineStore('chat', {
     historyNextBeforeId: null as number | null,
   }),
   actions: {
+    stopGeneration() {
+      // TODO: Implement abort controller for fetch
+      this.isLoading = false
+      this.isStreaming = false
+    },
     async loadSessionHistory(sessionId: string) {
       this.isHistoryLoading = true
       this.historyError = null
@@ -57,7 +75,7 @@ export const useChatStore = defineStore('chat', {
         this.messages =
           items.length > 0
             ? items
-            : [{ role: 'assistant', content: '¡Hola! Soy Navibot. ¿En qué puedo ayudarte hoy?' }]
+            : [{ role: 'assistant', content: 'Hello! I am Navibot. How can I help you today?' }]
         this.historyHasMore = Boolean(data.has_more)
         this.historyNextBeforeId = data.has_more ? data.next_before_id : null
       } catch (e) {
@@ -91,9 +109,12 @@ export const useChatStore = defineStore('chat', {
         this.isHistoryLoading = false
       }
     },
-    async sendMessage(message: string, sessionId: string, modelName?: string) {
+    async sendMessage(message: string, sessionId?: string, modelName?: string) {
       const trimmed = message.trim()
       if (!trimmed || this.isLoading) return
+
+      const currentSessionId = sessionId || 'default'
+
       this.messages.push({ role: 'user', content: trimmed })
       this.isLoading = true
       this.error = null
@@ -106,34 +127,32 @@ export const useChatStore = defineStore('chat', {
           timeout: 120000, // 2 minutes timeout for agent operations
           body: JSON.stringify({
             message: trimmed,
-            session_id: sessionId,
+            session_id: currentSessionId,
             model_name: model_name || undefined,
             memory_user_id: memory_user_id || undefined,
           }),
         })
         this.messages.push({
           role: 'assistant',
-          content: data.response || 'No recibí respuesta del agente.',
+          content: data.response || 'No response from agent.',
         })
         try {
           const userCount = this.messages.filter((m) => m.role === 'user').length
           const assistantCount = this.messages.filter((m) => m.role === 'assistant').length
           if (userCount === 1 && assistantCount === 2) {
             const sessions = useSessionsStore()
-            await sessions.autotitle(sessionId)
+            await sessions.autotitle(currentSessionId)
           }
         } catch (error) {
           void error
         }
       } catch (e: any) {
-        let msg = 'Error desconocido'
+        let msg = 'Unknown error'
 
         if (e instanceof TimeoutError) {
-          msg =
-            'La solicitud tardó demasiado. Por favor verifique su conexión e intente nuevamente.'
+          msg = 'The request took too long. Please check your connection and try again.'
         } else if (e instanceof NetworkError) {
-          msg =
-            'No se pudo conectar con el servidor. Verifique que el backend esté corriendo y accesible.'
+          msg = 'Could not connect to the server. Check that the backend is running and accessible.'
           if (e.originalError instanceof Error) {
             msg += ` (${e.originalError.message})`
           }
@@ -141,7 +160,7 @@ export const useChatStore = defineStore('chat', {
           const body = e.body as any
           if (typeof body === 'string' && body.trim()) msg = body
           else if (body && typeof body.detail === 'string') msg = body.detail
-          else msg = `Error del servidor (HTTP ${e.status})`
+          else msg = `Server error (HTTP ${e.status})`
         } else if (e instanceof Error) {
           msg = e.message
         } else if (typeof e === 'string') {
@@ -149,7 +168,7 @@ export const useChatStore = defineStore('chat', {
         }
 
         this.error = msg
-        this.messages.push({ role: 'assistant', content: `Lo siento, hubo un error: ${msg}` })
+        this.messages.push({ role: 'assistant', content: `Sorry, there was an error: ${msg}` })
       } finally {
         this.isLoading = false
       }
