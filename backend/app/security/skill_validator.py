@@ -2,7 +2,7 @@ import ast
 import json
 import logging
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,11 @@ class SkillValidator:
             skill_path: Path to the skill directory.
             
         Returns:
-            True if valid, False if any check fails.
+            True if valid.
             
         Raises:
             SecurityViolation: If a severe violation is detected.
+            Exception: For other errors.
         """
         try:
             manifest = self._load_manifest(skill_path)
@@ -58,9 +59,9 @@ class SkillValidator:
             logger.info(f"Skill at {skill_path} passed validation.")
             return True
             
-        except Exception as e:
-            logger.error(f"Skill validation failed for {skill_path}: {str(e)}")
-            raise e
+        except Exception:
+            logger.error(f"Skill validation failed for {skill_path}")
+            raise
 
     def _load_manifest(self, skill_path: str) -> Dict[str, Any]:
         manifest_path = os.path.join(skill_path, 'MANIFEST.json')
@@ -81,7 +82,7 @@ class SkillValidator:
         
         perms = manifest.get('permissions', {})
         if not isinstance(perms, dict):
-             raise SecurityViolation("Permissions field must be a dictionary.")
+            raise SecurityViolation("Permissions field must be a dictionary.")
 
     def _static_analysis(self, code_path: str, manifest: Dict[str, Any]):
         """
@@ -102,12 +103,32 @@ class SkillValidator:
                      len(permissions.get('filesystem', {}).get('read_paths', [])) > 0 or \
                      len(permissions.get('filesystem', {}).get('write_paths', [])) > 0
 
+        # Enforce definition-only policy for top-level code (SecureSkillLoader safety)
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom, ast.Assign, ast.AnnAssign)):
+                 # Allow assignments for constants, but disallow expressions (calls)
+                 # Strictly speaking, Assign can trigger code if descriptors/metaclasses are involved,
+                 # but avoiding explicit Expr/Call at top level handles the most common side-effects.
+                 if isinstance(node, ast.Expr):
+                      # Ignore docstrings
+                      if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                          continue
+                      raise SecurityViolation(f"Top-level executable code detected: {type(node).__name__}. Only definitions are allowed.")
+
         for node in ast.walk(tree):
             # 1. Detect Forbidden Builtins (eval, exec, etc.)
             if isinstance(node, ast.Call):
+                func_name = None
                 if isinstance(node.func, ast.Name):
-                    if node.func.id in self.FORBIDDEN_BUILTINS:
-                        raise SecurityViolation(f"Forbidden function call detected: {node.func.id}")
+                    func_name = node.func.id
+                elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'builtins':
+                    func_name = node.func.attr
+                
+                if func_name:
+                    if func_name in self.FORBIDDEN_BUILTINS:
+                        raise SecurityViolation(f"Forbidden function call detected: {func_name}")
+                    if not allowed_fs and func_name == 'open':
+                         raise SecurityViolation("Filesystem access ('open') detected but filesystem permission not granted.")
             
             # 2. Detect Imports
             if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -123,7 +144,7 @@ class SkillValidator:
                         
                     # Check specific dangerous modules (subprocess, etc.)
                     if module_name in self.FORBIDDEN_IMPORTS or alias.name in self.FORBIDDEN_IMPORTS:
-                         raise SecurityViolation(f"Forbidden module import detected: {alias.name}")
+                        raise SecurityViolation(f"Forbidden module import detected: {alias.name}")
 
             # 3. Detect os.system style calls (Attribute calls)
             if isinstance(node, ast.Call):

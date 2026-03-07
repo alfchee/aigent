@@ -93,7 +93,7 @@ class AgentGraph:
                 secure_skill_names = list(secure_skills_map.keys())
                 logger.info(f"Integrated secure skills: {secure_skill_names}")
         except Exception as e:
-             logger.error(f"Failed to load secure skills: {e}")
+            logger.error(f"Failed to load secure skills: {e}")
 
         # Inyectar herramientas extra en un módulo virtual 'extra_tools'
         if self.extra_tools:
