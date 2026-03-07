@@ -14,3 +14,11 @@
 - feat: adding more tools for google drive
 - refactor: enhancements in the route logic and sop and tool descriptions
 - fix: Telegram channel - resolve supervisor loop and message delivery issues
+
+## v0.1.2 - 2026-03-07
+- chore: adding license
+- test: fixing tests
+- test: fixing tests
+- test: fixing tests
+- refactor: changes from pr comments
+- feat: El Fortin de Navi
