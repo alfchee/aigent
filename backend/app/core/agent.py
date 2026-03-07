@@ -9,7 +9,6 @@ from typing import List, Callable, Any, Dict, Optional, Union
 import functools
 from dotenv import load_dotenv
 from app.core.db import SessionLocal, engine, Base
-from app.core.models import ChatSession, ChatMessage
 from app.core.serialization import content_to_dict, dict_to_content
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage

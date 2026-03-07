@@ -1,6 +1,7 @@
 {
   "name": "navibot",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "prepare": "husky install",
     "lint:python": "flake8 backend",

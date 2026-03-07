@@ -11,6 +11,7 @@ from langgraph.prebuilt import ToolNode, create_react_agent
 
 from app.core.graph_state import AgentState
 from app.core.skill_loader import SkillLoader
+from app.core.secure_skill_loader import SecureSkillLoader
 from app.core.supervisor import create_supervisor_node, WORKERS
 from app.core.model_orchestrator import ModelOrchestrator
 from app.core import prompt_cache
@@ -82,6 +83,18 @@ class AgentGraph:
         self.loader = SkillLoader()
         self.skills_map = self.loader.load_skills_map()
         
+        # Cargar Secure Skills
+        secure_skill_names = []
+        try:
+            self.secure_loader = SecureSkillLoader()
+            secure_skills_map = self.secure_loader.load_skills()
+            if secure_skills_map:
+                self.skills_map.update(secure_skills_map)
+                secure_skill_names = list(secure_skills_map.keys())
+                logger.info(f"Integrated secure skills: {secure_skill_names}")
+        except Exception as e:
+            logger.error(f"Failed to load secure skills: {e}")
+
         # Inyectar herramientas extra en un módulo virtual 'extra_tools'
         if self.extra_tools:
             self.skills_map["extra_tools"] = self.extra_tools
@@ -95,9 +108,8 @@ class AgentGraph:
         self.worker_skills = {
             "WebNavigator": ["browser", "search", "reader"],
             "CalendarManager": ["calendar", "scheduler"],
-            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "google_workspace_manager", "memory", "telegram", "extra_tools"],
+            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "google_workspace_manager", "memory", "telegram", "extra_tools"] + secure_skill_names,
             "ImageGenerator": ["image_generation"]
-            # GeneralAssistant se lleva el resto o lo que definamos
         }
 
         # 4. Construir el Grafo
