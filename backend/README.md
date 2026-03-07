@@ -104,3 +104,8 @@ python -m unittest discover tests
 # Run specific test
 python -m unittest tests/skills/test_google_drive_export.py
 ```
+
+## License
+
+See the [LICENSE](../../LICENSE) file in the project root for details.
+
