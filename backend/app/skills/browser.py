@@ -101,4 +101,4 @@ async def close_browser():
         _playwright = None
     return "Browser closed."
 
-tools = [navigate, get_page_content, screenshot, click_coords, navigate_document_hierarchy, go_back, inject_set_of_marks, get_sidebar_hierarchy, find_element_by_text_content, close_browser]
+tools = [navigate, get_page_content, screenshot, close_browser]
