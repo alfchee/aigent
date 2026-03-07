@@ -48,7 +48,7 @@ class TestCalendarManagement(unittest.TestCase):
         mock_service.events().list().execute.return_value = mock_events
         
         result = self.loop.run_until_complete(
-            list_upcoming_events()
+            list_upcoming_events.coroutine()
         )
         
         self.assertIn("📅 **Próximos Eventos:**", result)
@@ -67,14 +67,14 @@ class TestCalendarManagement(unittest.TestCase):
         mock_service.events().insert().execute.return_value = mock_event_response
         
         result = self.loop.run_until_complete(
-            create_calendar_event(
+            create_calendar_event.coroutine(
                 summary='New Event',
                 start_iso='2023-01-01T10:00:00',
                 end_iso='2023-01-01T11:00:00'
             )
         )
         
-        self.assertIn("✅ Evento creado con éxito", result)
+        self.assertIn("Evento creado:", result)
         mock_service.events().insert.assert_called()
 
     @patch('app.skills.calendar.get_calendar_service')
@@ -100,7 +100,7 @@ class TestCalendarManagement(unittest.TestCase):
 
         # Run test
         result = self.loop.run_until_complete(
-            update_calendar_event(event_id='test_id', summary='New Title')
+            update_calendar_event.coroutine(event_id='test_id', summary='New Title')
         )
 
         # Assertions
@@ -129,7 +129,7 @@ class TestCalendarManagement(unittest.TestCase):
         mock_service.events().get().execute.side_effect = error
 
         result = self.loop.run_until_complete(
-            update_calendar_event(event_id='non_existent')
+            update_calendar_event.coroutine(event_id='non_existent')
         )
 
         self.assertIn("❌ Error: No se encontró ningún evento", result)
@@ -142,7 +142,7 @@ class TestCalendarManagement(unittest.TestCase):
         mock_service.events().delete().execute.return_value = None
 
         result = self.loop.run_until_complete(
-            delete_calendar_event(event_id='test_id')
+            delete_calendar_event.coroutine(event_id='test_id')
         )
 
         mock_service.events().delete.assert_called_with(calendarId='primary', eventId='test_id')
@@ -160,7 +160,7 @@ class TestCalendarManagement(unittest.TestCase):
         mock_service.events().delete().execute.side_effect = error
 
         result = self.loop.run_until_complete(
-            delete_calendar_event(event_id='test_id')
+            delete_calendar_event.coroutine(event_id='test_id')
         )
 
         self.assertIn("❌ Error: El evento con ID 'test_id' no existe", result)
