@@ -51,13 +51,16 @@ async def list_models(db: Session = Depends(get_db)):
     
     # 2. Check for active provider
     try:
-        active_provider = db.query(LLMProvider).filter(LLMProvider.is_active is True).first()
-        if active_provider:
-            from app.core.security.encryption import get_encryption_service
+        active_provider = db.query(LLMProvider).filter(LLMProvider.is_active == True).first()
+        if active_provider and active_provider.provider_id != "google":
             from app.services.llm_discovery import get_discovery_service
             
+            # Decrypt API Key
+            from app.core.security.encryption import get_encryption_service
             encryption = get_encryption_service()
-            api_key = encryption.decrypt(active_provider.api_key_enc) if active_provider.api_key_enc else None
+            api_key = None
+            if active_provider.api_key_enc:
+                api_key = encryption.decrypt(active_provider.api_key_enc)
             
             credentials = {
                 "api_key": api_key,
@@ -67,18 +70,8 @@ async def list_models(db: Session = Depends(get_db)):
             discovery = get_discovery_service()
             provider_models = await discovery.discover_models(active_provider.provider_id, credentials)
             
-            # Map provider models to the same format
-            # provider_models format: [{"id": "...", "display_name": "...", ...}]
-            # get_available_gemini_models format: [{"id": "...", "display_name": "...", ...}]
-            # So we can just extend or replace.
-            # If a provider is active, should we show ONLY its models? Or mix?
-            # The agent factory uses the active provider EXCLUSIVELY.
-            # So if a provider is active (and it's not Google), we should return ONLY its models
-            # unless the user wants to fallback to Gemini?
-            # For now, let's REPLACE if active provider is not google.
-            
-            if active_provider.provider_id != "google":
-                models = provider_models
+            if provider_models:
+                 models = provider_models
 
     except Exception as e:
         print(f"Error fetching active provider models: {e}")

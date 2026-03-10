@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 
 import { ApiError, NetworkError, TimeoutError, fetchJson } from '../lib/api'
 import { useSessionsStore } from './sessions'
+import { useModelSettingsStore } from './modelSettings'
 
 export type ChatMessage = {
   id?: number
@@ -121,10 +122,16 @@ export const useChatStore = defineStore('chat', {
       try {
         const model_name = (modelName || '').trim()
         const memory_user_id = (localStorage.getItem('navibot_memory_user_id') || '').trim()
+
+        // Get execution timeout from settings or default to 5 minutes
+        const settings = useModelSettingsStore()
+        const timeoutSeconds = settings.limitsConfig.execution_timeout_seconds || 300
+        const timeoutMs = timeoutSeconds * 1000
+
         const data = await fetchJson<ChatResponse>('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          timeout: 120000, // 2 minutes timeout for agent operations
+          timeout: timeoutMs,
           body: JSON.stringify({
             message: trimmed,
             session_id: currentSessionId,
@@ -150,7 +157,7 @@ export const useChatStore = defineStore('chat', {
         let msg = 'Unknown error'
 
         if (e instanceof TimeoutError) {
-          msg = 'The request took too long. Please check your connection and try again.'
+          msg = `Request timed out after ${e.timeout / 1000}s. Please check your connection or increase the timeout in settings.`
         } else if (e instanceof NetworkError) {
           msg = 'Could not connect to the server. Check that the backend is running and accessible.'
           if (e.originalError instanceof Error) {

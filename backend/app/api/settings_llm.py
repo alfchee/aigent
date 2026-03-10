@@ -7,6 +7,7 @@ import json
 from app.core.persistence import LLMProvider, get_persistence_db as get_db
 from app.core.security.encryption import get_encryption_service
 from app.services.llm_discovery import get_discovery_service
+from app.core.bot_pool import bot_pool
 
 router = APIRouter(prefix="/api/settings/llm", tags=["settings-llm"])
 
@@ -72,6 +73,10 @@ def activate_provider(request: ActivateProviderRequest, db: Session = Depends(ge
     
     provider.is_active = True
     db.commit()
+    
+    # Clear bot pool to force re-initialization with new provider
+    bot_pool.clear()
+    
     return {"status": "success", "message": f"Provider {request.provider_id} activated."}
 
 @router.patch("/deactivate")
@@ -83,6 +88,10 @@ def deactivate_provider(request: ActivateProviderRequest, db: Session = Depends(
     
     provider.is_active = False
     db.commit()
+    
+    # Clear bot pool to force re-initialization with new provider
+    bot_pool.clear()
+    
     return {"status": "success", "message": f"Provider {request.provider_id} deactivated."}
 
 @router.get("/providers")

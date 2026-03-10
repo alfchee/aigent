@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useModelSettingsStore } from '../stores/modelSettings'
 import McpConfig from '../components/settings/McpConfig.vue'
 import SettingsLLM from './SettingsLLM.vue'
+import Combobox from '../components/ui/Combobox.vue'
 
 const store = useModelSettingsStore()
 
@@ -317,14 +318,11 @@ onMounted(() => {
                     >Modelo Principal (Rápido)</label
                   >
                   <div class="relative">
-                    <select
+                    <Combobox
                       v-model="currentModel"
-                      class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none"
-                    >
-                      <option v-for="m in getModelOptions(currentModel)" :key="m" :value="m">
-                        {{ m }}
-                      </option>
-                    </select>
+                      :options="getModelOptions(currentModel)"
+                      placeholder="Seleccionar modelo..."
+                    />
                   </div>
                   <p class="text-xs text-slate-500">
                     Usado por defecto para tareas simples y rápidas.
@@ -336,14 +334,11 @@ onMounted(() => {
                     >Modelo Fallback (Inteligente)</label
                   >
                   <div class="relative">
-                    <select
+                    <Combobox
                       v-model="fallbackModel"
-                      class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none"
-                    >
-                      <option v-for="m in getModelOptions(fallbackModel)" :key="m" :value="m">
-                        {{ m }}
-                      </option>
-                    </select>
+                      :options="getModelOptions(fallbackModel)"
+                      placeholder="Seleccionar modelo..."
+                    />
                   </div>
                   <p class="text-xs text-slate-500">
                     Usado para razonamiento complejo o cuando el principal falla.
@@ -537,19 +532,12 @@ onMounted(() => {
                       >Lógica y Decisión</span
                     >
                   </div>
-                  <select
+                  <Combobox
                     v-model="roleConfig.supervisor_model"
-                    class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                    :options="getModelOptions(roleConfig.supervisor_model)"
                     :disabled="emergencyMode"
-                  >
-                    <option
-                      v-for="m in getModelOptions(roleConfig.supervisor_model)"
-                      :key="m"
-                      :value="m"
-                    >
-                      {{ m }}
-                    </option>
-                  </select>
+                    placeholder="Select supervisor model..."
+                  />
                   <p class="text-xs text-slate-500">
                     Encargado de planificar, tomar decisiones finales y orquestar a los otros
                     agentes. Se recomienda un modelo potente (Pro).
@@ -566,19 +554,12 @@ onMounted(() => {
                       >Investigación</span
                     >
                   </div>
-                  <select
+                  <Combobox
                     v-model="roleConfig.search_worker_model"
-                    class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                    :options="getModelOptions(roleConfig.search_worker_model)"
                     :disabled="emergencyMode"
-                  >
-                    <option
-                      v-for="m in getModelOptions(roleConfig.search_worker_model)"
-                      :key="m"
-                      :value="m"
-                    >
-                      {{ m }}
-                    </option>
-                  </select>
+                    placeholder="Select search model..."
+                  />
                   <p class="text-xs text-slate-500">
                     Procesa grandes cantidades de texto web y HTML. Se recomienda un modelo rápido y
                     con gran contexto (Flash).
@@ -596,19 +577,12 @@ onMounted(() => {
                       >Ejecución</span
                     >
                   </div>
-                  <select
+                  <Combobox
                     v-model="roleConfig.code_worker_model"
-                    class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                    :options="getModelOptions(roleConfig.code_worker_model)"
                     :disabled="emergencyMode"
-                  >
-                    <option
-                      v-for="m in getModelOptions(roleConfig.code_worker_model)"
-                      :key="m"
-                      :value="m"
-                    >
-                      {{ m }}
-                    </option>
-                  </select>
+                    placeholder="Select code model..."
+                  />
                   <p class="text-xs text-slate-500">
                     Ejecuta scripts Python y manipula archivos. Requiere velocidad y precisión
                     sintáctica.
@@ -626,19 +600,12 @@ onMounted(() => {
                       >Monitoreo</span
                     >
                   </div>
-                  <select
+                  <Combobox
                     v-model="roleConfig.scheduled_worker_model"
-                    class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                    :options="getModelOptions(roleConfig.scheduled_worker_model)"
                     :disabled="emergencyMode"
-                  >
-                    <option
-                      v-for="m in getModelOptions(roleConfig.scheduled_worker_model)"
-                      :key="m"
-                      :value="m"
-                    >
-                      {{ m }}
-                    </option>
-                  </select>
+                    placeholder="Select scheduled model..."
+                  />
                   <p class="text-xs text-slate-500">
                     Ejecuta tareas periódicas en segundo plano. Debe ser muy económico (Flash).
                   </p>
@@ -653,19 +620,12 @@ onMounted(() => {
                       >Audio</span
                     >
                   </div>
-                  <select
+                  <Combobox
                     v-model="roleConfig.voice_worker_model"
-                    class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                    :options="getModelOptions(roleConfig.voice_worker_model)"
                     :disabled="emergencyMode"
-                  >
-                    <option
-                      v-for="m in getModelOptions(roleConfig.voice_worker_model)"
-                      :key="m"
-                      :value="m"
-                    >
-                      {{ m }}
-                    </option>
-                  </select>
+                    placeholder="Select voice model..."
+                  />
                   <p class="text-xs text-slate-500">
                     Modelo especializado en síntesis de voz o respuestas verbales.
                   </p>
@@ -680,19 +640,12 @@ onMounted(() => {
                       >Imagen</span
                     >
                   </div>
-                  <select
+                  <Combobox
                     v-model="roleConfig.image_worker_model"
-                    class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
+                    :options="getModelOptions(roleConfig.image_worker_model)"
                     :disabled="emergencyMode"
-                  >
-                    <option
-                      v-for="m in getModelOptions(roleConfig.image_worker_model)"
-                      :key="m"
-                      :value="m"
-                    >
-                      {{ m }}
-                    </option>
-                  </select>
+                    placeholder="Select image model..."
+                  />
                   <p class="text-xs text-slate-500">
                     Generación de imágenes a partir de texto con alta eficiencia.
                   </p>

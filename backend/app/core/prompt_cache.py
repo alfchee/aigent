@@ -95,13 +95,18 @@ class PromptCacheManager:
         self._enabled = os.getenv("NAVIBOT_CACHE_ENABLED", "true").lower() == "true"
         self._version = os.getenv("NAVIBOT_CACHE_VERSION", "1.0.0")  # Bump to invalidate all caches
         
-        # Import here to avoid circular imports
+        # Initialize Google GenAI Client
         try:
-            from google.generativeai import caching
-            self._caching_module = caching
+            from google import genai
+            if self._google_api_key:
+                self.client = genai.Client(api_key=self._google_api_key)
+            else:
+                self.client = None
+                self._enabled = False
+                logger.warning("GOOGLE_API_KEY missing. Caching disabled.")
         except ImportError:
-            logger.warning("google-generativeai not installed. Caching disabled.")
-            self._caching_module = None
+            logger.warning("google-genai not installed. Caching disabled.")
+            self.client = None
             self._enabled = False
         
         logger.info(f"PromptCacheManager initialized: enabled={self._enabled}, ttl={self._cache_ttl}min, model={self._cache_model}")
@@ -109,7 +114,7 @@ class PromptCacheManager:
     @property
     def is_enabled(self) -> bool:
         """Check if caching is enabled."""
-        return self._enabled and self._caching_module is not None
+        return self._enabled and self.client is not None
     
     def _get_cache_key(self, cache_type: str, worker_name: Optional[str] = None) -> str:
         """Generate a unique cache key."""
@@ -127,7 +132,7 @@ class PromptCacheManager:
             return []
         
         try:
-            return list(self._caching_module.CachedContent.list())
+            return list(self.client.caches.list())
         except Exception as e:
             logger.warning(f"Failed to list existing caches: {e}")
             return []
@@ -139,10 +144,10 @@ class PromptCacheManager:
                 return cache
         return None
     
-    def _get_ttl_delta(self) -> datetime.timedelta:
-        """Get the TTL as a timedelta."""
-        return datetime.timedelta(minutes=self._cache_ttl)
-    
+    def _get_ttl_str(self) -> str:
+        """Get the TTL as a string (e.g., '3600s')."""
+        return f"{self._cache_ttl * 60}s"
+
     def create_agency_cache(
         self,
         system_instruction: str,
@@ -179,9 +184,12 @@ class PromptCacheManager:
             return cache_info
         
         try:
+            from google.genai import types
+            
             # Estimate token count (rough approximation: ~4 chars per token)
+            # Use str() instead of json.dumps to avoid serialization issues with Schema objects
             estimated_tokens = len(system_instruction) // 4 + sum(
-                len(json.dumps(tool)) for tool in tools_schema
+                len(str(tool)) for tool in tools_schema
             ) // 4
             
             if estimated_tokens < MIN_CACHE_TOKENS:
@@ -191,13 +199,16 @@ class PromptCacheManager:
                     f"Consider adding more static content for efficiency."
                 )
             
-            cache = self._caching_module.CachedContent.create(
+            config = types.CreateCachedContentConfig(
                 model=self._cache_model,
                 display_name=display_name,
                 system_instruction=system_instruction,
                 contents=contents or [],
-                ttl=self._get_ttl_delta(),
+                ttl=self._get_ttl_str(),
+                tools=tools_schema if tools_schema else None
             )
+            
+            cache = self.client.caches.create(config=config)
             
             cache_info = CacheInfo(
                 name=cache.name,
@@ -255,9 +266,12 @@ class PromptCacheManager:
             return cache_info
         
         try:
+            from google.genai import types
+
             # Estimate token count
+            # Use str() instead of json.dumps to avoid serialization issues with Schema objects
             estimated_tokens = len(system_instruction) // 4 + sum(
-                len(json.dumps(tool)) for tool in tools_schema
+                len(str(tool)) for tool in tools_schema
             ) // 4
             
             if estimated_tokens < MIN_CACHE_TOKENS:
@@ -266,13 +280,30 @@ class PromptCacheManager:
                     f"recommended minimum ({MIN_CACHE_TOKENS} tokens)."
                 )
             
-            cache = self._caching_module.CachedContent.create(
+            # Clean tool schema for caching (remove extra forbidden fields)
+            # The API expects a specific structure for tools in cache config
+            cleaned_tools_list = []
+            if tools_schema:
+                for tool in tools_schema:
+                    # Keep only name, description, parameters
+                    cleaned_tool = {
+                        "name": tool.get("name"),
+                        "description": tool.get("description"),
+                    }
+                    if "parameters" in tool and tool["parameters"]:
+                        cleaned_tool["parameters"] = tool["parameters"]
+                    cleaned_tools_list.append(cleaned_tool)
+
+            config = types.CreateCachedContentConfig(
                 model=self._cache_model,
                 display_name=display_name,
                 system_instruction=system_instruction,
                 contents=contents or [],
-                ttl=self._get_ttl_delta(),
+                ttl=self._get_ttl_str(),
+                tools=[{'function_declarations': cleaned_tools_list}] if cleaned_tools_list else None
             )
+
+            cache = self.client.caches.create(config=config)
             
             cache_info = CacheInfo(
                 name=cache.name,
@@ -403,8 +434,7 @@ class PromptCacheManager:
             if "agency" in self._caches:
                 cache_info = self._caches["agency"]
                 try:
-                    cache = self._caching_module.CachedContent.get(cache_info.name)
-                    cache.delete()
+                    self.client.caches.delete(name=cache_info.name)
                     results[cache_info.name] = True
                     logger.info(f"Deleted agency cache: {cache_info.name}")
                 except Exception as e:
@@ -420,8 +450,7 @@ class PromptCacheManager:
             for worker in workers_to_delete:
                 cache_info = self._caches[worker]
                 try:
-                    cache = self._caching_module.CachedContent.get(cache_info.name)
-                    cache.delete()
+                    self.client.caches.delete(name=cache_info.name)
                     results[cache_info.name] = True
                     logger.info(f"Deleted worker cache for {worker}: {cache_info.name}")
                 except Exception as e:
@@ -441,10 +470,13 @@ class PromptCacheManager:
             Number of caches deleted
         """
         count = 0
+        if not self.is_enabled:
+             return 0
+             
         for cache in self._list_existing_caches():
             try:
                 if cache.display_name.startswith("navibot_"):
-                    cache.delete()
+                    self.client.caches.delete(name=cache.name)
                     count += 1
                     logger.info(f"Deleted cache: {cache.display_name}")
             except Exception as e:

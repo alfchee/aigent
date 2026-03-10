@@ -20,9 +20,11 @@ export class NetworkError extends Error {
 }
 
 export class TimeoutError extends Error {
+  timeout: number
   constructor(timeout: number) {
     super(`Request timed out after ${timeout}ms`)
     this.name = 'TimeoutError'
+    this.timeout = timeout
   }
 }
 

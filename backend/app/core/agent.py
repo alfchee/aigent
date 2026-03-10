@@ -84,8 +84,10 @@ class NaviBot:
         
         try:
             db = next(get_persistence_db())
-            active_provider = db.query(LLMProvider).filter(LLMProvider.is_active is True).first()
+            active_provider = db.query(LLMProvider).filter(LLMProvider.is_active == True).first()
             
+            logger.info(f"NaviBot init: active_provider={active_provider}, provider_id={active_provider.provider_id if active_provider else 'None'}, model_name={model_name}")
+
             if active_provider and active_provider.provider_id != "google":
                 # Check if the requested model actually belongs to this provider?
                 # Or just assume if a provider is active, all requests go through it.
@@ -121,6 +123,7 @@ class NaviBot:
                          self.client = genai.Client(api_key=api_key)
                      else:
                          self.client = genai.Client(api_key="MISSING")
+                     logger.info(f"NaviBot initialized in Google mode (override) for model {model_name}")
                 else:
                     self.is_google = False
                     encryption = get_encryption_service()
@@ -137,7 +140,7 @@ class NaviBot:
                     }
                     
                     self.openai_client = OpenAI(**client_kwargs)
-                    logger.info(f"Initialized OpenAI client for provider {active_provider.provider_id} with base_url {base_url}")
+                    logger.info(f"Initialized OpenAI client for provider {active_provider.provider_id} with base_url {base_url} for model {model_name}")
             else:
                 # Default Google initialization
                 api_key = os.getenv("GOOGLE_API_KEY")
@@ -146,6 +149,7 @@ class NaviBot:
                     self.client = genai.Client(api_key="MISSING")
                 else:
                     self.client = genai.Client(api_key=api_key)
+                logger.info(f"NaviBot initialized in Google mode (default) for model {model_name}")
         except Exception as e:
             logger.error(f"Error initializing LLM client: {e}")
             # Fallback to Google env var if DB fails
@@ -818,9 +822,13 @@ class NaviBot:
             except Exception as e:
                 logger.warning(f"Failed to convert MCP declaration to schema: {e}")
         
-        # Try to get or create cache for GeneralAssistant
-        if tools_schema and system_instruction:
+        # Try to get or create cache for GeneralAssistant (Only if using Google)
+        if self.is_google and tools_schema and system_instruction:
             try:
+                # Wrap tools_schema in function_declarations as expected by prompt_cache
+                # prompt_cache expects list of dicts which it then wraps in 'tools'=[{'function_declarations': [...]}]
+                # Our tools_schema is already a list of dicts representing function declarations.
+                
                 cache_manager = prompt_cache.get_cache_manager()
                 cached_content_name = cache_manager.get_or_create_worker_cache(
                     worker_name="GeneralAssistant",
@@ -883,6 +891,16 @@ class NaviBot:
         
         # Prepare messages from history
         messages = []
+        
+        # Optimize context: Limit history length for OpenRouter to prevent Connection Aborted errors
+        # Keep system prompt (handled separately) + last 20 messages
+        # This is a critical optimization for models with smaller context or unstable connections
+        MAX_HISTORY_MESSAGES = 20
+        history_to_use = history
+        if len(history) > MAX_HISTORY_MESSAGES:
+            logger.info(f"Truncating history from {len(history)} to {MAX_HISTORY_MESSAGES} messages for OpenRouter optimization")
+            history_to_use = history[-MAX_HISTORY_MESSAGES:]
+
         if system_instruction:
             # system_instruction might be just a string or a list of parts?
             # self._build_system_instruction returns a list of parts usually for Gemini
@@ -896,7 +914,7 @@ class NaviBot:
             messages.append({"role": "system", "content": content})
         
         # Convert internal history to OpenAI format
-        for item in history:
+        for item in history_to_use:
             # Handle dictionary items (from persistence) or HistoryItem objects
             if isinstance(item, dict):
                 role = item.get("role")
@@ -953,17 +971,26 @@ class NaviBot:
         messages.append({"role": "user", "content": message})
         
         try:
+            # Log payload size for debugging context issues
+            payload_size = sum(len(str(m.get("content", ""))) for m in messages)
+            logger.info(f"Sending request to OpenAI compatible API. Messages: {len(messages)}, Approx Tokens: {payload_size // 4}")
+            
             response = self.openai_client.chat.completions.create(
                 model=model_to_use,
                 messages=messages,
                 # max_tokens=..., temperature=... could be added from settings
             )
             
+            if not response or not response.choices:
+                logger.error("OpenAI client returned empty response")
+                return "Error: No response from provider."
+                
             response_text = response.choices[0].message.content
-            return response_text
+            return response_text if response_text else ""
             
         except Exception as e:
             logger.error(f"OpenAI client error: {e}")
+            # Re-raise to let main.py handle rate limits or notify user
             raise
 
     async def send_message(self, message: str) -> str:
@@ -975,10 +1002,36 @@ class NaviBot:
 
         chat = self._chat_sessions[session_id]
         if isinstance(chat, dict) and "history" in chat:
-             return await self._send_message_openai(session_id, message)
+             response = await self._send_message_openai(session_id, message)
+             # Manually update history for OpenAI sessions
+             # This is critical for context continuity in the current session
+             chat["history"].append({"role": "user", "parts": [{"text": message}]})
+             chat["history"].append({"role": "model", "parts": [{"text": response}]})
+             return response
 
         # Initial message
-        response = await chat.send_message(message)
+        try:
+            response = await chat.send_message(message)
+        except Exception as e:
+            # Check for 404 Not Found (ClientError) which indicates model deprecation/removal
+            # e.g. "models/gemini-1.5-flash is not found"
+            error_str = str(e).lower()
+            if self.is_google and ("404" in error_str or "not found" in error_str):
+                logger.warning(f"Model {self.model_name} failed (404/Not Found). Attempting fallback to gemini-flash-latest.")
+                print(f"DEBUG: Catching 404 for {self.model_name}, switching to gemini-flash-latest")
+                
+                # Update model name to a safe default
+                self.model_name = "gemini-flash-latest"
+                
+                # Re-initialize the chat session with the new model
+                # This reloads history from DB/persistence to ensure consistency
+                await self.start_chat(session_id)
+                chat = self._chat_sessions[session_id]
+                
+                # Retry sending the message
+                response = await chat.send_message(message)
+            else:
+                raise e
         
         # DEBUG: Log if response contains function calls
         has_function_calls = False
