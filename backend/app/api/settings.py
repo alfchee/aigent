@@ -90,7 +90,7 @@ def get_app_settings(db: Session = Depends(get_db)):
     
     try:
         # Check active provider
-        active_provider = db.query(LLMProvider).filter(LLMProvider.is_active is True).first()
+        active_provider = db.query(LLMProvider).filter(LLMProvider.is_active == True).first()
         if active_provider and active_provider.provider_id != "google":
              # If using external provider, we should fetch its models to populate the list
              # However, fetching on every settings load might be slow.

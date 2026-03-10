@@ -11,12 +11,13 @@ from sqlalchemy.orm import Session
 from app.core.persistence import LLMProvider, get_persistence_db
 from app.core.security.encryption import get_encryption_service
 import os
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 def get_active_provider_config(db: Session) -> Optional[LLMProvider]:
-    return db.query(LLMProvider).filter(LLMProvider.is_active is True).first()
+    return db.query(LLMProvider).filter(LLMProvider.is_active == True).first()
 
 def get_agent_model(model_name: str, temperature: float = 0.7, **kwargs) -> BaseChatModel:
     # Use persistence DB
@@ -64,13 +65,26 @@ def get_agent_model(model_name: str, temperature: float = 0.7, **kwargs) -> Base
         elif provider.provider_id == "openrouter":
             if not ChatOpenAI:
                 raise ImportError("langchain-openai not installed. Please install it to use OpenRouter.")
-            
-            # OpenRouter doesn't support cached_content in the same way, ignore it
+
+            provider_config = {}
+            if provider.config_json:
+                try:
+                    provider_config = json.loads(provider.config_json)
+                except Exception:
+                    provider_config = {}
+
+            default_headers = {
+                "X-Title": "Navibot",
+            }
+            if provider_config.get("openrouter_cache", True):
+                default_headers["X-OpenRouter-Cache"] = "true"
+
             return ChatOpenAI(
                 model=model_name,
                 openai_api_key=api_key,
                 openai_api_base="https://openrouter.ai/api/v1",
-                temperature=temperature
+                temperature=temperature,
+                default_headers=default_headers,
             )
             
         elif provider.provider_id == "lm_studio":

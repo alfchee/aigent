@@ -61,10 +61,6 @@ function_def = {
 }
 
 def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: str = ""):
-    facts_section = ""
-    if user_facts:
-        facts_section = f"\n\nHere are some facts about the user you should keep in mind:\n{user_facts}"
-
     # Build descriptions block
     worker_desc_block = ""
     for worker_name in members:
@@ -73,7 +69,7 @@ def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: s
 
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", system_prompt + facts_section),
+            ("system", system_prompt),
             MessagesPlaceholder(variable_name="messages"),
             (
                 "system",

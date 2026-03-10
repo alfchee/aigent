@@ -34,6 +34,38 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _clean_json_schema(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned: Dict[str, Any] = {}
+        for k, v in value.items():
+            if k in {"$schema", "title", "examples", "default"}:
+                continue
+            if k == "additionalProperties" and v is True:
+                continue
+            cleaned[k] = _clean_json_schema(v)
+        return cleaned
+    if isinstance(value, list):
+        return [_clean_json_schema(item) for item in value]
+    return value
+
+
+def _normalize_function_declarations(tools_schema: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    declarations: List[Dict[str, Any]] = []
+    for tool in tools_schema or []:
+        name = (tool.get("name") or "").strip()
+        if not name:
+            continue
+        declaration: Dict[str, Any] = {
+            "name": name,
+            "description": (tool.get("description") or "").strip(),
+        }
+        params = tool.get("parameters")
+        if isinstance(params, dict) and params:
+            declaration["parameters"] = _clean_json_schema(params)
+        declarations.append(declaration)
+    return declarations
+
+
 class CacheStatus(Enum):
     """Status of a cached content."""
     ACTIVE = "active"
@@ -199,16 +231,17 @@ class PromptCacheManager:
                     f"Consider adding more static content for efficiency."
                 )
             
+            declarations = _normalize_function_declarations(tools_schema)
+
             config = types.CreateCachedContentConfig(
-                model=self._cache_model,
                 display_name=display_name,
                 system_instruction=system_instruction,
                 contents=contents or [],
                 ttl=self._get_ttl_str(),
-                tools=tools_schema if tools_schema else None
+                tools=[{"function_declarations": declarations}] if declarations else None
             )
             
-            cache = self.client.caches.create(config=config)
+            cache = self.client.caches.create(model=self._cache_model, config=config)
             
             cache_info = CacheInfo(
                 name=cache.name,
@@ -280,30 +313,17 @@ class PromptCacheManager:
                     f"recommended minimum ({MIN_CACHE_TOKENS} tokens)."
                 )
             
-            # Clean tool schema for caching (remove extra forbidden fields)
-            # The API expects a specific structure for tools in cache config
-            cleaned_tools_list = []
-            if tools_schema:
-                for tool in tools_schema:
-                    # Keep only name, description, parameters
-                    cleaned_tool = {
-                        "name": tool.get("name"),
-                        "description": tool.get("description"),
-                    }
-                    if "parameters" in tool and tool["parameters"]:
-                        cleaned_tool["parameters"] = tool["parameters"]
-                    cleaned_tools_list.append(cleaned_tool)
+            declarations = _normalize_function_declarations(tools_schema)
 
             config = types.CreateCachedContentConfig(
-                model=self._cache_model,
                 display_name=display_name,
                 system_instruction=system_instruction,
                 contents=contents or [],
                 ttl=self._get_ttl_str(),
-                tools=[{'function_declarations': cleaned_tools_list}] if cleaned_tools_list else None
+                tools=[{"function_declarations": declarations}] if declarations else None
             )
 
-            cache = self.client.caches.create(config=config)
+            cache = self.client.caches.create(model=self._cache_model, config=config)
             
             cache_info = CacheInfo(
                 name=cache.name,

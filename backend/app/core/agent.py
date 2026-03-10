@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import inspect
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -615,14 +616,8 @@ class NaviBot:
     def _build_system_instruction(self, tool_reference: str, extra_prompt: str | None = None, user_facts: str | None = None) -> str:
         from datetime import datetime
         extra = (extra_prompt or "").strip()
-        
-        # Format user facts
-        facts_section = ""
-        if user_facts:
-            facts_section = f"## User Facts (Long Term Memory)\n{user_facts}"
 
-        # Sandwich structure: Personality -> User Facts -> Capabilities -> Search Policy -> Base Constraints
-        parts = [part for part in [extra, facts_section, tool_reference, SEARCH_POLICY, BASE_CONSTRAINTS] if part]
+        parts = [part for part in [extra, tool_reference, SEARCH_POLICY, BASE_CONSTRAINTS] if part]
         combined = "\n\n".join(parts).strip()
         
         current_dt = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -674,7 +669,92 @@ class NaviBot:
              self._mcp_loaded = True
         
         mcp_tools = await self.mcp_manager.get_all_tools()
-        
+        native_declarations = []
+
+        def clean_schema(s):
+            if isinstance(s, dict):
+                if "$schema" in s:
+                    del s["$schema"]
+                if "additionalProperties" in s:
+                    del s["additionalProperties"]
+                if "title" in s:
+                    del s["title"]
+                if "examples" in s:
+                    del s["examples"]
+                if "default" in s:
+                    del s["default"]
+                for _, v in s.items():
+                    clean_schema(v)
+            elif isinstance(s, list):
+                for item in s:
+                    clean_schema(item)
+            return s
+
+        def schema_from_signature(func):
+            properties = {}
+            required = []
+            try:
+                sig = inspect.signature(func)
+            except Exception:
+                return {"type": "object", "properties": {}, "required": []}
+
+            for param_name, param in sig.parameters.items():
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+                annotation = param.annotation
+                json_type = "string"
+                if annotation is int:
+                    json_type = "integer"
+                elif annotation is float:
+                    json_type = "number"
+                elif annotation is bool:
+                    json_type = "boolean"
+                elif annotation is str:
+                    json_type = "string"
+                properties[param_name] = {"type": json_type}
+                if param.default is inspect.Parameter.empty:
+                    required.append(param_name)
+
+            return {"type": "object", "properties": properties, "required": required}
+
+        def ensure_object_schema(schema, func):
+            if not isinstance(schema, dict):
+                schema = {}
+            schema = clean_schema(schema)
+            if schema.get("type") != "object":
+                schema = {}
+            if not schema:
+                schema = schema_from_signature(func)
+            if schema.get("type") != "object":
+                schema = {"type": "object", "properties": {}, "required": []}
+            if not isinstance(schema.get("properties"), dict):
+                schema["properties"] = {}
+            if not isinstance(schema.get("required"), list):
+                schema["required"] = []
+            return schema
+
+        for tool in native_tools:
+            try:
+                safe_name = getattr(tool, "__name__", getattr(tool, "name", "tool"))
+                description = getattr(tool, "__doc__", "") or getattr(tool, "description", "") or ""
+                params = {}
+                args_schema = getattr(tool, "args_schema", None)
+                if args_schema:
+                    if hasattr(args_schema, "model_json_schema"):
+                        params = args_schema.model_json_schema()
+                    elif hasattr(args_schema, "schema"):
+                        params = args_schema.schema()
+                params = ensure_object_schema(params, tool)
+                native_declarations.append(
+                    types.FunctionDeclaration(
+                        name=safe_name,
+                        description=description,
+                        parameters=params,
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create declaration for native tool {getattr(tool, '__name__', 'unknown')}: {e}")
+
         def create_mcp_wrapper(t_name, t_desc):
             async def _mcp_wrapper(**kwargs):
                 return await self.mcp_manager.call_tool(t_name, kwargs)
@@ -693,31 +773,10 @@ class NaviBot:
             self._session_tools[safe_name] = wrapper
 
             
-            # Create Manual FunctionDeclaration using raw schema
-            # This bypasses SDK introspection issues
             try:
-                # Ensure parameters is a dict
-                params = tool_def.get("inputSchema", {}).copy() # Copy to avoid modifying original
-                if not isinstance(params, dict):
-                    params = {}
-                
-                # Clean up schema if necessary
-                # Remove $schema field which causes Pydantic validation errors in Gemini SDK
-                def clean_schema(s):
-                    if isinstance(s, dict):
-                        if "$schema" in s:
-                            del s["$schema"]
-                        if "additionalProperties" in s:
-                            del s["additionalProperties"]
-                        for k, v in s.items():
-                            clean_schema(v)
-                    elif isinstance(s, list):
-                        for item in s:
-                            clean_schema(item)
-                    return s
+                params = tool_def.get("inputSchema", {}).copy()
+                params = ensure_object_schema(params, wrapper)
 
-                params = clean_schema(params)
-                
                 decl = types.FunctionDeclaration(
                     name=safe_name,
                     description=tool_def.get("description", ""),
@@ -727,14 +786,12 @@ class NaviBot:
             except Exception as e:
                 print(f"Warning: Could not create declaration for {tool_def['name']}: {e}")
 
-        # Construct Tools List
-        # We pass native tools (callables) AND a Tool object containing MCP declarations
         final_tools = []
-        if native_tools:
-            final_tools.extend(native_tools)
-        
-        if mcp_declarations:
-            final_tools.append(types.Tool(function_declarations=mcp_declarations))
+        all_declarations = []
+        all_declarations.extend(native_declarations)
+        all_declarations.extend(mcp_declarations)
+        if all_declarations:
+            final_tools.append(types.Tool(function_declarations=all_declarations))
 
         tools_payload = final_tools
         if self._google_grounding_enabled():
@@ -744,25 +801,11 @@ class NaviBot:
             elif grounding_mode == "auto" and not final_tools:
                 tools_payload = [{"google_search_retrieval": {}}]
 
-        # Load User Facts for System Prompt (Common for both branches)
-        user_facts_str = None
-        try:
-            from app.core.runtime_context import resolve_memory_user_id
-            from app.core.memory_manager import get_agent_memory
-            
-            # Resolve memory user ID from session
-            mem_uid = resolve_memory_user_id(None, session_id)
-            facts = get_agent_memory().get_all_user_facts(mem_uid)
-            if facts:
-                user_facts_str = "\n".join([f"- {f}" for f in facts])
-        except Exception as e:
-            print(f"Warning: Failed to load user facts: {e}")
-
         if tools_payload:
             tool_reference = self._load_tool_reference()
             from app.core.config_manager import get_settings
             
-            system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt, user_facts=user_facts_str)
+            system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt)
             
             # Disable automatic function calling to handle MCP tools manually
             # This ensures we can route calls to our wrappers correctly
@@ -777,7 +820,7 @@ class NaviBot:
              # Handle case with no tools but system instruction
              tool_reference = self._load_tool_reference()
              from app.core.config_manager import get_settings
-             system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt, user_facts=user_facts_str)
+             system_instruction = self._build_system_instruction(tool_reference, get_settings().system_prompt)
              tool_config = types.GenerateContentConfig(
                 system_instruction=system_instruction if system_instruction else None
             )
@@ -1018,7 +1061,6 @@ class NaviBot:
             error_str = str(e).lower()
             if self.is_google and ("404" in error_str or "not found" in error_str):
                 logger.warning(f"Model {self.model_name} failed (404/Not Found). Attempting fallback to gemini-flash-latest.")
-                print(f"DEBUG: Catching 404 for {self.model_name}, switching to gemini-flash-latest")
                 
                 # Update model name to a safe default
                 self.model_name = "gemini-flash-latest"

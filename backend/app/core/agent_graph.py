@@ -194,7 +194,7 @@ class AgentGraph:
         # 1. Crear Nodo Supervisor
         # Use specific LLM for supervisor
         supervisor_llm = self._get_llm("supervisor")
-        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts=self.user_facts)
+        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts="")
         
         # Logging wrapper for Supervisor node
         
@@ -253,10 +253,6 @@ class AgentGraph:
             
             # Obtener prompt del sistema
             system_prompt = WORKER_PROMPTS.get(worker_name, "You are a helpful assistant.")
-            
-            # Inyectar hechos del usuario si es el asistente general
-            if worker_name == "GeneralAssistant" and self.user_facts:
-                system_prompt += f"\n\nFacts about the user:\n{self.user_facts}"
             
             # Try to get or create cached content for this worker
             cached_content = None
