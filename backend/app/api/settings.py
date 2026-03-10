@@ -1,5 +1,7 @@
 from typing import Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+from app.core.persistence import get_persistence_db as get_db, LLMProvider
 from pydantic import BaseModel
 
 from app.core.config_manager import (
@@ -43,14 +45,80 @@ class SessionSettingsRequest(BaseModel):
 
 
 @router.get("/api/available-models")
-async def list_models():
+async def list_models(db: Session = Depends(get_db)):
+    # 1. Default Gemini models (always available if env var is set)
     models = await get_available_gemini_models()
+    
+    # 2. Check for active provider
+    try:
+        active_provider = db.query(LLMProvider).filter(LLMProvider.is_active is True).first()
+        if active_provider:
+            from app.core.security.encryption import get_encryption_service
+            from app.services.llm_discovery import get_discovery_service
+            
+            encryption = get_encryption_service()
+            api_key = encryption.decrypt(active_provider.api_key_enc) if active_provider.api_key_enc else None
+            
+            credentials = {
+                "api_key": api_key,
+                "base_url": active_provider.base_url
+            }
+            
+            discovery = get_discovery_service()
+            provider_models = await discovery.discover_models(active_provider.provider_id, credentials)
+            
+            # Map provider models to the same format
+            # provider_models format: [{"id": "...", "display_name": "...", ...}]
+            # get_available_gemini_models format: [{"id": "...", "display_name": "...", ...}]
+            # So we can just extend or replace.
+            # If a provider is active, should we show ONLY its models? Or mix?
+            # The agent factory uses the active provider EXCLUSIVELY.
+            # So if a provider is active (and it's not Google), we should return ONLY its models
+            # unless the user wants to fallback to Gemini?
+            # For now, let's REPLACE if active provider is not google.
+            
+            if active_provider.provider_id != "google":
+                models = provider_models
+
+    except Exception as e:
+        print(f"Error fetching active provider models: {e}")
+        # Fallback to Gemini models if something breaks
+        
     return {"models": models}
 
-
 @router.get("/api/settings")
-def get_app_settings():
+def get_app_settings(db: Session = Depends(get_db)):
     s = get_settings()
+    
+    # Enrich models list with active provider's models if applicable
+    # The default get_settings() only returns hardcoded models or cached ones.
+    # We want to dynamically inject the available models from the active provider into the "models" list
+    # so the frontend dropdowns can see them.
+    
+    try:
+        # Check active provider
+        active_provider = db.query(LLMProvider).filter(LLMProvider.is_active is True).first()
+        if active_provider and active_provider.provider_id != "google":
+             # If using external provider, we should fetch its models to populate the list
+             # However, fetching on every settings load might be slow.
+             # Ideally the frontend uses /api/available-models to populate dropdowns.
+             # But the "models" key in settings response is used for validation?
+             # Or just strictly for the list of keys in s.models?
+             
+             # The frontend SettingsView.vue uses:
+             # const dynamicModels = computed(() => {
+             #   if (availableModels.value.length > 0) {
+             #     return availableModels.value.map((m) => m.id)
+             #   }
+             #   return models.value
+             # })
+             
+             # availableModels comes from store.availableModels which comes from /api/available-models.
+             # So if we fixed /api/available-models above, the frontend should see them!
+             pass
+    except Exception:
+        pass
+
     return {
         "settings": {
             "current_model": s.current_model,

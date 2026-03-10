@@ -84,7 +84,7 @@ class TestGoogleDriveExport(unittest.TestCase):
         
         # Execute function under test
         target_path = "/tmp/test.pdf"
-        with patch('builtins.open', mock_open()) as mocked_file:
+        with patch('builtins.open', mock_open()):
             _download_to_path_sync(file_id, target_path)
             
         # Assertions

@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys
 import os
-import asyncio
 from pathlib import Path
 
 # Ensure backend path is in sys.path

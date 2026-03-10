@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useModelSettingsStore } from '../stores/modelSettings'
 import McpConfig from '../components/settings/McpConfig.vue'
+import SettingsLLM from './SettingsLLM.vue'
 
 const store = useModelSettingsStore()
 
@@ -172,6 +173,22 @@ async function save() {
   }
 }
 
+// Ensure the dropdowns have a value even if the model list is empty initially
+// This is critical because dynamicModels might be empty on first render if loadAppSettings hasn't finished
+// or if the backend returns empty list. We want to ensure the bound value is preserved.
+// The v-model binding works, but if the option isn't in the list, the select might show empty.
+// We can add the current value to the list if it's not there, temporarily.
+// Or just rely on Vue's behavior (it usually shows the value even if not in options, but sometimes blank).
+// A better approach is to ensure dynamicModels always includes the current selection.
+
+const getModelOptions = (currentSelection: string) => {
+  const options = [...dynamicModels.value]
+  if (currentSelection && !options.includes(currentSelection)) {
+    options.push(currentSelection)
+  }
+  return options
+}
+
 onMounted(() => {
   void load()
 })
@@ -245,15 +262,23 @@ onMounted(() => {
         <!-- Tabs -->
         <div class="flex border-b border-slate-200 space-x-1 overflow-x-auto">
           <button
-            v-for="tab in ['general', 'roles', 'personality', 'limits', 'mcp', 'advanced']"
+            v-for="tab in [
+              'general',
+              'providers',
+              'roles',
+              'personality',
+              'limits',
+              'mcp',
+              'advanced',
+            ]"
             :key="tab"
-            @click="activeTab = tab"
             class="px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap capitalize"
             :class="
               activeTab === tab
                 ? 'border-sky-500 text-sky-600'
                 : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
             "
+            @click="activeTab = tab"
           >
             {{ tab }}
           </button>
@@ -261,6 +286,11 @@ onMounted(() => {
 
         <!-- Tab Content -->
         <div class="bg-white border border-slate-200 rounded-2xl shadow-sm min-h-[400px]">
+          <!-- PROVIDERS TAB -->
+          <div v-if="activeTab === 'providers'" class="p-6">
+            <SettingsLLM />
+          </div>
+
           <!-- GENERAL TAB -->
           <div v-if="activeTab === 'general'" class="p-6 space-y-8">
             <section class="space-y-4">
@@ -291,7 +321,9 @@ onMounted(() => {
                       v-model="currentModel"
                       class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none"
                     >
-                      <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                      <option v-for="m in getModelOptions(currentModel)" :key="m" :value="m">
+                        {{ m }}
+                      </option>
                     </select>
                   </div>
                   <p class="text-xs text-slate-500">
@@ -308,7 +340,9 @@ onMounted(() => {
                       v-model="fallbackModel"
                       class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none"
                     >
-                      <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                      <option v-for="m in getModelOptions(fallbackModel)" :key="m" :value="m">
+                        {{ m }}
+                      </option>
                     </select>
                   </div>
                   <p class="text-xs text-slate-500">
@@ -320,9 +354,9 @@ onMounted(() => {
               <div class="bg-sky-50 border border-sky-100 rounded-lg p-4 flex items-start gap-3">
                 <div class="flex items-center h-5">
                   <input
-                    type="checkbox"
-                    v-model="autoEscalate"
                     id="autoEscalate"
+                    v-model="autoEscalate"
+                    type="checkbox"
                     class="h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
                   />
                 </div>
@@ -440,9 +474,9 @@ onMounted(() => {
 
                 <div class="flex items-center gap-2">
                   <button
-                    @click="resetRoles"
                     class="text-xs text-slate-500 hover:text-slate-700 underline mr-2"
                     title="Restaurar configuración de roles por defecto"
+                    @click="resetRoles"
                   >
                     Restaurar Defaults
                   </button>
@@ -451,9 +485,9 @@ onMounted(() => {
                     >Modo Emergencia</span
                   >
                   <button
-                    @click="emergencyMode = !emergencyMode"
                     class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
                     :class="emergencyMode ? 'bg-red-600' : 'bg-slate-200'"
+                    @click="emergencyMode = !emergencyMode"
                   >
                     <span class="sr-only">Activar modo emergencia</span>
                     <span
@@ -508,7 +542,13 @@ onMounted(() => {
                     class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
                     :disabled="emergencyMode"
                   >
-                    <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                    <option
+                      v-for="m in getModelOptions(roleConfig.supervisor_model)"
+                      :key="m"
+                      :value="m"
+                    >
+                      {{ m }}
+                    </option>
                   </select>
                   <p class="text-xs text-slate-500">
                     Encargado de planificar, tomar decisiones finales y orquestar a los otros
@@ -531,7 +571,13 @@ onMounted(() => {
                     class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
                     :disabled="emergencyMode"
                   >
-                    <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                    <option
+                      v-for="m in getModelOptions(roleConfig.search_worker_model)"
+                      :key="m"
+                      :value="m"
+                    >
+                      {{ m }}
+                    </option>
                   </select>
                   <p class="text-xs text-slate-500">
                     Procesa grandes cantidades de texto web y HTML. Se recomienda un modelo rápido y
@@ -555,7 +601,13 @@ onMounted(() => {
                     class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
                     :disabled="emergencyMode"
                   >
-                    <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                    <option
+                      v-for="m in getModelOptions(roleConfig.code_worker_model)"
+                      :key="m"
+                      :value="m"
+                    >
+                      {{ m }}
+                    </option>
                   </select>
                   <p class="text-xs text-slate-500">
                     Ejecuta scripts Python y manipula archivos. Requiere velocidad y precisión
@@ -579,7 +631,13 @@ onMounted(() => {
                     class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
                     :disabled="emergencyMode"
                   >
-                    <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                    <option
+                      v-for="m in getModelOptions(roleConfig.scheduled_worker_model)"
+                      :key="m"
+                      :value="m"
+                    >
+                      {{ m }}
+                    </option>
                   </select>
                   <p class="text-xs text-slate-500">
                     Ejecuta tareas periódicas en segundo plano. Debe ser muy económico (Flash).
@@ -600,7 +658,13 @@ onMounted(() => {
                     class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
                     :disabled="emergencyMode"
                   >
-                    <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                    <option
+                      v-for="m in getModelOptions(roleConfig.voice_worker_model)"
+                      :key="m"
+                      :value="m"
+                    >
+                      {{ m }}
+                    </option>
                   </select>
                   <p class="text-xs text-slate-500">
                     Modelo especializado en síntesis de voz o respuestas verbales.
@@ -621,7 +685,13 @@ onMounted(() => {
                     class="w-full p-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 outline-none"
                     :disabled="emergencyMode"
                   >
-                    <option v-for="m in dynamicModels" :key="m" :value="m">{{ m }}</option>
+                    <option
+                      v-for="m in getModelOptions(roleConfig.image_worker_model)"
+                      :key="m"
+                      :value="m"
+                    >
+                      {{ m }}
+                    </option>
                   </select>
                   <p class="text-xs text-slate-500">
                     Generación de imágenes a partir de texto con alta eficiencia.
@@ -673,8 +743,8 @@ onMounted(() => {
                   >Timeout de Ejecución (segundos)</label
                 >
                 <input
-                  type="number"
                   v-model="executionTimeout"
+                  type="number"
                   class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm"
                 />
                 <p class="text-xs text-slate-500">
@@ -687,8 +757,8 @@ onMounted(() => {
                   >Resultados de Búsqueda Máximos</label
                 >
                 <input
-                  type="number"
                   v-model="maxSearchResults"
+                  type="number"
                   class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm"
                 />
                 <p class="text-xs text-slate-500">
@@ -699,8 +769,8 @@ onMounted(() => {
               <div class="space-y-2">
                 <label class="block text-sm font-medium text-slate-700">Reintentos Máximos</label>
                 <input
-                  type="number"
                   v-model="maxRetries"
+                  type="number"
                   class="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm"
                 />
                 <p class="text-xs text-slate-500">

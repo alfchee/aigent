@@ -215,9 +215,9 @@ watch(
     <div class="shrink-0 p-4 md:p-6 max-w-4xl mx-auto w-full">
       <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-2 flex flex-col gap-2">
         <textarea
+          ref="composerRef"
           v-model="newMessage"
           placeholder="Escribe un mensaje..."
-          ref="composerRef"
           :rows="isExpanded ? 5 : 2"
           class="w-full bg-transparent border-none focus:ring-0 text-slate-800 placeholder-slate-400 resize-none py-3 px-3 text-sm leading-relaxed transition-all duration-200 ease-in-out min-h-[72px]"
           :class="isExpanded ? 'min-h-[160px]' : 'min-h-[72px]'"
@@ -246,10 +246,10 @@ watch(
               </div>
               <button
                 type="button"
-                @click="showModelDetails = !showModelDetails"
                 class="p-1 text-slate-400 hover:text-sky-500 hover:bg-slate-100 rounded-full transition-colors"
                 :class="{ 'text-sky-500 bg-sky-50': showModelDetails }"
                 title="Ver detalles del modelo"
+                @click="showModelDetails = !showModelDetails"
               >
                 <span class="material-icons-outlined text-sm">info</span>
               </button>

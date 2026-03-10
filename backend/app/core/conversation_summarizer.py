@@ -19,7 +19,7 @@ import logging
 import hashlib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from dotenv import load_dotenv

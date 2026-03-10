@@ -1,17 +1,14 @@
 import os
 import json
 import logging
-import sqlite3
 from pathlib import Path
 from google import genai
 from google.genai import types
-from typing import List, Callable, Any, Dict, Optional, Union
-import functools
+from typing import List, Callable, Any, Dict, Optional
 from dotenv import load_dotenv
-from app.core.db import SessionLocal, engine, Base
-from app.core.serialization import content_to_dict, dict_to_content
+from app.core.db import engine, Base
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 
 from app.core.persistence import load_chat_history, save_chat_message
@@ -77,16 +74,88 @@ Base.metadata.create_all(bind=engine)
 
 class NaviBot:
     def __init__(self, model_name: str = "gemini-flash-latest"):
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            print("Warning: GOOGLE_API_KEY not found in environment variables.")
-            # We initialize with a placeholder if missing to avoid crash until usage
-            self.client = genai.Client(api_key="MISSING")
-        else:
-            self.client = genai.Client(api_key=api_key)
+        # Check if we need to use a custom provider (OpenRouter/LM Studio) or default Google
+        from app.core.persistence import LLMProvider, get_persistence_db
+        from app.core.security.encryption import get_encryption_service
+        
+        self.model_name = model_name
+        self.client = None
+        self.is_google = True # Default flag
+        
+        try:
+            db = next(get_persistence_db())
+            active_provider = db.query(LLMProvider).filter(LLMProvider.is_active is True).first()
+            
+            if active_provider and active_provider.provider_id != "google":
+                # Check if the requested model actually belongs to this provider?
+                # Or just assume if a provider is active, all requests go through it.
+                # BUT, if we requested "gemini-2.0-flash" (a Google model) while OpenRouter is active,
+                # OpenRouter MIGHT support it, or might not.
+                # The error `gemini-2.0-flash is not a valid model ID` suggests OpenRouter rejected it.
+                # This happens if we switched providers in settings but didn't update the model selection,
+                # or if the routing logic (ModelOrchestrator) picked a default Google model despite the active provider.
+                
+                # However, if the user explicitly wants to use OpenRouter, they should select an OpenRouter model.
+                # If the system falls back to a Google model ID but routes it to OpenRouter, it fails.
+                
+                # Fix: If the model name looks like a Google model (starts with gemini-), 
+                # AND we are in OpenRouter mode, we should maybe force it to be Google mode?
+                # OR we accept that if OpenRouter is active, we MUST use OpenRouter models.
+                
+                # But wait, the user said "even using the google models".
+                # If the user selected a Google model in the UI, but OpenRouter is the "Active Provider" in DB,
+                # my code currently forces `self.is_google = False`.
+                
+                # We should allow hybrid usage? 
+                # If the model name starts with "gemini-", maybe we should use the Google client regardless of active provider?
+                # UNLESS OpenRouter is proxying Gemini.
+                
+                # Let's try a heuristic: if model starts with "gemini-" and doesn't look like "google/gemini..." (OpenRouter style),
+                # treat it as native Google.
+                
+                if model_name.startswith("gemini-") and "/" not in model_name:
+                     self.is_google = True
+                     # Initialize Google client if needed
+                     api_key = os.getenv("GOOGLE_API_KEY")
+                     if api_key:
+                         self.client = genai.Client(api_key=api_key)
+                     else:
+                         self.client = genai.Client(api_key="MISSING")
+                else:
+                    self.is_google = False
+                    encryption = get_encryption_service()
+                    api_key = encryption.decrypt(active_provider.api_key_enc) if active_provider.api_key_enc else None
+                    base_url = active_provider.base_url
+                    
+                    # Initialize OpenAI-compatible client
+                    from openai import OpenAI
+                    
+                    # For OpenRouter/LM Studio
+                    client_kwargs = {
+                        "api_key": api_key or "dummy", # LM Studio might not need key
+                        "base_url": base_url
+                    }
+                    
+                    self.openai_client = OpenAI(**client_kwargs)
+                    logger.info(f"Initialized OpenAI client for provider {active_provider.provider_id} with base_url {base_url}")
+            else:
+                # Default Google initialization
+                api_key = os.getenv("GOOGLE_API_KEY")
+                if not api_key:
+                    print("Warning: GOOGLE_API_KEY not found in environment variables.")
+                    self.client = genai.Client(api_key="MISSING")
+                else:
+                    self.client = genai.Client(api_key=api_key)
+        except Exception as e:
+            logger.error(f"Error initializing LLM client: {e}")
+            # Fallback to Google env var if DB fails
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if api_key:
+                 self.client = genai.Client(api_key=api_key)
+            else:
+                 self.client = genai.Client(api_key="MISSING")
         
         self.tools: List[Callable] = []
-        self.model_name = model_name
         self._chat_sessions: Dict[str, Any] = {}
         self._tool_reference: Optional[str] = None
         self.mcp_manager = McpManager()
@@ -239,21 +308,31 @@ class NaviBot:
                     
                     # Robust type mapping
                     t = prop_def.get("type")
-                    if t == "integer": prop_type = int
-                    elif t == "number": prop_type = float
-                    elif t == "boolean": prop_type = bool
-                    elif t == "object": prop_type = Dict[str, Any]
+                    if t == "integer":
+                        prop_type = int
+                    elif t == "number":
+                        prop_type = float
+                    elif t == "boolean":
+                        prop_type = bool
+                    elif t == "object":
+                        prop_type = Dict[str, Any]
                     elif t == "array": 
                         items_def = prop_def.get("items", {})
                         it = items_def.get("type")
                         item_type = Any
                         
-                        if it == "string": item_type = str
-                        elif it == "integer": item_type = int
-                        elif it == "number": item_type = float
-                        elif it == "boolean": item_type = bool
-                        elif it == "object": item_type = Dict[str, Any]
-                        elif it == "array": item_type = List[Any]
+                        if it == "string":
+                            item_type = str
+                        elif it == "integer":
+                            item_type = int
+                        elif it == "number":
+                            item_type = float
+                        elif it == "boolean":
+                            item_type = bool
+                        elif it == "object":
+                            item_type = Dict[str, Any]
+                        elif it == "array":
+                            item_type = List[Any]
                         else:
                             # Fallback to string for array items if type is unspecified
                             # This prevents "items: missing field" error in Gemini
@@ -755,29 +834,137 @@ class NaviBot:
         
         # Determine model to use
         model_to_use = self.model_name
-        if model_to_use == "gemini-2.5-flash-image":
-            logger.warning(f"Model {model_to_use} does not support tools. Switching to gemini-flash-latest for agent execution.")
-            model_to_use = "gemini-flash-latest"
+        
+        if not self.is_google and hasattr(self, "openai_client"):
+            self._chat_sessions[session_id] = {
+                "history": history,
+                "system_instruction": system_instruction,
+            }
+            return
 
-        # Create chat with or without cached content
-        if cached_content_name:
-            self._chat_sessions[session_id] = self.client.aio.chats.create(
+        if self.is_google and self.client:
+            if cached_content_name:
+                self._chat_sessions[session_id] = self.client.aio.chats.create(
+                    model=model_to_use,
+                    config=types.GenerateContentConfig(
+                        tools=tools_payload,
+                        cached_content=cached_content_name,
+                        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                            disable=True
+                        )
+                    ),
+                    history=history
+                )
+            else:
+                self._chat_sessions[session_id] = self.client.aio.chats.create(
+                    model=model_to_use,
+                    config=tool_config,
+                    history=history
+                )
+            return
+        raise RuntimeError("No LLM client available for session initialization")
+
+    async def _send_message_openai(self, session_id: str, message: str) -> str:
+        """
+        Internal method to handle sending messages via OpenAI client (OpenRouter/LM Studio)
+        """
+        # Retrieve stored context
+        session_data = self._chat_sessions.get(session_id)
+        if not session_data or not isinstance(session_data, dict):
+            # Should not happen if start_chat was called correctly
+            logger.error(f"OpenAI session data missing or invalid for {session_id}")
+            return "Error: Session initialization failed."
+            
+        history = session_data.get("history", [])
+        system_instruction = session_data.get("system_instruction")
+        
+        model_to_use = self.model_name
+        logger.info(f"Using OpenAI-compatible client for model {model_to_use}")
+        
+        # Prepare messages from history
+        messages = []
+        if system_instruction:
+            # system_instruction might be just a string or a list of parts?
+            # self._build_system_instruction returns a list of parts usually for Gemini
+            # We need to convert it to string for OpenAI
+            content = ""
+            if isinstance(system_instruction, list):
+                content = "\n".join([str(p) for p in system_instruction])
+            else:
+                content = str(system_instruction)
+            
+            messages.append({"role": "system", "content": content})
+        
+        # Convert internal history to OpenAI format
+        for item in history:
+            # Handle dictionary items (from persistence) or HistoryItem objects
+            if isinstance(item, dict):
+                role = item.get("role")
+                if role != "model":
+                    role = role
+                else:
+                    role = "assistant"
+                
+                parts = item.get("parts", [])
+                content = ""
+                # Simple extraction from parts list of dicts/objects
+                for part in parts:
+                    if isinstance(part, dict) and "text" in part:
+                        # Ensure text is not None
+                        text_val = part.get("text")
+                        if text_val:
+                            content += text_val
+                    elif hasattr(part, "text"):
+                        # Ensure text is not None
+                        if part.text:
+                            content += part.text
+                    else:
+                        content += str(part)
+            else:
+                # Assume HistoryItem object
+                role = item.role if item.role != "model" else "assistant"
+                content = ""
+                # Handle parts logic from Gemini history
+                if hasattr(item, 'parts'):
+                    for part in item.parts:
+                        if hasattr(part, 'text') and part.text:
+                            content += part.text
+                        elif isinstance(part, str):
+                            content += part
+                        # Handle case where part might be a dict even inside object if mixed
+                        elif isinstance(part, dict) and "text" in part:
+                            text_val = part.get("text")
+                            if text_val:
+                                content += text_val
+                
+                # If no content found via parts, try to use str(item) or similar
+                if not content and hasattr(item, 'parts') and item.parts:
+                        # Fallback for simple parts
+                        # Check if it's not None
+                        part_zero = item.parts[0]
+                        if part_zero:
+                            content = str(part_zero)
+                elif not content:
+                        content = str(item)
+                    
+            messages.append({"role": role, "content": content or ""})
+        
+        # Add current message
+        messages.append({"role": "user", "content": message})
+        
+        try:
+            response = self.openai_client.chat.completions.create(
                 model=model_to_use,
-                config=types.GenerateContentConfig(
-                    tools=tools_payload,
-                    cached_content=cached_content_name,
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                        disable=True
-                    )
-                ),
-                history=history
+                messages=messages,
+                # max_tokens=..., temperature=... could be added from settings
             )
-        else:
-            self._chat_sessions[session_id] = self.client.aio.chats.create(
-                model=model_to_use,
-                config=tool_config,
-                history=history
-            )
+            
+            response_text = response.choices[0].message.content
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"OpenAI client error: {e}")
+            raise
 
     async def send_message(self, message: str) -> str:
         from app.core.runtime_context import get_session_id
@@ -785,9 +972,11 @@ class NaviBot:
 
         session_id = get_session_id()
         await self.ensure_session(session_id)
-        
+
         chat = self._chat_sessions[session_id]
-        
+        if isinstance(chat, dict) and "history" in chat:
+             return await self._send_message_openai(session_id, message)
+
         # Initial message
         response = await chat.send_message(message)
         

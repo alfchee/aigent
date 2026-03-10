@@ -1,9 +1,8 @@
 from typing import Literal, TypedDict, List
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.language_models import BaseChatModel
 from app.core.graph_state import AgentState
 from langchain_core.output_parsers.openai_functions import JsonOutputFunctionsParser
-from langchain_core.utils.function_calling import convert_to_openai_function
 
 # Definir los trabajadores disponibles
 WORKERS = ["WebNavigator", "CalendarManager", "GeneralAssistant", "ImageGenerator"]
@@ -61,7 +60,7 @@ function_def = {
     },
 }
 
-def create_supervisor_node(llm: ChatGoogleGenerativeAI, members: List[str], user_facts: str = ""):
+def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: str = ""):
     facts_section = ""
     if user_facts:
         facts_section = f"\n\nHere are some facts about the user you should keep in mind:\n{user_facts}"

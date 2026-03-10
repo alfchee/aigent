@@ -13,7 +13,6 @@ Benefits:
 
 import logging
 from typing import Optional, Union, TYPE_CHECKING
-from io import BytesIO
 
 if TYPE_CHECKING:
     from markitdown import MarkItDown

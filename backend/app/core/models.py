@@ -2,11 +2,12 @@ import os
 from google import genai
 from typing import List, Dict, Any
 
-async def get_available_gemini_models() -> List[Dict[str, Any]]:
+async def get_available_gemini_models(api_key: str = None) -> List[Dict[str, Any]]:
     """
     Obtiene la lista de modelos que soportan generación de contenido.
     """
-    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return []
 

@@ -1,6 +1,5 @@
 
 import asyncio
-import os
 from datetime import datetime, timedelta
 from app.core import scheduler_service
 

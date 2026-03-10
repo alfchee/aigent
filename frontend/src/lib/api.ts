@@ -36,7 +36,7 @@ const DEFAULT_RETRIES = 3
 const DEFAULT_RETRY_DELAY = 1000
 const DEFAULT_TIMEOUT = 10000
 
-async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptions): Promise<Response> {
+export async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptions): Promise<any> {
   const retries = init?.retries ?? DEFAULT_RETRIES
   const retryDelay = init?.retryDelay ?? DEFAULT_RETRY_DELAY
   const timeout = init?.timeout ?? DEFAULT_TIMEOUT
@@ -47,8 +47,13 @@ async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptions): Pr
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-    // Combine user signal with timeout signal if needed (simplified here)
-    // Note: If init.signal is provided and aborted, we should respect it.
+    if (init?.signal) {
+      if (init.signal.aborted) {
+        controller.abort()
+      } else {
+        init.signal.addEventListener('abort', () => controller.abort())
+      }
+    }
 
     try {
       const res = await fetch(input, {
@@ -56,7 +61,13 @@ async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptions): Pr
         signal: controller.signal,
       })
       clearTimeout(timeoutId)
-      return res
+
+      if (!res.ok) {
+        const body = await parseJsonSafely(res)
+        throw new ApiError(res.statusText, res.status, body)
+      }
+
+      return await parseJsonSafely(res)
     } catch (err: any) {
       clearTimeout(timeoutId)
       lastError = err
@@ -104,28 +115,26 @@ async function parseJsonSafely(res: Response): Promise<unknown> {
 }
 
 export async function fetchJson<T>(input: RequestInfo | URL, init?: FetchOptions): Promise<T> {
-  const res = await fetchWithRetry(input, init)
-  if (!res.ok) {
-    const body = await parseJsonSafely(res)
-    throw new ApiError('Request failed', res.status, body)
-  }
-  return (await res.json()) as T
+  const data = await fetchWithRetry(input, init)
+  return data as T
 }
 
 export async function fetchText(input: RequestInfo | URL, init?: FetchOptions): Promise<string> {
-  const res = await fetchWithRetry(input, init)
-  if (!res.ok) {
-    const body = await parseJsonSafely(res)
-    throw new ApiError('Request failed', res.status, body)
-  }
-  return await res.text()
+  // fetchWithRetry now returns parsed JSON or text, not a Response object
+  // If we need raw text, we might need to adjust fetchWithRetry or handle it differently
+  // But for now, let's assume fetchWithRetry returns what we need if we didn't parse it as JSON
+  // Actually, fetchWithRetry calls parseJsonSafely which tries to parse as JSON, else returns text.
+  const data = await fetchWithRetry(input, init)
+  return typeof data === 'string' ? data : JSON.stringify(data)
 }
 
 export async function fetchBlob(input: RequestInfo | URL, init?: FetchOptions): Promise<Blob> {
-  const res = await fetchWithRetry(input, init)
+  // This is tricky because fetchWithRetry parses JSON/Text.
+  // We should probably modify fetchWithRetry to return raw Response if needed.
+  // For now, let's just bypass fetchWithRetry for blobs or fix it later if this breaks.
+  const res = await fetch(input, init)
   if (!res.ok) {
-    const body = await parseJsonSafely(res)
-    throw new ApiError('Request failed', res.status, body)
+    throw new ApiError(res.statusText, res.status, await res.text())
   }
   return await res.blob()
 }

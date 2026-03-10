@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from app.core.mcp_config import get_active_config_runtime, get_registry_merged
 

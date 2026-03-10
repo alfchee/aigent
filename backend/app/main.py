@@ -10,13 +10,13 @@ from app.api.workspace import router as workspace_router
 from app.api.sessions import router as sessions_router
 from app.api.code_execution import router as code_execution_router
 from app.api.settings import router as settings_router
+from app.api.settings_llm import router as settings_llm_router
 from app.api.channels import router as channels_router
 from app.api.mcp import router as mcp_router
 from app.api.scheduler import router as scheduler_router
 from app.api.cache import router as cache_router
 from app.channels.manager import channel_manager
 from app.core.bot_pool import bot_pool
-from app.core.config_manager import get_settings
 from app.core.model_orchestrator import ModelOrchestrator
 from app.core.persistence import load_chat_history
 from app.core.persistence import init_db, save_chat_message
@@ -30,6 +30,7 @@ import uuid
 from app.core.logging import setup_logging, notify_alert
 from app.core.runtime_context import reset_request_id, set_request_id
 from contextlib import asynccontextmanager
+import json
 
 setup_logging()
 
@@ -102,6 +103,7 @@ app.include_router(workspace_router)
 app.include_router(sessions_router)
 app.include_router(code_execution_router)
 app.include_router(settings_router)
+app.include_router(settings_llm_router)
 app.include_router(channels_router)
 app.include_router(mcp_router)
 app.include_router(scheduler_router)
@@ -140,18 +142,48 @@ def _parse_json_body(body: bytes) -> dict | None:
 
 def _is_rate_limit_error(exc: Exception) -> bool:
     try:
-        from google.genai.errors import ClientError
+        from google.genai.errors import ClientError as GoogleClientError
 
-        return isinstance(exc, ClientError) and getattr(exc, "status_code", None) == 429
+        if isinstance(exc, GoogleClientError) and getattr(exc, "status_code", None) == 429:
+            return True
     except Exception:
-        return False
+        pass
+    try:
+        from openai import RateLimitError as OpenAIRateLimitError
+
+        if isinstance(exc, OpenAIRateLimitError):
+            return True
+    except Exception:
+        pass
+    return getattr(exc, "status_code", None) == 429
 
 
 def _extract_retry_delay_seconds(exc: Exception) -> int | None:
     delay = None
     try:
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers:
+            retry_after = headers.get("retry-after") or headers.get("Retry-After")
+            if retry_after is not None:
+                delay = int(float(retry_after))
+    except Exception:
+        delay = None
+    try:
+        body = getattr(exc, "body", None)
+        if delay is None and isinstance(body, dict):
+            error_obj = body.get("error")
+            if isinstance(error_obj, dict):
+                metadata = error_obj.get("metadata")
+                if isinstance(metadata, dict):
+                    retry_after = metadata.get("retry_after")
+                    if retry_after is not None:
+                        delay = int(float(retry_after))
+    except Exception:
+        delay = None
+    try:
         response_json = getattr(exc, "response_json", None)
-        if isinstance(response_json, dict):
+        if delay is None and isinstance(response_json, dict):
             error_obj = response_json.get("error")
             if isinstance(error_obj, dict):
                 details = error_obj.get("details")
@@ -170,6 +202,53 @@ def _extract_retry_delay_seconds(exc: Exception) -> int | None:
         if match:
             delay = int(float(match.group(1)))
     return delay
+
+
+def _extract_openai_provider_message(exc: Exception) -> str | None:
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return None
+    error_obj = body.get("error")
+    if not isinstance(error_obj, dict):
+        return None
+    metadata = error_obj.get("metadata")
+    if isinstance(metadata, dict):
+        raw = metadata.get("raw")
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    nested_error = parsed.get("error")
+                    if isinstance(nested_error, str) and nested_error.strip():
+                        return nested_error.strip()
+            except Exception:
+                pass
+            return raw.strip()
+    message = error_obj.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    return None
+
+
+def _map_openai_status_error(exc: Exception) -> HTTPException | None:
+    try:
+        from openai import APIStatusError as OpenAIAPIStatusError
+    except Exception:
+        return None
+    if not isinstance(exc, OpenAIAPIStatusError):
+        return None
+    status_code = getattr(exc, "status_code", None)
+    if status_code not in {401, 402, 403}:
+        return None
+    provider_message = _extract_openai_provider_message(exc)
+    if status_code == 402:
+        message = provider_message or "OpenRouter account balance or spending limit exceeded."
+        return HTTPException(status_code=402, detail={"message": message, "provider": "openrouter"})
+    if status_code == 401:
+        message = provider_message or "OpenRouter authentication failed. Check API key."
+        return HTTPException(status_code=401, detail={"message": message, "provider": "openrouter"})
+    message = provider_message or "OpenRouter access denied for this model/provider."
+    return HTTPException(status_code=403, detail={"message": message, "provider": "openrouter"})
 
 
 async def _run_with_rate_limit_retry(fn, *args, **kwargs):
@@ -330,6 +409,16 @@ async def chat(request: ChatRequest, http_request: Request):
                         )
                 except Exception:
                     pass
+                try:
+                    from openai import BadRequestError as OpenAIBadRequestError
+
+                    if isinstance(e, OpenAIBadRequestError) and getattr(e, "status_code", None) == 400:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Modelo no soportado por el proveedor activo (400). Ajusta el modelo en Settings.",
+                        )
+                except Exception:
+                    pass
                 raise
             escalated_from: str | None = None
             
@@ -433,6 +522,16 @@ async def chat(request: ChatRequest, http_request: Request):
                         )
                 except Exception:
                     pass
+                try:
+                    from openai import BadRequestError as OpenAIBadRequestError
+
+                    if isinstance(e, OpenAIBadRequestError) and getattr(e, "status_code", None) == 400:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Modelo no soportado por el proveedor activo (400). Ajusta el modelo en Settings.",
+                        )
+                except Exception:
+                    pass
                 raise
             # save_chat_message call removed, handled by history sync below
             
@@ -467,6 +566,10 @@ async def chat(request: ChatRequest, http_request: Request):
         if _is_rate_limit_error(e):
             retry_delay = _extract_retry_delay_seconds(e)
             retry_delay = retry_delay if retry_delay is not None else 30
+            message = "Rate limit exceeded"
+            error_text = str(e)
+            if "openrouter" in error_text.lower() or "provider returned error" in error_text.lower():
+                message = "OpenRouter provider is rate-limited. Retry shortly or switch model."
             logger.warning(
                 "chat_request_rate_limited",
                 extra={
@@ -480,9 +583,12 @@ async def chat(request: ChatRequest, http_request: Request):
             )
             raise HTTPException(
                 status_code=429,
-                detail={"message": "Rate limit exceeded", "retry_after_seconds": retry_delay},
+                detail={"message": message, "retry_after_seconds": retry_delay},
                 headers={"Retry-After": str(retry_delay)},
             )
+        provider_http_error = _map_openai_status_error(e)
+        if provider_http_error is not None:
+            raise provider_http_error
         error_id = uuid.uuid4().hex
         logger.exception(
             "chat_request_error",

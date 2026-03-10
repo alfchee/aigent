@@ -5,7 +5,6 @@ Implements autonomous multi-turn agent execution with observation and reflection
 The agent iteratively reasons, acts, observes results, and reflects until the task is complete.
 """
 
-import asyncio
 import time
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
@@ -197,7 +196,7 @@ class ReActLoop:
                     # The FunctionResponse part contains the tool output.
                     
                     if len(history) >= 2:
-                        last_user_message = history[-2] # The one before the final model response?
+                        history[-2] # The one before the final model response?
                         # Actually, history structure depends on the SDK.
                         # Usually it's [User, Model, User(ToolOutput), Model]
                         
@@ -268,7 +267,7 @@ class ReActLoop:
                 
                 final_response = response_text
                 termination_reason = "natural_completion"
-                self._log_trace(f"[COMPLETION] Agent provided final answer")
+                self._log_trace("[COMPLETION] Agent provided final answer")
                 break
                 
             except Exception as e:

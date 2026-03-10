@@ -1,16 +1,11 @@
 import os
-import sys
 import logging
-from typing import List, Optional, Dict, Any, Union
-from datetime import datetime, timedelta
-import asyncio
+from typing import List, Optional
+from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from github import Github, GithubException, Auth
-from github.Issue import Issue
-from github.PullRequest import PullRequest
-from github.Repository import Repository
 
 # Initialize FastMCP server
 mcp = FastMCP("github-enhanced")
@@ -320,7 +315,7 @@ def batch_add_comments(
         for num in issue_numbers:
             try:
                 issue = repository.get_issue(num)
-                comment = issue.create_comment(body)
+                issue.create_comment(body)
                 results[num] = "Success"
             except Exception as e:
                 results[num] = f"Error: {e}"

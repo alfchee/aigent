@@ -36,3 +36,5 @@ langgraph-checkpoint-sqlite
 aiosqlite
 flake8
 PyGithub
+langchain-openai
+langchain-community

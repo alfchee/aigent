@@ -36,14 +36,14 @@ function handleKeydown(e: KeyboardEvent) {
     </div>
 
     <div class="max-w-4xl mx-auto relative">
-      <form @submit.prevent="handleSubmit" class="relative">
+      <form class="relative" @submit.prevent="handleSubmit">
         <textarea
           v-model="input"
-          @keydown="handleKeydown"
           placeholder="Enter your command or request..."
           rows="1"
           class="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition-all resize-none text-sm shadow-inner"
           :disabled="store.isStreaming"
+          @keydown="handleKeydown"
         ></textarea>
 
         <button

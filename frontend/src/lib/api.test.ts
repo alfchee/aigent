@@ -13,6 +13,7 @@ describe('fetchJson', () => {
   it('should return data on success', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
+      text: async () => JSON.stringify({ success: true }),
       json: async () => ({ success: true }),
     })
 
@@ -24,6 +25,7 @@ describe('fetchJson', () => {
   it('should retry on network error and succeed', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce({
       ok: true,
+      text: async () => JSON.stringify({ success: true }),
       json: async () => ({ success: true }),
     })
 

@@ -1,18 +1,13 @@
 import os
-import io
 import logging
 import asyncio
-from typing import List, Optional
 
 # Imports from shared auth module
 from app.core.google_auth import (
     get_google_credentials,
     check_google_dependencies,
-    ensure_oauth_dependencies,
     get_workspace_config,
     CREDS_PATH,
-    OAUTH_CLIENT_PATH,
-    OAUTH_TOKEN_PATH,
     ALL_SCOPES
 )
 
@@ -428,7 +423,7 @@ def _get_drive_file_info_sync(file_id: str) -> str:
     is_folder = mime_type == 'application/vnd.google-apps.folder'
     
     output = [f"📄 File Information for: {file_meta.get('name', 'Unknown')}"]
-    output.append(f"━━━━━━━━━━━━━━━━━━━━━━━━")
+    output.append("━━━━━━━━━━━━━━━━━━━━━━━━")
     output.append(f"�ds: {file_meta.get('id')}")
     output.append(f"📁 Type: {'Folder' if is_folder else mime_type}")
     output.append(f"💾 Size: {format_size(file_meta.get('size'))}")

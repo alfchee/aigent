@@ -5,7 +5,7 @@
         <h3 class="text-lg font-semibold text-slate-800">
           {{ isEdit ? 'Editar Servidor MCP' : 'Nuevo Servidor MCP' }}
         </h3>
-        <button @click="$emit('close')" class="text-slate-400 hover:text-slate-600">
+        <button class="text-slate-400 hover:text-slate-600" @click="$emit('close')">
           <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               stroke-linecap="round"
@@ -23,8 +23,8 @@
           <label class="block text-sm font-medium text-slate-700">Tipo de Servidor</label>
           <select
             v-model="form.id"
-            @change="onTypeChange"
             class="w-full p-2 border border-slate-200 rounded-lg"
+            @change="onTypeChange"
           >
             <option value="" disabled>Selecciona un tipo...</option>
             <option value="__custom__">Servidor personalizado</option>
@@ -140,9 +140,9 @@
 
           <div class="flex items-center gap-2">
             <input
-              type="checkbox"
-              v-model="form.enabled"
               id="enabled"
+              v-model="form.enabled"
+              type="checkbox"
               class="w-4 h-4 text-sky-600 rounded"
             />
             <label for="enabled" class="text-sm font-medium text-slate-700"
@@ -156,24 +156,24 @@
         class="p-6 bg-slate-50 border-t border-slate-100 flex justify-between items-center rounded-b-xl"
       >
         <button
-          @click="testConnection"
           :disabled="testing || !form.id"
           class="px-4 py-2 text-sm font-medium text-sky-700 bg-sky-100 hover:bg-sky-200 rounded-lg transition-colors disabled:opacity-50"
+          @click="testConnection"
         >
           {{ testing ? 'Probando...' : 'Probar Conexión' }}
         </button>
 
         <div class="flex gap-3">
           <button
-            @click="$emit('close')"
             class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+            @click="$emit('close')"
           >
             Cancelar
           </button>
           <button
-            @click="save"
             :disabled="!isValid"
             class="px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg shadow-sm disabled:opacity-50"
+            @click="save"
           >
             Guardar
           </button>

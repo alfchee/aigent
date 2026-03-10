@@ -4,8 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-import asyncio
+from unittest.mock import MagicMock
 from app.core.agent import NaviBot
 
 class TestAgentHistory(unittest.TestCase):

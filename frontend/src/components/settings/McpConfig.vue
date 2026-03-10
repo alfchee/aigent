@@ -26,9 +26,9 @@
             >{{ selectedIds.length }} seleccionados</span
           >
           <button
-            @click="bulkDelete"
             class="p-1.5 text-red-600 hover:bg-red-100 rounded-md transition-colors"
             title="Eliminar seleccionados"
+            @click="bulkDelete"
           >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -41,8 +41,8 @@
           </button>
         </div>
         <button
-          @click="openModal()"
           class="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors text-sm font-medium"
+          @click="openModal()"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -71,9 +71,9 @@
             placeholder="https://ejemplo.com/mcp_registry.json"
           />
           <button
-            @click="importMarketplace"
             :disabled="!importUrl || importLoading"
             class="px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg disabled:opacity-50"
+            @click="importMarketplace"
           >
             {{ importLoading ? 'Importando…' : 'Importar' }}
           </button>
@@ -95,12 +95,12 @@
         class="mb-4 p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 flex justify-between items-center"
       >
         <span>{{ store.error }}</span>
-        <button @click="store.error = null" class="text-red-800 hover:text-red-900">&times;</button>
+        <button class="text-red-800 hover:text-red-900" @click="store.error = null">&times;</button>
       </div>
 
       <McpList
         :servers="store.servers"
-        :selectedIds="selectedIds"
+        :selected-ids="selectedIds"
         @edit="openModal"
         @delete="confirmDelete"
         @toggle="toggleServer"
