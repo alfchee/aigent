@@ -57,6 +57,7 @@ export const useChatStore = defineStore('chat', {
     historyHasMore: false as boolean,
     historyNextBeforeId: null as number | null,
     wsConnected: false as boolean,
+    connectedSessionId: null as string | null,
   }),
   actions: {
     initWebSocket(sessionId: string) {
@@ -64,13 +65,15 @@ export const useChatStore = defineStore('chat', {
         wsService = WebSocketService.getInstance()
 
         // Subscribe to events
-        wsService.on('connection.open', () => {
+        wsService.on('connection.open', (data: { clientId?: string }) => {
           this.wsConnected = true
+          this.connectedSessionId = data?.clientId || null
           this.error = null // Clear connection errors
         })
 
         wsService.on('connection.close', () => {
           this.wsConnected = false
+          this.connectedSessionId = null
         })
 
         wsService.on('connection.error', (err: any) => {
@@ -110,6 +113,11 @@ export const useChatStore = defineStore('chat', {
         const url = new URL(apiUrl)
         const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
         wsUrl = `${wsProtocol}//${url.host}/api/ws/chat/${sessionId}`
+      }
+
+      if (this.connectedSessionId && this.connectedSessionId !== sessionId) {
+        this.wsConnected = false
+        wsService.disconnect(true)
       }
 
       wsService.connect(wsUrl, sessionId)
@@ -262,7 +270,7 @@ export const useChatStore = defineStore('chat', {
       this.messages.push({ role: 'assistant', content: '' })
 
       // Try WebSocket first
-      if (wsService && this.wsConnected) {
+      if (wsService && this.wsConnected && this.connectedSessionId === currentSessionId) {
         try {
           wsService.send('chat.message', {
             content: trimmed,

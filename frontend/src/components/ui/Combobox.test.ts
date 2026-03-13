@@ -53,10 +53,10 @@ describe('Combobox.vue', () => {
     await input.trigger('focus') // Open dropdown
 
     const listItems = wrapper.findAll('[role="option"]')
-    // Click second option (gemini-1.5-pro)
+    // Click second option (gemini-2.5-pro)
     await listItems[1].trigger('mousedown')
 
-    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['gemini-1.5-pro'])
+    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['gemini-2.5-pro'])
 
     // Check if dropdown is closed
     const listbox = wrapper.find('[role="listbox"]')
@@ -106,7 +106,7 @@ describe('Combobox.vue', () => {
     expect(optionsList[0].classes()).not.toContain('bg-sky-50')
 
     await input.trigger('keydown', { key: 'Enter' })
-    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['gemini-1.5-pro'])
+    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['gemini-2.5-pro'])
   })
 
   it('highlights matches correctly', async () => {
@@ -118,7 +118,7 @@ describe('Combobox.vue', () => {
     await input.setValue('flash')
 
     const optionsList = wrapper.findAll('[role="option"]')
-    const flashOption = optionsList.find((opt) => opt.text().includes('gemini-1.5-flash'))
+    const flashOption = optionsList.find((opt) => opt.text().includes('gemini-2.0-flash'))
 
     expect(flashOption).toBeDefined()
     // Check innerHTML for span with highlighting class

@@ -31,6 +31,7 @@ export class WebSocketService {
   private maxReconnectAttempts: number = 10
   private reconnectDelay: number = 1000
   private isConnecting: boolean = false
+  private shouldReconnect: boolean = true
   private eventHandlers: Map<string, EventHandler[]> = new Map()
   private pingInterval: number | null = null
 
@@ -47,21 +48,33 @@ export class WebSocketService {
   }
 
   public connect(url: string, clientId: string) {
+    const targetChanged = this.url !== url || this.clientId !== clientId
+
     if (this.isConnecting) {
-      console.log('WebSocket already connecting')
-      return
+      if (targetChanged) {
+        this.disconnect(true)
+      } else {
+        console.log('WebSocket already connecting')
+        return
+      }
     }
+
     if (
       this.socket &&
       (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)
     ) {
-      console.log('WebSocket already connected or connecting')
-      return
+      if (targetChanged) {
+        this.disconnect(true)
+      } else {
+        console.log('WebSocket already connected or connecting')
+        return
+      }
     }
 
     this.url = url
     this.clientId = clientId
     this.isConnecting = true
+    this.shouldReconnect = true
     this.reconnectAttempts = 0
 
     this._connect()
@@ -70,9 +83,13 @@ export class WebSocketService {
   private _connect() {
     console.log(`Connecting to WebSocket: ${this.url}`)
 
-    // Check if browser supports WebSocket
     if (!window.WebSocket) {
       console.error('Browser does not support WebSocket')
+      this.isConnecting = false
+      this.handleMessage({
+        type: 'connection.error',
+        data: { message: 'Browser does not support WebSocket' },
+      })
       return
     }
 
@@ -83,21 +100,17 @@ export class WebSocketService {
         console.log('WebSocket connected')
         this.isConnected.value = true
         this.isConnecting = false
+        this.shouldReconnect = true
         this.reconnectAttempts = 0
         this.startPing()
 
-        // Notify connection success
         this.handleMessage({ type: 'connection.open', data: { clientId: this.clientId } })
       }
 
       this.socket.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data)
-          // Handle ping/pong internally? No, server sends pong, client sends ping.
-          // If server sends ping, client should send pong?
-          // Protocol says: Client sends ping, Server sends pong.
           if (message.type === 'pong') {
-            // connection is alive
             return
           }
           this.handleMessage(message)
@@ -109,33 +122,37 @@ export class WebSocketService {
       this.socket.onclose = (event) => {
         console.log('WebSocket disconnected', event.code, event.reason)
         this.isConnected.value = false
+        this.isConnecting = false
         this.stopPing()
 
-        // Notify disconnection
         this.handleMessage({
           type: 'connection.close',
           data: { code: event.code, reason: event.reason },
         })
 
-        if (!event.wasClean) {
+        if (this.shouldReconnect && !event.wasClean) {
           this.handleReconnect()
         }
       }
 
       this.socket.onerror = (error) => {
         console.error('WebSocket error:', error)
-        // Error will trigger close, so reconnection logic is handled there
         this.handleMessage({ type: 'connection.error', data: error })
       }
     } catch (e) {
       console.error('WebSocket connection failed:', e)
+      this.isConnecting = false
       this.handleReconnect()
     }
   }
 
   private handleReconnect() {
+    if (!this.shouldReconnect) {
+      this.isConnecting = false
+      return
+    }
+
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      // Exponential backoff
       const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts)
       console.log(`Reconnecting in ${delay}ms... (Attempt ${this.reconnectAttempts + 1})`)
 
@@ -152,7 +169,10 @@ export class WebSocketService {
     }
   }
 
-  public disconnect() {
+  public disconnect(manual: boolean = true) {
+    this.shouldReconnect = !manual
+    this.isConnecting = false
+    this.reconnectAttempts = 0
     if (this.socket) {
       this.socket.close()
       this.socket = null
@@ -164,7 +184,6 @@ export class WebSocketService {
   public send(type: string, payload: any = {}) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       console.error('WebSocket not connected')
-      // Ideally queue messages here
       return
     }
 

@@ -66,7 +66,9 @@ export async function fetchWithRetry(input: RequestInfo | URL, init?: FetchOptio
 
       if (!res.ok) {
         const body = await parseJsonSafely(res)
-        throw new ApiError(res.statusText, res.status, body)
+        const statusMessage =
+          (res.statusText && res.statusText.trim()) || `Request failed (HTTP ${res.status})`
+        throw new ApiError(statusMessage, res.status, body)
       }
 
       return await parseJsonSafely(res)
@@ -136,7 +138,9 @@ export async function fetchBlob(input: RequestInfo | URL, init?: FetchOptions): 
   // For now, let's just bypass fetchWithRetry for blobs or fix it later if this breaks.
   const res = await fetch(input, init)
   if (!res.ok) {
-    throw new ApiError(res.statusText, res.status, await res.text())
+    const statusMessage =
+      (res.statusText && res.statusText.trim()) || `Request failed (HTTP ${res.status})`
+    throw new ApiError(statusMessage, res.status, await res.text())
   }
   return await res.blob()
 }

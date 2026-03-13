@@ -196,7 +196,6 @@ class ReActLoop:
                     # The FunctionResponse part contains the tool output.
                     
                     if len(history) >= 2:
-                        history[-2] # The one before the final model response?
                         # Actually, history structure depends on the SDK.
                         # Usually it's [User, Model, User(ToolOutput), Model]
                         

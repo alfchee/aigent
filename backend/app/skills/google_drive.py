@@ -424,7 +424,7 @@ def _get_drive_file_info_sync(file_id: str) -> str:
     
     output = [f"📄 File Information for: {file_meta.get('name', 'Unknown')}"]
     output.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-    output.append(f"�ds: {file_meta.get('id')}")
+    output.append(f"🆔 Id: {file_meta.get('id')}")
     output.append(f"📁 Type: {'Folder' if is_folder else mime_type}")
     output.append(f"💾 Size: {format_size(file_meta.get('size'))}")
     output.append(f"📅 Created: {format_date(file_meta.get('createdTime'))}")
