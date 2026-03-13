@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import Combobox from './Combobox.vue'
 
 describe('Combobox.vue', () => {
-  const options = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o', 'claude-3-opus']
+  const options = ['gemini-2.0-flash', 'gemini-2.5-pro', 'gpt-4o', 'claude-3-opus']
 
   // Mock scrollIntoView
   Element.prototype.scrollIntoView = vi.fn()
@@ -11,12 +11,12 @@ describe('Combobox.vue', () => {
   it('renders input with initial value', () => {
     const wrapper = mount(Combobox, {
       props: {
-        modelValue: 'gemini-1.5-flash',
+        modelValue: 'gemini-2.0-flash',
         options,
       },
     })
     const input = wrapper.find('input')
-    expect(input.element.value).toBe('gemini-1.5-flash')
+    expect(input.element.value).toBe('gemini-2.0-flash')
   })
 
   it('filters options based on input', async () => {

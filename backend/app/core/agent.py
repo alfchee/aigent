@@ -74,100 +74,119 @@ class HistoryItem:
 Base.metadata.create_all(bind=engine)
 
 class NaviBot:
-    def __init__(self, model_name: str = "gemini-flash-latest"):
+    def __init__(self, model_name: str = None):
         # Check if we need to use a custom provider (OpenRouter/LM Studio) or default Google
         from app.core.persistence import LLMProvider, get_persistence_db
         from app.core.security.encryption import get_encryption_service
+        from app.core.config_manager import get_settings
         
-        self.model_name = model_name
-        self.client = None
-        self.is_google = True # Default flag
-        
-        try:
-            db = next(get_persistence_db())
-            active_provider = db.query(LLMProvider).filter(LLMProvider.is_active == True).first()
-            
-            logger.info(f"NaviBot init: active_provider={active_provider}, provider_id={active_provider.provider_id if active_provider else 'None'}, model_name={model_name}")
-
-            if active_provider and active_provider.provider_id != "google":
-                # Check if the requested model actually belongs to this provider?
-                # Or just assume if a provider is active, all requests go through it.
-                # BUT, if we requested "gemini-2.0-flash" (a Google model) while OpenRouter is active,
-                # OpenRouter MIGHT support it, or might not.
-                # The error `gemini-2.0-flash is not a valid model ID` suggests OpenRouter rejected it.
-                # This happens if we switched providers in settings but didn't update the model selection,
-                # or if the routing logic (ModelOrchestrator) picked a default Google model despite the active provider.
-                
-                # However, if the user explicitly wants to use OpenRouter, they should select an OpenRouter model.
-                # If the system falls back to a Google model ID but routes it to OpenRouter, it fails.
-                
-                # Fix: If the model name looks like a Google model (starts with gemini-), 
-                # AND we are in OpenRouter mode, we should maybe force it to be Google mode?
-                # OR we accept that if OpenRouter is active, we MUST use OpenRouter models.
-                
-                # But wait, the user said "even using the google models".
-                # If the user selected a Google model in the UI, but OpenRouter is the "Active Provider" in DB,
-                # my code currently forces `self.is_google = False`.
-                
-                # We should allow hybrid usage? 
-                # If the model name starts with "gemini-", maybe we should use the Google client regardless of active provider?
-                # UNLESS OpenRouter is proxying Gemini.
-                
-                # Let's try a heuristic: if model starts with "gemini-" and doesn't look like "google/gemini..." (OpenRouter style),
-                # treat it as native Google.
-                
-                if model_name.startswith("gemini-") and "/" not in model_name:
-                     self.is_google = True
-                     # Initialize Google client if needed
-                     api_key = os.getenv("GOOGLE_API_KEY")
-                     if api_key:
-                         self.client = genai.Client(api_key=api_key)
-                     else:
-                         self.client = genai.Client(api_key="MISSING")
-                     logger.info(f"NaviBot initialized in Google mode (override) for model {model_name}")
-                else:
-                    self.is_google = False
-                    encryption = get_encryption_service()
-                    api_key = encryption.decrypt(active_provider.api_key_enc) if active_provider.api_key_enc else None
-                    base_url = active_provider.base_url
-                    
-                    # Initialize OpenAI-compatible client
-                    from openai import OpenAI
-                    
-                    # For OpenRouter/LM Studio
-                    client_kwargs = {
-                        "api_key": api_key or "dummy", # LM Studio might not need key
-                        "base_url": base_url
-                    }
-                    
-                    self.openai_client = OpenAI(**client_kwargs)
-                    logger.info(f"Initialized OpenAI client for provider {active_provider.provider_id} with base_url {base_url} for model {model_name}")
-            else:
-                # Default Google initialization
-                api_key = os.getenv("GOOGLE_API_KEY")
-                if not api_key:
-                    print("Warning: GOOGLE_API_KEY not found in environment variables.")
-                    self.client = genai.Client(api_key="MISSING")
-                else:
-                    self.client = genai.Client(api_key=api_key)
-                logger.info(f"NaviBot initialized in Google mode (default) for model {model_name}")
-        except Exception as e:
-            logger.error(f"Error initializing LLM client: {e}")
-            # Fallback to Google env var if DB fails
-            api_key = os.getenv("GOOGLE_API_KEY")
-            if api_key:
-                 self.client = genai.Client(api_key=api_key)
-            else:
-                 self.client = genai.Client(api_key="MISSING")
-        
+        # Initialize attributes first
         self.tools: List[Callable] = []
         self._chat_sessions: Dict[str, Any] = {}
         self._tool_reference: Optional[str] = None
         self.mcp_manager = McpManager()
         self._mcp_loaded = False
+        self.client = None
+        self.is_google = True # Default flag
+        
+        # If no model provided, use the configured current model
+        if model_name is None:
+            settings = get_settings()
+            model_name = settings.current_model
+            
+        self.model_name = model_name
+        
+        try:
+            db = next(get_persistence_db())
+            
+            # Logic for multiple providers:
+            # 1. Native Google Check (Priority)
+            is_native_google = (
+                model_name.startswith("gemini-") and "/" not in model_name
+            ) or model_name.startswith("models/gemini-")
+            
+            if is_native_google:
+                 self.is_google = True
+                 api_key = os.getenv("GOOGLE_API_KEY")
+                 if api_key:
+                     self.client = genai.Client(api_key=api_key)
+                 else:
+                     logger.warning("GOOGLE_API_KEY missing for native Google model.")
+                     self.client = genai.Client(api_key="MISSING")
+                 logger.info(f"NaviBot initialized in Google Native mode for model {model_name}")
+                 # Initialize tools before returning
+                 self._register_default_tools()
+                 return
 
-
+            # 2. Check active custom providers (OpenRouter, LM Studio, etc.)
+            active_providers = db.query(LLMProvider).filter(LLMProvider.is_active == True).all()
+            
+            selected_provider = None
+            
+            if not active_providers:
+                # No active custom providers, fallback to Google default logic
+                self.is_google = True
+            else:
+                # Heuristic to pick the right provider for the model
+                # If only one provider, use it.
+                if len(active_providers) == 1:
+                    selected_provider = active_providers[0]
+                else:
+                    # Multiple providers. Try to match.
+                    # OpenRouter usually has "/" in model IDs (e.g. google/gemini-...)
+                    # LM Studio usually doesn't, or uses "local-model"
+                    
+                    # If model has "/", prioritize OpenRouter
+                    if "/" in model_name:
+                        for p in active_providers:
+                            if p.provider_id == "openrouter":
+                                selected_provider = p
+                                break
+                    
+                    # If still none selected, prioritize the first one
+                    if not selected_provider:
+                        selected_provider = active_providers[0]
+            
+            if selected_provider:
+                self.is_google = False
+                encryption = get_encryption_service()
+                api_key = encryption.decrypt(selected_provider.api_key_enc) if selected_provider.api_key_enc else None
+                base_url = selected_provider.base_url
+                
+                # Initialize OpenAI-compatible client
+                from openai import OpenAI
+                
+                client_kwargs = {
+                    "api_key": api_key or "dummy", 
+                    "base_url": base_url
+                }
+                
+                self.openai_client = OpenAI(**client_kwargs)
+                logger.info(f"NaviBot initialized with provider {selected_provider.provider_id} ({base_url}) for model {model_name}")
+            else:
+                # Default Google initialization if no provider selected (fallback)
+                api_key = os.getenv("GOOGLE_API_KEY")
+                if api_key:
+                    self.client = genai.Client(api_key=api_key)
+                else:
+                    logger.warning("GOOGLE_API_KEY not found in environment variables.")
+                    self.client = genai.Client(api_key="MISSING")
+                self.is_google = True
+                
+        except Exception as e:
+            logger.error(f"Error initializing NaviBot client: {e}", exc_info=True)
+            # Fallback to Google just in case
+            self.is_google = True
+            try:
+                self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY", "MISSING"))
+            except Exception:
+                self.client = None
+        
         # Register default skills (Required for Simple Mode / send_message)
+        self._register_default_tools()
+
+    def _register_default_tools(self):
+        """Register default set of tools."""
         from app.skills import scheduler, browser, workspace, search, reader, code_execution, google_workspace_manager, google_drive, memory, calendar, telegram, image_generation
         
         for tool in scheduler.tools:
@@ -895,17 +914,34 @@ class NaviBot:
 
         if self.is_google and self.client:
             if cached_content_name:
-                self._chat_sessions[session_id] = self.client.aio.chats.create(
-                    model=model_to_use,
-                    config=types.GenerateContentConfig(
-                        tools=tools_payload,
-                        cached_content=cached_content_name,
-                        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                            disable=True
-                        )
-                    ),
-                    history=history
-                )
+                # When using cached_content, we must NOT pass tools or system_instruction
+                # as they are already embedded in the cache.
+                try:
+                    self._chat_sessions[session_id] = self.client.aio.chats.create(
+                        model=model_to_use,
+                        config=types.GenerateContentConfig(
+                            cached_content=cached_content_name,
+                            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                                disable=True
+                            )
+                        ),
+                        history=history
+                    )
+                except Exception as e:
+                    # Fallback if cache is invalid/expired (403 or 404)
+                    logger.warning(f"Failed to use cache {cached_content_name}, falling back to standard chat: {e}")
+                    # Invalidate local cache record
+                    try:
+                        cache_manager = prompt_cache.get_cache_manager()
+                        cache_manager.invalidate_cache("worker")
+                    except:
+                        pass
+                        
+                    self._chat_sessions[session_id] = self.client.aio.chats.create(
+                        model=model_to_use,
+                        config=tool_config,
+                        history=history
+                    )
             else:
                 self._chat_sessions[session_id] = self.client.aio.chats.create(
                     model=model_to_use,
@@ -914,6 +950,375 @@ class NaviBot:
                 )
             return
         raise RuntimeError("No LLM client available for session initialization")
+
+    async def stream_chat(
+        self,
+        message: str,
+        session_id: str,
+        callback: Callable[[str, Dict[str, Any]], Any]
+    ):
+        """
+        Streams the chat response, emitting events via callback.
+        Events:
+        - token: { "content": str }
+        - tool_start: { "tool": str, "input": str }
+        - tool_end: { "tool": str, "output": str }
+        - response: { "content": str, "done": bool }
+        - error: { "message": str }
+        """
+        import asyncio
+        await self.ensure_session(session_id)
+        chat = self._chat_sessions[session_id]
+
+        # Dispatch based on provider
+        if not self.is_google and hasattr(self, "openai_client"):
+            await self._stream_chat_openai(session_id, message, callback)
+        else:
+            await self._stream_chat_google(session_id, message, callback)
+
+    async def _get_openai_tools(self) -> List[Dict[str, Any]]:
+        """Converts available tools to OpenAI format."""
+        openai_tools = []
+        
+        # 1. Native tools (LangChain StructuredTool or similar)
+        for tool in self.tools:
+            try:
+                # Handle different tool wrapper types
+                tool_name = getattr(tool, "name", None)
+                if not tool_name:
+                    # Try getting from func
+                    if hasattr(tool, "func") and hasattr(tool.func, "__name__"):
+                        tool_name = tool.func.__name__
+                    else:
+                        continue
+                        
+                tool_description = getattr(tool, "description", "")
+                
+                # Check if it has 'args_schema' (Pydantic)
+                parameters = {"type": "object", "properties": {}}
+                if hasattr(tool, "args_schema") and tool.args_schema:
+                    try:
+                        parameters = tool.args_schema.model_json_schema()
+                    except AttributeError:
+                        # Fallback for older pydantic/langchain versions
+                        if hasattr(tool.args_schema, "schema"):
+                            parameters = tool.args_schema.schema()
+                
+                openai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": tool_description,
+                        "parameters": parameters
+                    }
+                })
+            except Exception as e:
+                logger.warning(f"Failed to convert tool {getattr(tool, 'name', 'unknown')} to OpenAI format: {e}")
+
+        # 2. MCP tools
+        if self._mcp_loaded:
+            try:
+                mcp_tools = await self.mcp_manager.get_all_tools()
+                for tool in mcp_tools:
+                    openai_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("inputSchema", {})
+                        }
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to get MCP tools: {e}")
+                
+        return openai_tools
+
+    async def _stream_chat_openai(self, session_id: str, message: str, callback: Callable[[str, Dict[str, Any]], Any]):
+        """Handles streaming for OpenAI-compatible providers with tool support."""
+        session_data = self._chat_sessions.get(session_id)
+        if not session_data:
+            await self.ensure_session(session_id)
+            session_data = self._chat_sessions.get(session_id)
+            
+        history = session_data.get("history", [])
+        system_instruction = session_data.get("system_instruction", "")
+        
+        # Prepare initial messages
+        model_to_use = self.model_name
+        openai_messages = []
+        
+        # Add system prompt
+        if system_instruction:
+            openai_messages.append({"role": "system", "content": system_instruction})
+            
+        MAX_HISTORY_MESSAGES = 20
+        history_items = history[-MAX_HISTORY_MESSAGES:] if len(history) > MAX_HISTORY_MESSAGES else history
+        
+        # Convert history
+        for item in history_items:
+            role = item.get("role", "user")
+            if role == "model":
+                role = "assistant"
+            
+            parts = item.get("parts", [])
+            content = ""
+            for part in parts:
+                text = part.get("text")
+                if text:
+                    content += text
+            
+            if content:
+                openai_messages.append({"role": role, "content": content})
+            
+        openai_messages.append({"role": "user", "content": message})
+        
+        # Get tools
+        tools = await self._get_openai_tools()
+        tools_param = tools if tools else None
+        
+        import asyncio
+        loop = asyncio.get_running_loop()
+        
+        max_turns = 10
+        turn = 0
+        
+        try:
+            while turn < max_turns:
+                turn += 1
+                
+                # Call OpenAI (in thread)
+                def get_stream():
+                    return self.openai_client.chat.completions.create(
+                        model=model_to_use,
+                        messages=openai_messages,
+                        tools=tools_param,
+                        stream=True
+                    )
+                
+                stream = await loop.run_in_executor(None, get_stream)
+                
+                full_response = ""
+                tool_calls_buffer = {} # index -> {id, type, function: {name, arguments}}
+                
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                        
+                    delta = chunk.choices[0].delta
+                    
+                    # Handle Content
+                    if delta.content:
+                        content = delta.content
+                        full_response += content
+                        await callback("token", {"content": content})
+                    
+                    # Handle Tool Calls
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_buffer:
+                                tool_calls_buffer[idx] = {
+                                    "id": tc.id,
+                                    "type": tc.type,
+                                    "function": {"name": "", "arguments": ""}
+                                }
+                            
+                            if tc.id:
+                                tool_calls_buffer[idx]["id"] = tc.id
+                            if tc.type:
+                                tool_calls_buffer[idx]["type"] = tc.type
+                                
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_buffer[idx]["function"]["name"] += tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls_buffer[idx]["function"]["arguments"] += tc.function.arguments
+
+                # Check if we have tool calls to execute
+                if tool_calls_buffer:
+                    # Reconstruct tool_calls list
+                    tool_calls_list = []
+                    for idx in sorted(tool_calls_buffer.keys()):
+                        tc = tool_calls_buffer[idx]
+                        tool_calls_list.append({
+                            "id": tc["id"],
+                            "type": tc["type"] or "function", # Default to function if missing
+                            "function": tc["function"]
+                        })
+                    
+                    # Append assistant message with tool calls
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": full_response or None,
+                        "tool_calls": tool_calls_list
+                    }
+                    openai_messages.append(assistant_msg)
+                    
+                    # Execute tools
+                    for tc in tool_calls_list:
+                        func_name = tc["function"]["name"]
+                        func_args_str = tc["function"]["arguments"]
+                        call_id = tc["id"]
+                        
+                        func_args = {}
+                        try:
+                            if func_args_str:
+                                func_args = json.loads(func_args_str)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse arguments for tool {func_name}: {func_args_str}")
+                            func_args = {}
+                            
+                        await callback("tool_start", {"tool": func_name, "input": func_args_str})
+                        
+                        # Execute
+                        result_dict = await self._execute_tool_safe(func_name, func_args)
+                        result_str = json.dumps(result_dict, ensure_ascii=False)
+                        
+                        await callback("tool_end", {"tool": func_name, "output": result_str[:200] + "..."})
+                        
+                        # Append tool output message
+                        openai_messages.append({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": result_str
+                        })
+                    
+                    # Continue loop to send tool outputs to model
+                    continue
+                
+                else:
+                    # No tool calls, we are done
+                    # Update internal history (simplified)
+                    session_data["history"].append({"role": "user", "parts": [{"text": message}]})
+                    session_data["history"].append({"role": "model", "parts": [{"text": full_response}]})
+                    
+                    await callback("response", {"content": full_response, "done": True})
+                    break
+                    
+        except Exception as e:
+            logger.error(f"OpenAI Stream Error: {e}", exc_info=True)
+            await callback("error", {"message": str(e)})
+
+    async def _stream_chat_google(self, session_id: str, message: str, callback):
+        """Handles streaming for Google GenAI with manual tool execution loop."""
+        chat = self._chat_sessions[session_id]
+        
+        current_message = message
+        full_response_accumulated = ""
+        
+        max_turns = 10
+        turn = 0
+        
+        try:
+            while turn < max_turns:
+                turn += 1
+                
+                # Send message stream
+                response_stream = await chat.send_message_stream(current_message)
+                
+                function_calls = []
+                current_text_chunk = ""
+                
+                async for chunk in response_stream:
+                    # Check for text
+                    if chunk.text:
+                        text = chunk.text
+                        current_text_chunk += text
+                        full_response_accumulated += text
+                        await callback("token", {"content": text})
+                    
+                    # Check for function calls in parts
+                    # Note: chunk.parts might contain function_call
+                    if chunk.candidates and chunk.candidates[0].content.parts:
+                        for part in chunk.candidates[0].content.parts:
+                            if part.function_call:
+                                function_calls.append(part.function_call)
+                
+                if not function_calls:
+                    # No more tools, we are done
+                    break
+                
+                # Execute tools and collect responses
+                tool_parts_to_send = []
+                
+                for fc in function_calls:
+                    tool_name = fc.name
+                    tool_args = fc.args
+                    
+                    await callback("tool_start", {"tool": tool_name, "input": str(tool_args)})
+                    
+                    # Execute
+                    # Note: tool_args might be a dict or a MapComposite (from protobuf)
+                    # We should convert it to dict if possible
+                    args_dict = {}
+                    if hasattr(tool_args, "items"):
+                        args_dict = dict(tool_args.items())
+                    elif isinstance(tool_args, dict):
+                        args_dict = tool_args
+                    else:
+                        # Best effort
+                        args_dict = tool_args
+                        
+                    result = await self._execute_tool_safe(tool_name, args_dict)
+                    
+                    # Emit end
+                    await callback("tool_end", {"tool": tool_name, "output": str(result)[:200] + "..."})
+                    
+                    # Google GenAI expects a Part with function_response
+                    from google.genai import types
+                    
+                    # Ensure result is a dict/json-compatible for the response
+                    # Google SDK usually handles dicts well for function_response
+                    tool_parts_to_send.append(
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=tool_name,
+                                response=result
+                            )
+                        )
+                    )
+                
+                # Update current_message to be the tool responses
+                current_message = tool_parts_to_send
+                # Loop continues to send tool outputs and get next chunk of text/calls
+            
+            # If loop finishes (max turns reached or no more function calls)
+            # If we accumulated response, we mark done.
+            if turn >= max_turns:
+                logger.warning(f"Reached max turns ({max_turns}) in Google stream loop")
+                
+            await callback("response", {"content": full_response_accumulated, "done": True})
+
+        except Exception as e:
+            logger.error(f"Google Stream Error: {e}", exc_info=True)
+            await callback("error", {"message": str(e)})
+
+    async def _execute_tool_safe(self, name: str, args: dict) -> dict:
+        """Helper to execute tool and return dict for Gemini."""
+        try:
+            # Logic similar to existing tool execution
+            # Check native
+            tool_func = self._session_tools.get(name)
+            if not tool_func:
+                for t in self.tools:
+                    if t.name == name:
+                        tool_func = t
+                        break
+            
+            result = None
+            if tool_func:
+                if inspect.iscoroutinefunction(tool_func.func):
+                    result = await tool_func.func(**args)
+                else:
+                    result = await asyncio.to_thread(tool_func.func, **args)
+            elif self._mcp_loaded:
+                result = await self.mcp_manager.call_tool(name, args)
+            else:
+                return {"error": f"Tool {name} not found"}
+            
+            return _prepare_tool_response(result, TOOL_RESPONSE_LIMIT)
+        except Exception as e:
+            return {"error": str(e)}
 
     async def _send_message_openai(self, session_id: str, message: str) -> str:
         """

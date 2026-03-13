@@ -79,7 +79,10 @@ DEFAULT_CACHE_TTL_MINUTES = int(os.getenv("NAVIBOT_CACHE_TTL_MINUTES", "60"))
 MIN_CACHE_TOKENS = 32000  # Minimum tokens required for efficient caching
 
 # Model configuration
-DEFAULT_CACHE_MODEL = os.getenv("NAVIBOT_CACHE_MODEL", "gemini-1.5-flash-001")
+# Note: Caching is only supported on specific stable models, not preview models.
+# gemini-1.5-flash-001 is stable and supports caching.
+# Default to gemini-1.5-pro-001 for better caching support if flash fails
+DEFAULT_CACHE_MODEL = os.getenv("NAVIBOT_CACHE_MODEL", "models/gemini-1.5-flash-001")
 
 
 @dataclass
@@ -116,12 +119,12 @@ class PromptCacheManager:
             cls._instance._initialized = False
         return cls._instance
     
-    def __init__(self):
+    def __init__(self, api_key: Optional[str] = None):
         if self._initialized:
             return
         self._initialized = True
         self._lock = logging.getLogger(f"{__name__}.lock")
-        self._google_api_key = os.getenv("GOOGLE_API_KEY")
+        self._google_api_key = api_key or os.getenv("GOOGLE_API_KEY")
         self._cache_ttl = DEFAULT_CACHE_TTL_MINUTES
         self._cache_model = DEFAULT_CACHE_MODEL
         self._enabled = os.getenv("NAVIBOT_CACHE_ENABLED", "true").lower() == "true"
@@ -132,6 +135,24 @@ class PromptCacheManager:
             from google import genai
             if self._google_api_key:
                 self.client = genai.Client(api_key=self._google_api_key)
+                
+                # Determine cache model from settings or env var
+                try:
+                    from app.core.config_manager import get_settings
+                    settings = get_settings()
+                    # If user has a primary model, try to use it (must be supported by caching)
+                    # We prepend 'models/' if missing because caching API usually requires it
+                    model_name = settings.current_model
+                    if not model_name.startswith("models/"):
+                        model_name = f"models/{model_name}"
+                    self._cache_model = model_name
+                except ImportError:
+                    # Fallback if config_manager not available (e.g. during tests)
+                    self._cache_model = DEFAULT_CACHE_MODEL
+                
+                # Allow override via env var
+                if os.getenv("NAVIBOT_CACHE_MODEL"):
+                    self._cache_model = os.getenv("NAVIBOT_CACHE_MODEL")
             else:
                 self.client = None
                 self._enabled = False
@@ -179,6 +200,10 @@ class PromptCacheManager:
     def _get_ttl_str(self) -> str:
         """Get the TTL as a string (e.g., '3600s')."""
         return f"{self._cache_ttl * 60}s"
+    
+    def _get_ttl_delta(self) -> datetime.timedelta:
+        """Get the TTL as a timedelta object."""
+        return datetime.timedelta(minutes=self._cache_ttl)
 
     def create_agency_cache(
         self,
@@ -315,10 +340,24 @@ class PromptCacheManager:
             
             declarations = _normalize_function_declarations(tools_schema)
 
+            # Ensure contents is not empty as required by SDK
+            final_contents = contents or []
+            if not final_contents:
+                final_contents = [
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text="Cache initialization")]
+                    ),
+                    types.Content(
+                        role="model",
+                        parts=[types.Part(text="Acknowledged")]
+                    )
+                ]
+
             config = types.CreateCachedContentConfig(
                 display_name=display_name,
                 system_instruction=system_instruction,
-                contents=contents or [],
+                contents=final_contents,
                 ttl=self._get_ttl_str(),
                 tools=[{"function_declarations": declarations}] if declarations else None
             )

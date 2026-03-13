@@ -104,7 +104,17 @@ class ConversationSummarizer:
         self._compression_level = self._parse_compression_level(DEFAULT_COMPRESSION_LEVEL)
         self._keep_recent = DEFAULT_KEEP_RECENT_MESSAGES
         self._api_key = os.getenv("GOOGLE_API_KEY")
-        self._summarizer_model = os.getenv("NAVIBOT_SUMMARIZER_MODEL", "gemini-1.5-flash-001")
+        
+        # Use configured model for summarization
+        try:
+            from app.core.config_manager import get_settings
+            self._summarizer_model = get_settings().current_model
+        except ImportError:
+            self._summarizer_model = os.getenv("NAVIBOT_SUMMARIZER_MODEL", "gemini-1.5-flash-001")
+            
+        # Allow override
+        if os.getenv("NAVIBOT_SUMMARIZER_MODEL"):
+            self._summarizer_model = os.getenv("NAVIBOT_SUMMARIZER_MODEL")
         
         # Track recent summary hashes to avoid duplicate summaries
         self._recent_summary_hashes: Dict[str, str] = {}

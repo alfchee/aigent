@@ -15,6 +15,7 @@ from app.api.channels import router as channels_router
 from app.api.mcp import router as mcp_router
 from app.api.scheduler import router as scheduler_router
 from app.api.cache import router as cache_router
+from app.api.chat_ws import router as chat_ws_router
 from app.channels.manager import channel_manager
 from app.core.bot_pool import bot_pool
 from app.core.model_orchestrator import ModelOrchestrator
@@ -108,6 +109,7 @@ app.include_router(channels_router)
 app.include_router(mcp_router)
 app.include_router(scheduler_router)
 app.include_router(cache_router)
+app.include_router(chat_ws_router)
 if FRONTEND_ASSETS.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS)), name="assets")
 
