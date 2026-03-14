@@ -513,15 +513,43 @@ class NaviBot:
             # 5. Execute Graph (Streaming)
             config = {"configurable": {"thread_id": session_id}}
             
-            # Logic to avoid duplicating history if resuming
+            # Check for existing checkpoint
             checkpoint = await memory.aget(config)
             
+            # DEBUG LOG: Log checkpoint status
             if checkpoint:
-                # We are resuming/continuing. 
-                # Only pass the NEW message.
+                checkpoint_info = checkpoint.get("metadata", {})
+                logger.info(f"[SESSION_DEBUG] Checkpoint found for session {session_id}")
+                logger.info(f"[SESSION_DEBUG] Checkpoint metadata: {checkpoint_info}")
+            else:
+                logger.info(f"[SESSION_DEBUG] No checkpoint found for session {session_id}, using full history")
+            
+            # Check if checkpoint is stale (older than 1 hour)
+            import time
+            is_stale = False
+            if checkpoint:
+                try:
+                    checkpoint_time = checkpoint.get("ts") or checkpoint.get("metadata", {}).get("ts")
+                    if checkpoint_time:
+                        current_time = time.time()
+                        # checkpoint_time might be a timestamp string or number
+                        if isinstance(checkpoint_time, (int, float)):
+                            age_seconds = current_time - checkpoint_time
+                            if age_seconds > 3600:  # 1 hour
+                                is_stale = True
+                                logger.warning(f"[SESSION_DEBUG] Checkpoint is stale ({age_seconds:.0f}s old), ignoring")
+                except Exception as e:
+                    logger.warning(f"[SESSION_DEBUG] Error checking checkpoint timestamp: {e}")
+            
+            # Determine input based on checkpoint status
+            if checkpoint and not is_stale:
+                # We are resuming/continuing a previous conversation
+                # Only pass the NEW message
+                logger.info(f"[SESSION_DEBUG] Using checkpoint - passing only new message")
                 inputs = {"messages": [HumanMessage(content=message)]}
             else:
-                # First run for this thread_id
+                # First run or stale checkpoint - use full history
+                logger.info(f"[SESSION_DEBUG] Using full history - {len(lc_messages)} messages")
                 inputs = {"messages": lc_messages}
 
             # IMPORTANT: Calculate start index BEFORE execution to avoid issues if lc_messages is modified in place
@@ -1023,6 +1051,11 @@ class NaviBot:
             except Exception as e:
                 logger.warning(f"Failed to get/create cache: {e}")
         
+        # DEBUG: Allow disabling prompt cache via environment variable
+        if os.getenv("DISABLE_PROMPT_CACHE", "false").lower() == "true":
+            logger.info(f"[DEBUG] Prompt cache disabled via DISABLE_PROMPT_CACHE env var")
+            cached_content_name = None
+        
         # Determine model to use
         model_to_use = self.model_name
         
@@ -1399,14 +1432,34 @@ class NaviBot:
                     
                     # Check for function calls in parts
                     # Note: chunk.parts might contain function_call
-                    if chunk.candidates and chunk.candidates[0].content.parts:
+                    # First verify candidates and content exist
+                    # DEBUG: Add detailed logging
+                    if not chunk.candidates:
+                        logger.warning("[TOOL_DEBUG] No candidates in chunk")
+                    elif len(chunk.candidates) == 0:
+                        logger.warning("[TOOL_DEBUG] Empty candidates list")
+                    elif chunk.candidates[0].content is None:
+                        logger.warning("[TOOL_DEBUG] First candidate content is None")
+                    elif not hasattr(chunk.candidates[0].content, 'parts'):
+                        logger.warning("[TOOL_DEBUG] First candidate content has no 'parts' attribute")
+                    elif not chunk.candidates[0].content.parts:
+                        logger.warning("[TOOL_DEBUG] First candidate content parts is empty")
+                    elif (chunk.candidates and 
+                        len(chunk.candidates) > 0 and 
+                        chunk.candidates[0].content is not None and 
+                        hasattr(chunk.candidates[0].content, 'parts') and
+                        chunk.candidates[0].content.parts):
                         for part in chunk.candidates[0].content.parts:
                             if part.function_call:
+                                logger.info(f"[TOOL_DEBUG] Found function_call: {part.function_call.name}")
                                 function_calls.append(part.function_call)
                 
                 if not function_calls:
                     # No more tools, we are done
+                    logger.warning(f"[TOOL_DEBUG] No function calls detected in chunk. Breaking loop.")
                     break
+                
+                logger.info(f"[TOOL_EXECUTION] Found {len(function_calls)} function calls to execute")
                 
                 # Execute tools and collect responses
                 tool_parts_to_send = []
