@@ -122,8 +122,8 @@ class ToolRegistry:
             # Cargar skills
             await self._load_skills()
             
-            # Cargar MCPs (se hace en otra fase)
-            # await self._load_mcps()
+            # Cargar MCPs
+            await self._load_mcps()
             
             self._initialized_properly = True
             logger.info(f"ToolRegistry initialized with {len(self._tools)} tools")
@@ -150,6 +150,18 @@ class ToolRegistry:
             logger.info(f"Loaded {len(self._tools_by_source['skill'])} skill tools")
         except Exception as e:
             logger.error(f"Error loading skills: {e}")
+    
+    async def _load_mcps(self) -> None:
+        """Carga todas las herramientas MCP."""
+        try:
+            from app.core.mcp_adapter import get_mcp_adapter
+            adapter = await get_mcp_adapter(self)
+            
+            mcp_tools = await adapter.discover_and_register_tools()
+            logger.info(f"Loaded {len(mcp_tools)} MCP tools")
+            
+        except Exception as e:
+            logger.error(f"Error loading MCP tools: {e}")
     
     def _infer_category(self, skill_name: str) -> str:
         """Infiere la categoría de un skill basado en su nombre."""
@@ -370,9 +382,32 @@ class ToolRegistry:
             
             # Recargar
             await self._load_skills()
+            await self._load_mcps()
             self._initialized_properly = True
             
             logger.info("ToolRegistry reloaded")
+    
+    async def reload_mcp_tools(self) -> None:
+        """Recarga las herramientas MCP desde servidores."""
+        try:
+            from app.core.mcp_adapter import get_mcp_adapter
+            
+            # Obtener el adapter (creará uno nuevo si no existe)
+            adapter = await get_mcp_adapter(self)
+            
+            # Recargar servidores y re-descubrir tools
+            await adapter.reload_servers()
+            
+            # Limpiar tools MCP existentes
+            for tool_name in list(self._tools_by_source.get("mcp", set())):
+                await self.unregister_tool(tool_name)
+            
+            # Re-registrar
+            await adapter.discover_and_register_tools()
+            
+            logger.info("MCP tools reloaded")
+        except Exception as e:
+            logger.error(f"Error reloading MCP tools: {e}")
     
     async def health_check(self) -> Dict[str, Dict[str, Any]]:
         """
