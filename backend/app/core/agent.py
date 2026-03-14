@@ -17,6 +17,7 @@ from app.core.persistence_wrapper import wrap_tool
 from app.core.mcp_client import McpManager
 from app.core.agent_graph import AgentGraph
 from app.core import prompt_cache
+from app.core.memory import get_memory_controller
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -89,6 +90,9 @@ class NaviBot:
         self.client = None
         self.is_google = True # Default flag
         self.provider = provider  # Store the explicitly provided provider
+        
+        # Initialize Memory Controller (multi-level memory)
+        self.memory_controller = get_memory_controller()
         
         # If no model provided, use the configured current model
         if model_name is None:
@@ -453,19 +457,33 @@ class NaviBot:
         # 4. Initialize Graph with Extra Tools (MCP)
         mcp_lc_tools = await self._convert_mcp_tools()
         
-        # Load User Facts for Graph Injection
+        # Load User Facts for Graph Injection using MemoryController
         user_facts_str = ""
         try:
-            from app.core.runtime_context import resolve_memory_user_id
-            from app.core.memory_manager import get_agent_memory
-            
-            # Resolve memory user ID from session
-            mem_uid = resolve_memory_user_id(None, session_id)
-            facts = get_agent_memory().get_all_user_facts(mem_uid)
-            if facts:
-                user_facts_str = "\n".join([f"- {f}" for f in facts])
+            # Use the new MemoryController for multi-level context
+            context = await self.memory_controller.get_context(
+                session_id=session_id,
+                user_id=session_id,
+                current_query=message
+            )
+            # Get semantic facts from the context
+            if context.semantic_facts:
+                user_facts_str = context.semantic_facts
+            elif context.global_preferences:
+                user_facts_str = context.global_preferences
         except Exception as e:
             logger.warning(f"Failed to load user facts for graph: {e}")
+            # Fallback to direct memory access
+            try:
+                from app.core.runtime_context import resolve_memory_user_id
+                from app.core.memory_manager import get_agent_memory
+                
+                mem_uid = resolve_memory_user_id(None, session_id)
+                facts = get_agent_memory().get_all_user_facts(mem_uid)
+                if facts:
+                    user_facts_str = "\n".join([f"- {f}" for f in facts])
+            except Exception as fallback_e:
+                logger.warning(f"Fallback also failed: {fallback_e}")
 
         
         # We also need to add the native tools registered in self.tools
@@ -574,6 +592,9 @@ class NaviBot:
         # Save User Message explicitly
         save_chat_message(session_id, "user", message)
         
+        # Also add to memory controller (working + episodic memory)
+        await self.memory_controller.add_message(session_id, session_id, "user", message)
+        
         response_text = ""
         iterations = 0
         tool_calls_count = 0
@@ -599,6 +620,10 @@ class NaviBot:
                         })
                 
                 save_chat_message(session_id, "model", content_obj)
+                
+                # Also add assistant response to memory controller
+                if msg.content:
+                    await self.memory_controller.add_message(session_id, session_id, "assistant", msg.content)
                 
             elif isinstance(msg, ToolMessage):
                 # Save as 'function' (tool result)
