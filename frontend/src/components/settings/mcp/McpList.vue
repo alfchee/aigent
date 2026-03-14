@@ -8,8 +8,8 @@
       <input
         type="checkbox"
         :checked="allSelected"
-        @change="$emit('toggle-all', ($event.target as HTMLInputElement).checked)"
         class="w-4 h-4 text-sky-600 rounded border-gray-300 focus:ring-sky-500"
+        @change="$emit('toggle-all', ($event.target as HTMLInputElement).checked)"
       />
       <span class="ml-3 text-xs font-semibold text-slate-500 uppercase tracking-wider"
         >Servidores ({{ servers.length }})</span
@@ -32,8 +32,8 @@
         <input
           type="checkbox"
           :checked="selectedIds.includes(server.id)"
-          @change="$emit('toggle-select', server.id)"
           class="w-4 h-4 text-sky-600 rounded border-gray-300 focus:ring-sky-500"
+          @change="$emit('toggle-select', server.id)"
         />
 
         <div class="p-3 bg-sky-50 text-sky-600 rounded-lg">
@@ -66,9 +66,9 @@
       <div class="flex items-center gap-2">
         <!-- Toggle Switch -->
         <button
-          @click="$emit('toggle', server)"
           class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
           :class="server.enabled ? 'bg-sky-600' : 'bg-slate-200'"
+          @click="$emit('toggle', server)"
         >
           <span
             class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"
@@ -79,9 +79,9 @@
         <div class="h-6 w-px bg-slate-200 mx-2"></div>
 
         <button
-          @click="$emit('edit', server)"
           class="p-2 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
           title="Editar"
+          @click="$emit('edit', server)"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -93,9 +93,9 @@
           </svg>
         </button>
         <button
-          @click="$emit('delete', server)"
           class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           title="Eliminar"
+          @click="$emit('delete', server)"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path

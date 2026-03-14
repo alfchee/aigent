@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from app.core.mcp_config import get_active_config_runtime, get_registry_merged
 
@@ -122,6 +122,13 @@ class McpManager:
             args.append(formatted_arg)
             
         env = os.environ.copy() 
+        # Ensure current directory is in PYTHONPATH so python -m app... works
+        current_path = os.getcwd()
+        if "PYTHONPATH" in env:
+            env["PYTHONPATH"] = f"{current_path}:{env['PYTHONPATH']}"
+        else:
+            env["PYTHONPATH"] = current_path
+            
         if 'env_vars' in definition: 
             missing_envs = []
             for env_var in definition['env_vars']:
@@ -229,6 +236,9 @@ class McpManager:
                         output.append(str(content))
                 return "\n".join(output)
             except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                print(f"Error executing tool {tool_name}: {e}\n{error_trace}")
                 return f"Error executing tool {tool_name}: {e}"
         return "Herramienta no encontrada."
     

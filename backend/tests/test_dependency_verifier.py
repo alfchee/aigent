@@ -1,8 +1,7 @@
 
 import unittest
 from unittest.mock import MagicMock, patch
-import sys
-from app.core.dependency_verifier import DependencyVerifier, DependencyStatus
+from app.core.dependency_verifier import DependencyVerifier
 
 class TestDependencyVerifier(unittest.TestCase):
     def test_verify_installed_dependency(self):

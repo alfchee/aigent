@@ -1,7 +1,6 @@
 import os
-import asyncio
 import logging
-from telegram import Update, InputFile
+from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from app.core.agent import execute_agent_task  # Importamos tu cerebro existente
 from app.core.filesystem import SessionWorkspace # Tu gestor de archivos

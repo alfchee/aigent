@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import time
@@ -152,7 +151,7 @@ async def execute_agent_task(
             response_text = str(result.get("response", ""))
             
             print(f"\n{'='*60}")
-            print(f"Task Execution Complete")
+            print("Task Execution Complete")
             print(f"Iterations: {result['iterations']}")
             print(f"Termination: {result['termination_reason']}")
             print(f"Execution Time: {result['execution_time_seconds']}s")

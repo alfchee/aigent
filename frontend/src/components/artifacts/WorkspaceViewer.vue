@@ -349,12 +349,12 @@ function getIcon(mime: string | null | undefined, path: string) {
         </div>
         <div
           v-for="f in filteredFiles"
+          v-show="!showTrash"
           :key="f.path"
           class="border-b border-slate-200 p-3 hover:bg-gray-50 transition-colors cursor-pointer group"
           :class="f.path === selected ? 'bg-sky-50/50 border-l-4 border-l-sky-500' : 'bg-white'"
           :title="collapsed ? f.path : ''"
           @click="store.selectArtifact(f.path)"
-          v-show="!showTrash"
         >
           <div class="flex justify-between items-start mb-1">
             <div class="flex items-center gap-2 overflow-hidden">
@@ -389,9 +389,9 @@ function getIcon(mime: string | null | undefined, path: string) {
         </div>
         <div
           v-for="t in filteredTrash"
+          v-show="showTrash"
           :key="t.trash_id"
           class="border-b border-slate-200 p-3 bg-white"
-          v-show="showTrash"
         >
           <div class="flex justify-between items-start mb-1">
             <div class="flex items-center gap-2 overflow-hidden">

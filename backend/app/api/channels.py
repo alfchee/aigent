@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from app.channels.config import get_channel_config, get_channels_config
+from app.channels.config import get_channels_config
 from app.channels.events import subscribe, unsubscribe
 from app.channels.manager import channel_manager
 

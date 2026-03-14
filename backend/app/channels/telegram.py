@@ -436,10 +436,16 @@ class TelegramChannel(BaseChannel):
                 if time.monotonic() >= deadline:
                     self._lock_file.close()
                     self._lock_file = None
-                    print(f"[{pid}] TelegramChannel {instance_id}: Failed to acquire lock (timeout).")
-                    raise RuntimeError("telegram polling already active") from e
+                    print(f"[{pid}] TelegramChannel {instance_id}: Failed to acquire lock (timeout). Skipping Telegram start.")
+                    # raise RuntimeError("telegram polling already active") from e
+                    return
                 await asyncio.sleep(0.5)
         try:
+            # Check if lock file is valid (not stale)
+            # If we acquired the lock, we assume we are the only one.
+            # But if the previous process crashed without releasing lock, we might need to handle it.
+            # However, flock is usually released on process exit.
+            
             await self.app.initialize()
             await self.app.start()
             if self._worker_task is None or self._worker_task.done():
@@ -449,9 +455,14 @@ class TelegramChannel(BaseChannel):
                 await self.app.updater.start_polling(drop_pending_updates=True, poll_interval=1.0)
                 print(f"[{pid}] TelegramChannel {instance_id}: Polling started successfully.")
             except Conflict as e:
-                print(f"[{pid}] TelegramChannel {instance_id}: Conflict detected during start_polling!")
-                raise RuntimeError("telegram polling already active") from e
-        except Exception:
+                print(f"[{pid}] TelegramChannel {instance_id}: Conflict detected during start_polling! Assuming another instance is running.")
+                # Release lock and cleanup
+                await self.stop()
+                return
+        except Exception as e:
+            # If start_polling fails with Conflict, we catch it inside.
+            # But if initialize() or start() fails, we catch it here.
+            print(f"[{pid}] TelegramChannel {instance_id}: Failed to start: {e}")
             try:
                 fcntl.flock(self._lock_file, fcntl.LOCK_UN)
             except Exception:

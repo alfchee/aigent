@@ -221,8 +221,8 @@ const gridStyle = computed(() => {
         </div>
         <div class="h-6 w-px bg-slate-200 mx-1 hidden md:block"></div>
         <button
-          class="p-2 rounded-full hover:bg-gray-100 transition-colors text-slate-500"
           id="theme-toggle"
+          class="p-2 rounded-full hover:bg-gray-100 transition-colors text-slate-500"
           title="Toggle Theme (Not Implemented)"
         >
           <span class="material-icons-outlined">dark_mode</span>
@@ -242,8 +242,8 @@ const gridStyle = computed(() => {
             <button
               class="text-slate-300 hover:text-white text-xs"
               type="button"
-              @click="store.popToast(t.id)"
               aria-label="Cerrar notificación"
+              @click="store.popToast(t.id)"
             >
               ✕
             </button>
@@ -254,8 +254,8 @@ const gridStyle = computed(() => {
       <div v-if="isStacked" class="h-full flex flex-col">
         <div class="h-[260px] min-h-[200px] border-b border-slate-200">
           <Sidebar
-            :activeSessionId="store.sessionId"
-            sidebarState="normal"
+            :active-session-id="store.sessionId"
+            sidebar-state="normal"
             @select="setActiveSession"
             @new="createNewSession"
             @delete="deleteSession"
@@ -270,10 +270,10 @@ const gridStyle = computed(() => {
           class="h-[40%] min-h-[260px] border-t border-slate-200"
         >
           <WorkspaceViewer
-            :sidebarState="artifactsSidebarState"
-            :panelCollapsed="artifactsPanelCollapsed"
-            @update:sidebarState="setArtifactsSidebarState"
-            @update:panelCollapsed="setArtifactsPanelCollapsed"
+            :sidebar-state="artifactsSidebarState"
+            :panel-collapsed="artifactsPanelCollapsed"
+            @update:sidebar-state="setArtifactsSidebarState"
+            @update:panel-collapsed="setArtifactsPanelCollapsed"
           />
         </div>
         <div
@@ -303,8 +303,8 @@ const gridStyle = computed(() => {
         <div class="min-w-0 min-h-0">
           <div class="h-full flex">
             <Sidebar
-              :activeSessionId="store.sessionId"
-              :sidebarState="sessionsSidebarState"
+              :active-session-id="store.sessionId"
+              :sidebar-state="sessionsSidebarState"
               @select="setActiveSession"
               @new="createNewSession"
               @delete="deleteSession"
@@ -340,10 +340,10 @@ const gridStyle = computed(() => {
           class="min-w-0 min-h-0 border-l border-slate-200 bg-white"
         >
           <WorkspaceViewer
-            :sidebarState="artifactsSidebarState"
-            :panelCollapsed="artifactsPanelCollapsed"
-            @update:sidebarState="setArtifactsSidebarState"
-            @update:panelCollapsed="setArtifactsPanelCollapsed"
+            :sidebar-state="artifactsSidebarState"
+            :panel-collapsed="artifactsPanelCollapsed"
+            @update:sidebar-state="setArtifactsSidebarState"
+            @update:panel-collapsed="setArtifactsPanelCollapsed"
           />
         </div>
       </div>

@@ -65,7 +65,7 @@ const getColor = (type: string) => {
     <div class="flex items-center gap-2 px-4 py-3 bg-slate-950 border-b border-slate-800">
       <Terminal class="w-4 h-4 text-slate-400" />
       <span class="font-semibold text-slate-200">System Trace</span>
-      <span class="ml-auto text-[10px] text-slate-500" v-if="store.isStreaming">LIVE</span>
+      <span v-if="store.isStreaming" class="ml-auto text-[10px] text-slate-500">LIVE</span>
     </div>
 
     <!-- Log List -->
@@ -105,8 +105,8 @@ const getColor = (type: string) => {
           </div>
 
           <component
-            v-if="log.details"
             :is="log.expanded ? ChevronDown : ChevronRight"
+            v-if="log.details"
             class="w-3 h-3 text-slate-600 mt-0.5"
           />
         </div>

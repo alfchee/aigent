@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 def _resolve_python_type(prop_schema: Dict[str, Any]) -> Any:
     """

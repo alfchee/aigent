@@ -1,8 +1,6 @@
 import asyncio
 import os
 import sys
-import json
-from unittest.mock import MagicMock
 
 # Add backend to path
 sys.path.append(os.path.join(os.path.dirname(__file__)))
@@ -32,7 +30,6 @@ async def main():
         print(f" - {t['name']}")
 
     # Test Chat
-    session_id = "test-mcp-session-manual"
     query = "Busca repositorios de 'mcp-python' en github"
     
     print(f"\nSending message: '{query}'")

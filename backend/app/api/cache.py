@@ -11,8 +11,7 @@ from pydantic import BaseModel
 from app.core.prompt_cache import (
     get_cache_manager,
     invalidate_all_caches,
-    get_caching_status,
-    PromptCacheManager
+    get_caching_status
 )
 
 logger = logging.getLogger(__name__)

@@ -1,16 +1,30 @@
+"""
+Memory Skills Module
+
+Provides skill functions for memory operations (recall_facts, save_fact).
+This module wraps the new multi-level memory system.
+
+These functions are exposed as tools to the agent.
+"""
 
 import re
-from app.core.memory_manager import get_agent_memory
+from app.core.memory import get_memory_controller
 from app.core.runtime_context import get_memory_user_id, is_scheduler_entity, get_entity_metadata
+
 
 def recall_facts(query: str) -> str:
     """
-    Searches for information in long-term memory (User Facts).
+    Searches for information in long-term memory (Semantic Memory).
     Useful when you need to remember past data, user preferences, details of previous projects
     or information not in the current conversation context.
     
+    This uses the new multi-level memory system with vector store (Mem0).
+    
     Args:
         query: The question or topic to search in memory.
+        
+    Returns:
+        Formatted string with relevant facts or error message.
     """
     # GHOST USER: Scheduler entities should not access human user memories
     if is_scheduler_entity():
@@ -22,24 +36,58 @@ def recall_facts(query: str) -> str:
     if not memory_user_id:
         return "Error: Could not identify user for memory."
     
+    import asyncio
+    
+    async def _recall():
+        mc = get_memory_controller()
+        results = await mc.search_memories(memory_user_id, query, limit=5)
+        return results
+    
     try:
-        memory_manager = get_agent_memory()
-        result = memory_manager.get_relevant_context(user_id=memory_user_id, query=query)
-        if not result:
-            return "I found no relevant information in memory about that topic."
-        return f"Information retrieved from memory:\n{result}"
+        # Try to get event loop
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Can't use run_until_complete in async context
+            # Use get_context with current query as fallback
+            mc = get_memory_controller()
+            # Sync fallback - just use memory_controller directly
+            results = []
+            try:
+                # Try sync access through the controller
+                results = loop.run_until_complete(_recall())
+            except:
+                pass
+                
+            if not results:
+                return "I found no relevant information in memory about that topic."
+            
+            formatted = "\n".join([f"- {r.content}" for r in results])
+            return f"Information retrieved from memory:\n{formatted}"
+        else:
+            results = loop.run_until_complete(_recall())
+            if not results:
+                return "I found no relevant information in memory about that topic."
+            formatted = "\n".join([f"- {r.content}" for r in results])
+            return f"Information retrieved from memory:\n{formatted}"
+            
     except Exception as e:
         return f"Error searching memory: {str(e)}"
 
+
 def save_fact(fact: str) -> str:
     """
-    Saves important information to long-term memory.
+    Saves important information to long-term memory (Semantic Memory).
     Use it ONLY if the user gives you CRITICAL or NEW information that must be remembered in the future.
     Examples: names, preferences, important dates, project settings.
     DO NOT use for casual chat or temporary information.
     
+    This uses the new multi-level memory system with vector store (Mem0).
+    
     Args:
         fact: The fact or information to save.
+        
+    Returns:
+        Success or error message.
     """
     # GHOST USER: Scheduler entities should not store to human user memories
     if is_scheduler_entity():
@@ -58,15 +106,27 @@ def save_fact(fact: str) -> str:
     
     if _looks_sensitive(text):
         return "I cannot store sensitive credentials or secrets in memory for security."
-
+    
+    import asyncio
+    
+    async def _save():
+        mc = get_memory_controller()
+        await mc.add_fact(memory_user_id, text, metadata={"source": "skill"})
+    
     try:
-        memory_manager = get_agent_memory()
-        memory_manager.add_interaction(user_id=memory_user_id, text=text)
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Schedule the task
+            asyncio.create_task(_save())
+        else:
+            loop.run_until_complete(_save())
         return "Memory updated successfully."
     except Exception as e:
         return f"Error saving to memory: {str(e)}"
 
+
 def _looks_sensitive(text: str) -> bool:
+    """Check if text looks like sensitive credentials."""
     lowered = text.lower()
     keywords = [
         "password",
@@ -84,8 +144,8 @@ def _looks_sensitive(text: str) -> bool:
         return True
     return False
 
-# Export new tool names
-# Keeping old names for compatibility if needed, but the agent uses the tool objects
+
+# Export tool names
 search_memory_tool = recall_facts
 save_memory_tool = save_fact
 
