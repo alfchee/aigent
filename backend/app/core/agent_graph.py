@@ -113,6 +113,10 @@ class AgentGraph:
                 logger.warning(f"Failed to get ToolRegistry: {e}. Falling back to legacy loading.")
                 self.use_registry = False
         
+        # Siempre cargar legacy tools para compatibilidad con Workers
+        # Esto asegura que skills_map esté disponible
+        self._load_legacy_tools()
+        
         if not self.use_registry:
             # Fallback: carga legacy de skills
             self._load_legacy_tools()
@@ -457,3 +461,26 @@ class AgentGraph:
 
     def get_runnable(self):
         return self.graph
+
+    async def astream(self, input_message: str, config: dict = None):
+        """
+        Ejecuta el grafo en modo streaming.
+        
+        Args:
+            input_message: Mensaje del usuario
+            config: Configuración para el grafo (incluye thread_id para checkpointer)
+            
+        Yields:
+            Eventos de streaming del grafo
+        """
+        from langchain_core.messages import HumanMessage
+        
+        # Preparar el estado inicial
+        initial_state = {
+            "messages": [HumanMessage(content=input_message)],
+            "next": ""
+        }
+        
+        # Usar astream_events para obtener streaming de eventos
+        async for event in self.graph.astream_events(initial_state, config=config, version="v1"):
+            yield event

@@ -1153,11 +1153,138 @@ class NaviBot:
         await self.ensure_session(session_id)
         chat = self._chat_sessions[session_id]
 
+        # Check if we should use AgentGraph instead of simple flow
+        use_agent_graph = os.getenv("USE_AGENT_GRAPH", "false").lower() == "true"
+        
+        if use_agent_graph:
+            logger.info("[AgentGraph] Using AgentGraph for message processing")
+            await self._stream_chat_agent_graph(session_id, message, callback)
+            return
+        
         # Dispatch based on provider
         if not self.is_google and hasattr(self, "openai_client"):
             await self._stream_chat_openai(session_id, message, callback)
         else:
             await self._stream_chat_google(session_id, message, callback)
+
+    async def _stream_chat_agent_graph(self, session_id: str, message: str, callback: Callable):
+        """
+        Maneja el streaming usando AgentGraph con Supervisors y Workers.
+        
+        Args:
+            session_id: ID de la sesión
+            message: Mensaje del usuario
+            callback: Función de callback para enviar eventos
+        """
+        from app.core.agent_graph import AgentGraph
+        from app.core.runtime_context import set_session_id, reset_session_id
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        
+        logger.info(f"[AgentGraph] Starting AgentGraph stream for session {session_id}")
+        
+        # Set session context for tools to access
+        session_token = set_session_id(session_id)
+        
+        try:
+            # Get MCP tools from existing mcp_manager
+            mcp_lc_tools = []
+            if self.mcp_manager:
+                try:
+                    # Ensure servers are loaded
+                    if not self._mcp_loaded:
+                        await self.mcp_manager.load_servers()
+                        self._mcp_loaded = True
+                    
+                    mcp_lc_tools = await self.mcp_manager.get_all_tools()
+                    logger.info(f"[AgentGraph] Loaded {len(mcp_lc_tools)} MCP tools")
+                except Exception as e:
+                    logger.warning(f"[AgentGraph] Failed to load MCP tools: {e}")
+            
+            # Setup checkpointer
+            os.makedirs("workspace_data", exist_ok=True)
+            db_path = "workspace_data/checkpoints.db"
+            
+            async with AsyncSqliteSaver.from_conn_string(db_path) as memory:
+                # Create AgentGraph
+                agent_graph = AgentGraph(
+                    model_name=self.model_name,
+                    extra_tools=mcp_lc_tools,
+                    user_facts="",
+                    checkpointer=memory
+                )
+                
+                # Config for checkpointer
+                config = {"configurable": {"thread_id": session_id}}
+                
+                # Collect response and tool calls for session saving
+                full_response = ""
+                tool_calls = []
+                tool_results = []
+                
+                # Stream events
+                async for event in agent_graph.astream(message, config):
+                    event_type = event.get("event")
+                    
+                    # Handle different event types
+                    if event_type == "on_chat_model_stream":
+                        # Token from model
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content"):
+                            content = chunk.content
+                            # Extract text from content
+                            if hasattr(content, '__iter__') and not isinstance(content, str):
+                                for part in content:
+                                    if hasattr(part, 'text'):
+                                        full_response += part.text
+                                    elif isinstance(part, dict):
+                                        full_response += part.get('text', '')
+                            elif hasattr(content, 'text'):
+                                full_response += content.text
+                            else:
+                                full_response += str(content)
+                            await callback("token", {"content": chunk.content})
+                            
+                    elif event_type == "on_tool_start":
+                        # Tool execution started
+                        tool_name = event.get("name", "unknown")
+                        input_data = event.get("data", {}).get("input", {})
+                        tool_calls.append({"name": tool_name, "input": input_data})
+                        await callback("tool_start", {"tool": tool_name, "input": str(input_data)})
+                        
+                    elif event_type == "on_tool_end":
+                        # Tool execution finished
+                        tool_name = event.get("name", "unknown")
+                        output_data = event.get("data", {}).get("output", {})
+                        tool_results.append({"name": tool_name, "output": output_data})
+                        await callback("tool_end", {"tool": tool_name, "output": str(output_data)[:200] + "..."})
+                
+                logger.info(f"[AgentGraph] Stream completed for session {session_id}")
+                await callback("response", {"content": "", "done": True})
+                
+                # Save messages to session
+                try:
+                    from app.core.persistence import save_chat_message
+                    # Save user message
+                    save_chat_message(
+                        session_id=session_id,
+                        role="user",
+                        content=message
+                    )
+                    # Save assistant response
+                    save_chat_message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=full_response
+                    )
+                    logger.info(f"[AgentGraph] Saved messages to session {session_id}")
+                except Exception as e:
+                    logger.error(f"[AgentGraph] Error saving messages: {e}")
+                
+        except Exception as e:
+            logger.error(f"[AgentGraph] Error in stream: {e}", exc_info=True)
+            await callback("error", {"message": str(e)})
+        finally:
+            reset_session_id(session_token)
 
     async def _get_openai_tools(self) -> List[Dict[str, Any]]:
         """Converts available tools to OpenAI format."""
@@ -1483,6 +1610,7 @@ class NaviBot:
                         args_dict = tool_args
                         
                     result = await self._execute_tool_safe(tool_name, args_dict)
+                    logger.info(f"[TOOL_EXECUTION] Tool execution completed: {tool_name}")
                     
                     # Emit end
                     await callback("tool_end", {"tool": tool_name, "output": str(result)[:200] + "..."})
