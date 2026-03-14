@@ -68,6 +68,64 @@ def resolve_memory_user_id(explicit: Optional[str], session_id: Optional[str], h
     return (session_id or "default").strip() or "default"
 
 
+def resolve_memory_user_id_with_stable(
+    explicit: Optional[str], 
+    session_id: Optional[str], 
+    stable_user_id: Optional[str] = None,
+    header_value: Optional[str] = None
+) -> MemoryUserId:
+    """
+    Resolve memory user ID with preference for stable user ID.
+    
+    This function prioritizes a stable user ID that persists across sessions
+    over session-specific IDs, enabling cross-session memory context.
+    
+    Priority order:
+    1. explicit parameter
+    2. context var (get_memory_user_id)
+    3. header_value
+    4. env var (NAVIBOT_MEMORY_USER_ID)
+    5. stable_user_id (NEW - for cross-session context)
+    6. session_id (fallback - last resort)
+    
+    Args:
+        explicit: Explicitly provided user ID
+        session_id: Session-specific ID (used as fallback)
+        stable_user_id: Stable user ID that persists across sessions
+        header_value: User ID from header
+        
+    Returns:
+        Resolved memory user ID
+    """
+    # 1. Explicit parameter has highest priority
+    candidate = (explicit or "").strip()
+    if candidate:
+        return candidate
+    
+    # 2. Context var
+    context_candidate = get_memory_user_id()
+    if context_candidate and context_candidate != "default":
+        return context_candidate
+        
+    # 3. Header value
+    header_candidate = (header_value or "").strip()
+    if header_candidate:
+        return header_candidate
+    
+    # 4. Environment variable
+    env_candidate = (os.getenv("NAVIBOT_MEMORY_USER_ID") or "").strip()
+    if env_candidate:
+        return env_candidate
+    
+    # 5. Stable user ID (NEW - for cross-session context)
+    stable_candidate = (stable_user_id or "").strip()
+    if stable_candidate and stable_candidate != "default":
+        return stable_candidate
+    
+    # 6. Session ID as last resort
+    return (session_id or "default").strip() or "default"
+
+
 def get_event_callback() -> Optional[EventCallback]:
     return _event_callback_var.get()
 

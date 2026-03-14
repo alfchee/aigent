@@ -493,6 +493,87 @@ class MemoryController:
             }
         
         return stats
+    
+    # =========================================================================
+    # Auto-summarization (Phase 6)
+    # =========================================================================
+    
+    async def maybe_summarize(
+        self,
+        session_id: str,
+        user_id: str,
+        threshold: int = 8
+    ) -> Optional[str]:
+        """
+        Automatically summarize session history if threshold is exceeded.
+        
+        Uses the ConversationSummarizer to compress conversation history
+        and saves the summary to semantic memory.
+        
+        Args:
+            session_id: The session ID
+            user_id: The user ID for storing the summary
+            threshold: Number of messages before triggering summarization
+            
+        Returns:
+            Summary text if summarized, None otherwise
+        """
+        # Check message count
+        message_count = self.working.get_session_count(session_id)
+        if message_count < threshold:
+            return None
+        
+        try:
+            # Get session history
+            history = await self.get_session_history(session_id, limit=100)
+            if len(history) < threshold:
+                return None
+            
+            # Use ConversationSummarizer
+            from app.core.conversation_summarizer import get_summarizer
+            summarizer = get_summarizer()
+            
+            # Convert to format expected by summarizer
+            messages = []
+            for item in history:
+                role = item.metadata.get("role", "user")
+                messages.append({
+                    "role": role,
+                    "content": item.content
+                })
+            
+            # Summarize
+            result = await summarizer.summarize(messages, session_id)
+            
+            # Check if summarization happened
+            metadata = result.get("summarization_metadata")
+            if not metadata or not metadata.get("was_summarized"):
+                return None
+            
+            # Get summary text
+            summary = result.get("summary", "")
+            if not summary:
+                return None
+            
+            # Save to semantic memory
+            summary_fact = f"[Resumen de sesión] {summary}"
+            await self.add_fact(
+                user_id=user_id,
+                fact=summary_fact,
+                metadata={
+                    "source": "auto_summarize",
+                    "session_id": session_id,
+                    "message_count": metadata.get("original_message_count", 0),
+                    "compression": metadata.get("compression_level", "medium")
+                }
+            )
+            
+            logger.info(f"Auto-summarized session {session_id}: {summary[:100]}...")
+            return summary
+            
+        except Exception as e:
+            logger.warning(f"Auto-summarization failed: {e}")
+            return None
 
 
 # Singleton accessor function
