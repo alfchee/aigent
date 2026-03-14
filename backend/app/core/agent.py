@@ -917,6 +917,23 @@ class NaviBot:
                 # When using cached_content, we must NOT pass tools or system_instruction
                 # as they are already embedded in the cache.
                 try:
+                    # IMPORTANT: The model used for generation MUST match the model used to create the cache.
+                    # We should retrieve the model from the cache info if possible, or fallback to default logic.
+                    # Since we don't have the cache object here, we rely on the fact that get_or_create_worker_cache
+                    # uses the configured cache model.
+                    # If self.model_name (e.g. gemini-2.5-pro) differs from cache model (gemini-2.0-flash),
+                    # we CANNOT use the cache.
+                    
+                    cache_manager = prompt_cache.get_cache_manager()
+                    # Check if requested model matches cache model
+                    # Note: We need to normalize model names (e.g. with/without 'models/')
+                    req_model = model_to_use if model_to_use.startswith("models/") else f"models/{model_to_use}"
+                    cache_model = cache_manager._cache_model if hasattr(cache_manager, "_cache_model") else ""
+                    
+                    if req_model != cache_model:
+                        logger.warning(f"Model mismatch for cache: Request={req_model}, Cache={cache_model}. Skipping cache.")
+                        raise ValueError("Model mismatch")
+
                     self._chat_sessions[session_id] = self.client.aio.chats.create(
                         model=model_to_use,
                         config=types.GenerateContentConfig(
@@ -928,14 +945,17 @@ class NaviBot:
                         history=history
                     )
                 except Exception as e:
-                    # Fallback if cache is invalid/expired (403 or 404)
+                    # Fallback if cache is invalid/expired or model mismatch
                     logger.warning(f"Failed to use cache {cached_content_name}, falling back to standard chat: {e}")
-                    # Invalidate local cache record
-                    try:
-                        cache_manager = prompt_cache.get_cache_manager()
-                        cache_manager.invalidate_cache("worker")
-                    except:
-                        pass
+                    
+                    # If it was a model mismatch, we don't necessarily need to invalidate the cache,
+                    # just not use it for this session. But if it was a 403/404, we should.
+                    if "403" in str(e) or "404" in str(e):
+                        try:
+                            cache_manager = prompt_cache.get_cache_manager()
+                            cache_manager.invalidate_cache("worker")
+                        except:
+                            pass
                         
                     self._chat_sessions[session_id] = self.client.aio.chats.create(
                         model=model_to_use,
@@ -989,10 +1009,16 @@ class NaviBot:
                     # Try getting from func
                     if hasattr(tool, "func") and hasattr(tool.func, "__name__"):
                         tool_name = tool.func.__name__
+                    # Fallback for simple functions
+                    elif hasattr(tool, "__name__"):
+                        tool_name = tool.__name__
                     else:
+                        logger.warning(f"Skipping tool without name: {tool}")
                         continue
                         
                 tool_description = getattr(tool, "description", "")
+                if not tool_description and hasattr(tool, "__doc__"):
+                    tool_description = tool.__doc__ or ""
                 
                 # Check if it has 'args_schema' (Pydantic)
                 parameters = {"type": "object", "properties": {}}
@@ -1197,6 +1223,20 @@ class NaviBot:
                     
         except Exception as e:
             logger.error(f"OpenAI Stream Error: {e}", exc_info=True)
+            # Send more detailed error information
+            error_details = {
+                "message": str(e),
+                "type": type(e).__name__
+            }
+            # Check for common error patterns
+            error_str = str(e).lower()
+            if "api key" in error_str or "auth" in error_str or "unauthorized" in error_str:
+                error_details["code"] = "invalid_api_key"
+            elif "model" in error_str and ("not found" in error_str or "not available" in error_str or "does not exist" in error_str):
+                error_details["code"] = "model_not_available"
+            elif "rate limit" in error_str or "too many requests" in error_str:
+                error_details["code"] = "rate_limit"
+            await callback("error", error_details)
             await callback("error", {"message": str(e)})
 
     async def _stream_chat_google(self, session_id: str, message: str, callback):
@@ -1269,11 +1309,18 @@ class NaviBot:
                     
                     # Ensure result is a dict/json-compatible for the response
                     # Google SDK usually handles dicts well for function_response
+                    # IMPORTANT: For Google GenAI, the response structure must match the expected schema
+                    # or at least be a valid JSON object.
+                    # We wrap it in a dictionary if it's not one to be safe.
+                    response_payload = result
+                    if not isinstance(result, dict):
+                        response_payload = {"result": result}
+                        
                     tool_parts_to_send.append(
                         types.Part(
                             function_response=types.FunctionResponse(
                                 name=tool_name,
-                                response=result
+                                response=response_payload
                             )
                         )
                     )
@@ -1286,12 +1333,26 @@ class NaviBot:
             # If we accumulated response, we mark done.
             if turn >= max_turns:
                 logger.warning(f"Reached max turns ({max_turns}) in Google stream loop")
+                await callback("error", {"message": f"Reached max turns ({max_turns})"})
                 
             await callback("response", {"content": full_response_accumulated, "done": True})
 
         except Exception as e:
             logger.error(f"Google Stream Error: {e}", exc_info=True)
-            await callback("error", {"message": str(e)})
+            # Send more detailed error information
+            error_details = {
+                "message": str(e),
+                "type": type(e).__name__
+            }
+            # Check for common error patterns
+            error_str = str(e).lower()
+            if "api key" in error_str or "permission" in error_str:
+                error_details["code"] = "invalid_api_key"
+            elif "model" in error_str and ("not found" in error_str or "not available" in error_str):
+                error_details["code"] = "model_not_available"
+            elif "rate limit" in error_str:
+                error_details["code"] = "rate_limit"
+            await callback("error", error_details)
 
     async def _execute_tool_safe(self, name: str, args: dict) -> dict:
         """Helper to execute tool and return dict for Gemini."""

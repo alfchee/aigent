@@ -8,6 +8,7 @@ import { useModelSettingsStore } from '../../stores/modelSettings'
 import ChatMessage from './ChatMessage.vue'
 import ConsoleLog from './ConsoleLog.vue'
 import StreamStatus from './StreamStatus.vue'
+import ConnectionStatus from './ConnectionStatus.vue'
 import { FEATURES } from '../../lib/featureFlags'
 
 const chat = useChatStore()
@@ -218,7 +219,8 @@ watch(
       </div>
 
       <div class="shrink-0 p-4 md:p-6 max-w-4xl mx-auto w-full">
-        <div class="flex justify-center mb-2">
+        <div class="flex justify-between items-center mb-2">
+          <ConnectionStatus />
           <StreamStatus />
         </div>
         <div class="bg-white rounded-xl shadow-lg border border-slate-200 p-2 flex flex-col gap-2">

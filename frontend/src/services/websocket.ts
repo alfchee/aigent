@@ -158,6 +158,16 @@ export class WebSocketService {
 
       this.isConnecting = true
 
+      // Emit reconnecting event with attempt info
+      this.handleMessage({
+        type: 'connection.reconnecting',
+        data: {
+          attempt: this.reconnectAttempts + 1,
+          maxAttempts: this.maxReconnectAttempts,
+          delay,
+        },
+      })
+
       setTimeout(() => {
         this.reconnectAttempts++
         this._connect()

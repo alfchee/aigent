@@ -100,6 +100,25 @@ export const useChatStore = defineStore('chat', {
         wsService.on('error', (data: any) => {
           this.handleAgentError(data)
         })
+
+        // Handle done event
+        wsService.on('done', (data: any) => {
+          this.handleStreamDone(data)
+        })
+
+        // Handle connection status changes
+        wsService.on(
+          'connection.reconnecting',
+          (data: { attempt: number; maxAttempts: number; delay: number }) => {
+            this.currentThought = `Reconectando (${data.attempt}/${data.maxAttempts})...`
+            this.error = null
+          },
+        )
+
+        wsService.on('connection.max_reconnect_attempts', () => {
+          this.wsConnected = false
+          this.error = 'Conexión perdida. Por favor, recarga la página para reconnectar.'
+        })
       }
 
       // Connect
@@ -190,6 +209,19 @@ export const useChatStore = defineStore('chat', {
       this.isStreaming = false
       this.currentThought = ''
       this.messages.push({ role: 'assistant', content: `Error: ${data.message}` })
+    },
+
+    handleStreamDone(data: { id?: string; cancelled?: boolean; error?: boolean }) {
+      // Stream is complete
+      // Handle cancelled or error states
+      if (data.cancelled) {
+        // The message was cancelled, the UI already handles this
+      } else if (data.error) {
+        // There was an error, already handled by handleAgentError
+      }
+      this.isLoading = false
+      this.isStreaming = false
+      this.currentThought = ''
     },
 
     stopGeneration() {
