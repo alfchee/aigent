@@ -957,10 +957,17 @@ class NaviBot:
                     req_model = model_to_use if model_to_use.startswith("models/") else f"models/{model_to_use}"
                     cache_model = cache_manager._cache_model if hasattr(cache_manager, "_cache_model") else ""
                     
+                    logger.info(f"[DEBUG] Cache check - Request model: {req_model}, Cache model: {cache_model}, Cache name: {cached_content_name}")
+                    logger.info(f"[DEBUG] Tools schema count: {len(tools_schema)} tools being passed")
+                    logger.info(f"[DEBUG] History count: {len(history) if history else 0} messages")
+                    
                     if req_model != cache_model:
                         logger.warning(f"Model mismatch for cache: Request={req_model}, Cache={cache_model}. Skipping cache.")
                         raise ValueError("Model mismatch")
 
+                    # When using cached content, we should NOT pass history as it conflicts with cached content
+                    # The cached content already has its own internal conversation
+                    # Passing history along with cached_content can cause 400 INVALID_ARGUMENT errors
                     self._chat_sessions[session_id] = self.client.aio.chats.create(
                         model=model_to_use,
                         config=types.GenerateContentConfig(
@@ -968,9 +975,11 @@ class NaviBot:
                             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                                 disable=True
                             )
-                        ),
-                        history=history
+                        )
+                        # NOTE: history is NOT passed when using cached_content to avoid 400 errors
+                        # The cached content already contains the conversation context
                     )
+                    logger.info(f"[DEBUG] Created chat session with cached content: {cached_content_name} (no history passed)")
                 except Exception as e:
                     # Fallback if cache is invalid/expired or model mismatch
                     logger.warning(f"Failed to use cache {cached_content_name}, falling back to standard chat: {e}")
@@ -1353,8 +1362,36 @@ class NaviBot:
                     )
                 
                 # Update current_message to be the tool responses
+                # IMPORTANT: When sending function responses, we must wrap them in a Content object
+                # if we are in a chat session context, OR ensure they are correctly passed as a list of parts.
+                # The google-genai SDK expects a list of parts for `send_message`/`send_message_stream`.
+                
+                # However, there is a subtle issue: if `tool_parts_to_send` contains multiple parts,
+                # we must ensure they are sent as a single message turn.
+                
+                # Another potential issue: The `role` might need to be explicit?
+                # Usually function responses are user role (or function role in other APIs).
+                # In Gemini, they are just parts.
+                
+                # Let's try wrapping them in a Content object to be safer, or just pass the list.
+                # If passing list failed with 400, maybe it expects a dict with role?
+                
+                # Actually, looking at docs/examples:
+                # chat.send_message(Part(function_response=...)) works.
+                # But maybe we need to ensure the previous turn was fully consumed?
+                
+                # One common cause of 400 Invalid Argument in tool use is sending a response
+                # for a function call that wasn't the last one, or mixing things up.
+                # We collected ALL function calls from the previous turn, so we should be responding to all of them.
+                
+                # Let's try to verify if `tool_parts_to_send` is empty?
+                if not tool_parts_to_send:
+                    # Should not happen if function_calls was not empty
+                    logger.warning("No tool parts to send despite function calls?")
+                    break
+                    
                 current_message = tool_parts_to_send
-                # Loop continues to send tool outputs and get next chunk of text/calls
+                continue # Explicitly continue to next iteration
             
             # If loop finishes (max turns reached or no more function calls)
             # If we accumulated response, we mark done.
