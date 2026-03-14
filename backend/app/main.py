@@ -24,6 +24,7 @@ from app.core.persistence import init_db, save_chat_message
 from app.skills.scheduler import start_scheduler
 import asyncio
 import logging
+import os
 import time
 import re
 import uuid
@@ -59,9 +60,18 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 
 def _frontend_enabled() -> bool:
     return FRONTEND_INDEX.exists()
+
+def _get_allowed_origins() -> list[str]:
+    """Get allowed CORS origins from environment variable."""
+    env_origins = os.getenv("ALLOWED_ORIGINS", "")
+    if env_origins:
+        return [o.strip() for o in env_origins.split(",") if o.strip()]
+    # Default to common dev origins
+    return ["http://localhost:5173", "http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

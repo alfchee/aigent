@@ -82,7 +82,7 @@ MIN_CACHE_TOKENS = 32000  # Minimum tokens required for efficient caching
 # Note: Caching is only supported on specific stable models, not preview models.
 # gemini-1.5-flash-001 is stable and supports caching.
 # Default to gemini-1.5-pro-001 for better caching support if flash fails
-DEFAULT_CACHE_MODEL = os.getenv("NAVIBOT_CACHE_MODEL", "models/gemini-1.5-flash-001")
+DEFAULT_CACHE_MODEL = os.getenv("NAVIBOT_CACHE_MODEL", "models/gemini-2.0-flash")
 
 
 @dataclass

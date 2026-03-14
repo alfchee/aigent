@@ -507,7 +507,10 @@ def execute_python_code(
             "NAVIBOT_RUN_ID": run_id,
             "NAVIBOT_OUTPUT_DIR": str(run_dir),
         }
-        env.update({k: v for k, v in os.environ.items() if k in {"PATH", "HOME", "LANG", "LC_ALL", "TZ"}})
+        # Security: Only pass PATH if explicitly allowed, not HOME or other sensitive vars
+        # Do NOT pass HOME, LANG, LC_ALL, TZ as they may contain sensitive info
+        if os.getenv("CODE_EXEC_ALLOW_PATH", "true").lower() in ("true", "1", "yes"):
+            env["PATH"] = os.getenv("PATH", "/usr/local/bin:/usr/bin:/bin")
 
         stdout, stderr, returncode, elapsed, status = _run_python_subprocess(
             script_path=script_path,
