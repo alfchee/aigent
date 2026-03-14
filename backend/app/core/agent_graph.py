@@ -160,10 +160,11 @@ class AgentGraph:
         """
         if self.use_registry and self.tool_registry:
             # Usar registry: mapear workers a categorías
+            # IMPORTANTE: "development" incluye GitHub MCP tools
             return {
                 "WebNavigator": ["search", "browser", "reader"],
                 "CalendarManager": ["productivity"],  # calendar, scheduler
-                "GeneralAssistant": ["files", "development", "communication", "memory", "utility"],
+                "GeneralAssistant": ["files", "development", "communication", "memory", "utility", "extra_tools"],  # extra_tools = MCP
                 "ImageGenerator": ["media"]
             }
         else:
@@ -369,8 +370,13 @@ class AgentGraph:
             # Convert tools to schema for caching
             for tool in worker_tools:
                 try:
+                    # Skip non-tool objects (dicts, etc.)
+                    if not hasattr(tool, 'name') and not hasattr(tool, '__name__'):
+                        logger.debug(f"Skipping non-tool object: {type(tool)}")
+                        continue
+                    
                     name = tool.name if hasattr(tool, 'name') else tool.__name__
-                    description = tool.description if hasattr(tool, 'description') else ""
+                    description = getattr(tool, 'description', "") or ""
                     args_schema = {}
                     if hasattr(tool, 'args_schema') and tool.args_schema:
                         try:

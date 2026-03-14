@@ -1214,7 +1214,10 @@ class NaviBot:
                 )
                 
                 # Config for checkpointer
-                config = {"configurable": {"thread_id": session_id}}
+                config = {
+                    "configurable": {"thread_id": session_id},
+                    "recursion_limit": 100  # Increase limit for complex tasks
+                }
                 
                 # Collect response and tool calls for session saving
                 full_response = ""
@@ -1232,17 +1235,21 @@ class NaviBot:
                         if chunk and hasattr(chunk, "content"):
                             content = chunk.content
                             # Extract text from content
+                            extracted_text = ""
                             if hasattr(content, '__iter__') and not isinstance(content, str):
                                 for part in content:
                                     if hasattr(part, 'text'):
-                                        full_response += part.text
+                                        extracted_text += part.text
                                     elif isinstance(part, dict):
-                                        full_response += part.get('text', '')
+                                        extracted_text += part.get('text', '')
                             elif hasattr(content, 'text'):
-                                full_response += content.text
+                                extracted_text = content.text
                             else:
-                                full_response += str(content)
-                            await callback("token", {"content": chunk.content})
+                                extracted_text = str(content)
+                            
+                            full_response += extracted_text
+                            # Send the extracted text, not the raw content object
+                            await callback("token", {"content": extracted_text})
                             
                     elif event_type == "on_tool_start":
                         # Tool execution started
