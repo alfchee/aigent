@@ -513,15 +513,43 @@ class NaviBot:
             # 5. Execute Graph (Streaming)
             config = {"configurable": {"thread_id": session_id}}
             
-            # Logic to avoid duplicating history if resuming
+            # Check for existing checkpoint
             checkpoint = await memory.aget(config)
             
+            # DEBUG LOG: Log checkpoint status
             if checkpoint:
-                # We are resuming/continuing. 
-                # Only pass the NEW message.
+                checkpoint_info = checkpoint.get("metadata", {})
+                logger.info(f"[SESSION_DEBUG] Checkpoint found for session {session_id}")
+                logger.info(f"[SESSION_DEBUG] Checkpoint metadata: {checkpoint_info}")
+            else:
+                logger.info(f"[SESSION_DEBUG] No checkpoint found for session {session_id}, using full history")
+            
+            # Check if checkpoint is stale (older than 1 hour)
+            import time
+            is_stale = False
+            if checkpoint:
+                try:
+                    checkpoint_time = checkpoint.get("ts") or checkpoint.get("metadata", {}).get("ts")
+                    if checkpoint_time:
+                        current_time = time.time()
+                        # checkpoint_time might be a timestamp string or number
+                        if isinstance(checkpoint_time, (int, float)):
+                            age_seconds = current_time - checkpoint_time
+                            if age_seconds > 3600:  # 1 hour
+                                is_stale = True
+                                logger.warning(f"[SESSION_DEBUG] Checkpoint is stale ({age_seconds:.0f}s old), ignoring")
+                except Exception as e:
+                    logger.warning(f"[SESSION_DEBUG] Error checking checkpoint timestamp: {e}")
+            
+            # Determine input based on checkpoint status
+            if checkpoint and not is_stale:
+                # We are resuming/continuing a previous conversation
+                # Only pass the NEW message
+                logger.info(f"[SESSION_DEBUG] Using checkpoint - passing only new message")
                 inputs = {"messages": [HumanMessage(content=message)]}
             else:
-                # First run for this thread_id
+                # First run or stale checkpoint - use full history
+                logger.info(f"[SESSION_DEBUG] Using full history - {len(lc_messages)} messages")
                 inputs = {"messages": lc_messages}
 
             # IMPORTANT: Calculate start index BEFORE execution to avoid issues if lc_messages is modified in place
@@ -1023,6 +1051,11 @@ class NaviBot:
             except Exception as e:
                 logger.warning(f"Failed to get/create cache: {e}")
         
+        # DEBUG: Allow disabling prompt cache via environment variable
+        if os.getenv("DISABLE_PROMPT_CACHE", "false").lower() == "true":
+            logger.info(f"[DEBUG] Prompt cache disabled via DISABLE_PROMPT_CACHE env var")
+            cached_content_name = None
+        
         # Determine model to use
         model_to_use = self.model_name
         
@@ -1120,11 +1153,145 @@ class NaviBot:
         await self.ensure_session(session_id)
         chat = self._chat_sessions[session_id]
 
+        # Check if we should use AgentGraph instead of simple flow
+        use_agent_graph = os.getenv("USE_AGENT_GRAPH", "false").lower() == "true"
+        
+        if use_agent_graph:
+            logger.info("[AgentGraph] Using AgentGraph for message processing")
+            await self._stream_chat_agent_graph(session_id, message, callback)
+            return
+        
         # Dispatch based on provider
         if not self.is_google and hasattr(self, "openai_client"):
             await self._stream_chat_openai(session_id, message, callback)
         else:
             await self._stream_chat_google(session_id, message, callback)
+
+    async def _stream_chat_agent_graph(self, session_id: str, message: str, callback: Callable):
+        """
+        Maneja el streaming usando AgentGraph con Supervisors y Workers.
+        
+        Args:
+            session_id: ID de la sesión
+            message: Mensaje del usuario
+            callback: Función de callback para enviar eventos
+        """
+        from app.core.agent_graph import AgentGraph
+        from app.core.runtime_context import set_session_id, reset_session_id
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        
+        logger.info(f"[AgentGraph] Starting AgentGraph stream for session {session_id}")
+        
+        # Set session context for tools to access
+        session_token = set_session_id(session_id)
+        
+        try:
+            # Get MCP tools from existing mcp_manager
+            mcp_lc_tools = []
+            if self.mcp_manager:
+                try:
+                    # Ensure servers are loaded
+                    if not self._mcp_loaded:
+                        await self.mcp_manager.load_servers()
+                        self._mcp_loaded = True
+                    
+                    mcp_lc_tools = await self.mcp_manager.get_all_tools()
+                    logger.info(f"[AgentGraph] Loaded {len(mcp_lc_tools)} MCP tools")
+                except Exception as e:
+                    logger.warning(f"[AgentGraph] Failed to load MCP tools: {e}")
+            
+            # Setup checkpointer
+            os.makedirs("workspace_data", exist_ok=True)
+            db_path = "workspace_data/checkpoints.db"
+            
+            async with AsyncSqliteSaver.from_conn_string(db_path) as memory:
+                # Create AgentGraph
+                agent_graph = AgentGraph(
+                    model_name=self.model_name,
+                    extra_tools=mcp_lc_tools,
+                    user_facts="",
+                    checkpointer=memory
+                )
+                
+                # Config for checkpointer
+                config = {
+                    "configurable": {"thread_id": session_id},
+                    "recursion_limit": 100  # Increase limit for complex tasks
+                }
+                
+                # Collect response and tool calls for session saving
+                full_response = ""
+                tool_calls = []
+                tool_results = []
+                
+                # Stream events
+                async for event in agent_graph.astream(message, config):
+                    event_type = event.get("event")
+                    
+                    # Handle different event types
+                    if event_type == "on_chat_model_stream":
+                        # Token from model
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content"):
+                            content = chunk.content
+                            # Extract text from content
+                            extracted_text = ""
+                            if hasattr(content, '__iter__') and not isinstance(content, str):
+                                for part in content:
+                                    if hasattr(part, 'text'):
+                                        extracted_text += part.text
+                                    elif isinstance(part, dict):
+                                        extracted_text += part.get('text', '')
+                            elif hasattr(content, 'text'):
+                                extracted_text = content.text
+                            else:
+                                extracted_text = str(content)
+                            
+                            full_response += extracted_text
+                            # Send the extracted text, not the raw content object
+                            await callback("token", {"content": extracted_text})
+                            
+                    elif event_type == "on_tool_start":
+                        # Tool execution started
+                        tool_name = event.get("name", "unknown")
+                        input_data = event.get("data", {}).get("input", {})
+                        tool_calls.append({"name": tool_name, "input": input_data})
+                        await callback("tool_start", {"tool": tool_name, "input": str(input_data)})
+                        
+                    elif event_type == "on_tool_end":
+                        # Tool execution finished
+                        tool_name = event.get("name", "unknown")
+                        output_data = event.get("data", {}).get("output", {})
+                        tool_results.append({"name": tool_name, "output": output_data})
+                        await callback("tool_end", {"tool": tool_name, "output": str(output_data)[:200] + "..."})
+                
+                logger.info(f"[AgentGraph] Stream completed for session {session_id}")
+                await callback("response", {"content": "", "done": True})
+                
+                # Save messages to session
+                try:
+                    from app.core.persistence import save_chat_message
+                    # Save user message
+                    save_chat_message(
+                        session_id=session_id,
+                        role="user",
+                        content=message
+                    )
+                    # Save assistant response
+                    save_chat_message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=full_response
+                    )
+                    logger.info(f"[AgentGraph] Saved messages to session {session_id}")
+                except Exception as e:
+                    logger.error(f"[AgentGraph] Error saving messages: {e}")
+                
+        except Exception as e:
+            logger.error(f"[AgentGraph] Error in stream: {e}", exc_info=True)
+            await callback("error", {"message": str(e)})
+        finally:
+            reset_session_id(session_token)
 
     async def _get_openai_tools(self) -> List[Dict[str, Any]]:
         """Converts available tools to OpenAI format."""
@@ -1399,14 +1566,34 @@ class NaviBot:
                     
                     # Check for function calls in parts
                     # Note: chunk.parts might contain function_call
-                    if chunk.candidates and chunk.candidates[0].content.parts:
+                    # First verify candidates and content exist
+                    # DEBUG: Add detailed logging
+                    if not chunk.candidates:
+                        logger.warning("[TOOL_DEBUG] No candidates in chunk")
+                    elif len(chunk.candidates) == 0:
+                        logger.warning("[TOOL_DEBUG] Empty candidates list")
+                    elif chunk.candidates[0].content is None:
+                        logger.warning("[TOOL_DEBUG] First candidate content is None")
+                    elif not hasattr(chunk.candidates[0].content, 'parts'):
+                        logger.warning("[TOOL_DEBUG] First candidate content has no 'parts' attribute")
+                    elif not chunk.candidates[0].content.parts:
+                        logger.warning("[TOOL_DEBUG] First candidate content parts is empty")
+                    elif (chunk.candidates and 
+                        len(chunk.candidates) > 0 and 
+                        chunk.candidates[0].content is not None and 
+                        hasattr(chunk.candidates[0].content, 'parts') and
+                        chunk.candidates[0].content.parts):
                         for part in chunk.candidates[0].content.parts:
                             if part.function_call:
+                                logger.info(f"[TOOL_DEBUG] Found function_call: {part.function_call.name}")
                                 function_calls.append(part.function_call)
                 
                 if not function_calls:
                     # No more tools, we are done
+                    logger.warning(f"[TOOL_DEBUG] No function calls detected in chunk. Breaking loop.")
                     break
+                
+                logger.info(f"[TOOL_EXECUTION] Found {len(function_calls)} function calls to execute")
                 
                 # Execute tools and collect responses
                 tool_parts_to_send = []
@@ -1430,6 +1617,7 @@ class NaviBot:
                         args_dict = tool_args
                         
                     result = await self._execute_tool_safe(tool_name, args_dict)
+                    logger.info(f"[TOOL_EXECUTION] Tool execution completed: {tool_name}")
                     
                     # Emit end
                     await callback("tool_end", {"tool": tool_name, "output": str(result)[:200] + "..."})

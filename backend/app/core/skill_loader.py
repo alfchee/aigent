@@ -3,14 +3,26 @@ import inspect
 import logging
 import os
 import pkgutil
-from typing import List, Any
+from typing import List, Any, Optional, TYPE_CHECKING
 from langchain_core.tools import Tool, StructuredTool
+
+if TYPE_CHECKING:
+    from app.core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+
 class SkillLoader:
-    def __init__(self, skills_dir: str = "app/skills"):
+    """
+    Cargador de skills que puede opcionalmente registrar herramientas en ToolRegistry.
+    
+    Mantiene compatibilidad con el sistema anterior mientras soporta la nueva
+    arquitectura de ToolRegistry.
+    """
+    
+    def __init__(self, skills_dir: str = "app/skills", registry: Optional["ToolRegistry"] = None):
         self.skills_dir = skills_dir
+        self.registry = registry
 
     def load_skills(self) -> List[Any]:
         """
@@ -82,4 +94,54 @@ class SkillLoader:
 
         total_tools = sum(len(t) for t in skills_map.values())
         logger.info(f"Total tools loaded: {total_tools} from {len(skills_map)} skills")
+        
+        # Si hay un registry, registrar las herramientas (de forma síncrona)
+        if self.registry:
+            from app.core.tool_registry import ToolMetadata
+            for skill_name, tools in skills_map.items():
+                for tool in tools:
+                    metadata = ToolMetadata(
+                        name=tool.name,
+                        source="skill",
+                        category=self._infer_category(skill_name),
+                        description=tool.description or "",
+                    )
+                    # Usar sync version si está disponible, sino skip
+                    try:
+                        import asyncio
+                        asyncio.get_event_loop().run_until_complete(
+                            self.registry.register_tool(tool, metadata)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not register tool {tool.name}: {e}")
+        
         return skills_map
+    
+    def _infer_category(self, skill_name: str) -> str:
+        """Infiere la categoría de un skill basado en su nombre."""
+        skill_lower = skill_name.lower()
+        
+        categories = {
+            "calendar": "productivity",
+            "scheduler": "productivity",
+            "telegram": "communication",
+            "email": "communication",
+            "slack": "communication",
+            "database": "data",
+            "postgres": "data",
+            "mysql": "data",
+            "github": "development",
+            "code_execution": "development",
+            "browser": "development",
+            "search": "search",
+            "brave": "search",
+            "duckduckgo": "search",
+            "filesystem": "files",
+            "drive": "files",
+            "google_drive": "files",
+            "image_generation": "media",
+            "image": "media",
+            "memory": "memory",
+        }
+        
+        return categories.get(skill_lower, "utility")

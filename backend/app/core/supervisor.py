@@ -10,7 +10,7 @@ WORKERS = ["WebNavigator", "CalendarManager", "GeneralAssistant", "ImageGenerato
 WORKER_DESCRIPTIONS = {
     "WebNavigator": "Performs web searches (internet) and navigates public websites for information. Use for: searching the web, browsing public websites, reading online articles.",
     "CalendarManager": "Manages calendar, schedules events, and checks availability. Use for: creating calendar events, listing upcoming events, checking schedules.",
-    "GeneralAssistant": "Handles Google Drive, Google Sheets, file management, code execution, memory, and Telegram. Use for: searching Drive files, managing Google Sheets, reading/writing files, running code, saving memories, sending Telegram messages. This is the DEFAULT for most tasks including Google Workspace operations.",
+    "GeneralAssistant": "Handles Google Drive, Google Sheets, file management, code execution, memory, Telegram, and GitHub MCP. Use for: searching Drive files, managing Google Sheets, reading/writing files, running code, saving memories, sending Telegram messages, GitHub operations (issues, PRs, repos). This is the DEFAULT for most tasks including Google Workspace and GitHub.",
     "ImageGenerator": "Generates images from text descriptions. Use for: creating images, artwork, visual content."
 }
 
@@ -30,10 +30,11 @@ system_prompt = (
     "7. For simple greetings ('Hello', 'Good morning') that have already been responded to, respond 'FINISH'.\n"
     "8. IMPORTANT: The 'GeneralAssistant' worker handles general tasks. If it provided useful response, use 'FINISH'.\n\n"
     "ROUTING RULES - FOLLOW THESE MANDATORY RULES:\n"
+    "- For GITHUB REQUESTS (issues, PRs, repos, commits, GitHub MCP): use GeneralAssistant\n"
     "- For GOOGLE DRIVE requests (find folder, search files, list files, create folders): use GeneralAssistant\n"
     "- For GOOGLE SHEETS/SPREADSHEET requests: use GeneralAssistant\n"
     "- For GOOGLE CALENDAR requests: use CalendarManager\n"
-    "- For INTERNET WEB SEARCH (not Drive): use WebNavigator\n"
+    "- For INTERNET WEB SEARCH (not Drive, not GitHub): use WebNavigator\n"
     "- For BROWSING PUBLIC WEBSITES: use WebNavigator\n"
     "- For IMAGE GENERATION: use ImageGenerator\n"
     "- For CODE EXECUTION, FILE MANAGEMENT, MEMORY, TELEGRAM: use GeneralAssistant\n"

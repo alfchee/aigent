@@ -1,5 +1,6 @@
 import os
 import logging
+from typing import Optional, List
 
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
@@ -15,6 +16,14 @@ from app.core.supervisor import create_supervisor_node, WORKERS
 from app.core.model_orchestrator import ModelOrchestrator
 from app.core import prompt_cache
 from app.core.conversation_summarizer import node_summarizer
+
+# ToolRegistry import (optional - for unified tool management)
+try:
+    from app.core.tool_registry import ToolRegistry, get_tool_registry
+    TOOL_REGISTRY_AVAILABLE = True
+except ImportError:
+    TOOL_REGISTRY_AVAILABLE = False
+    get_tool_registry = None
 
 # Cargar variables de entorno
 load_dotenv()
@@ -64,9 +73,23 @@ WORKER_PROMPTS = {
 }
 
 class AgentGraph:
-    def __init__(self, model_name: str = "gemini-2.0-flash", extra_tools: list = None, user_facts: str = "", checkpointer = None):
+    def __init__(
+        self, 
+        model_name: str = "gemini-2.0-flash", 
+        extra_tools: list = None, 
+        user_facts: str = "", 
+        checkpointer = None,
+        use_registry: bool = True
+    ):
         """
         Inicializa el Grafo Multi-Agente con Supervisor.
+        
+        Args:
+            model_name: Nombre del modelo a usar
+            extra_tools: Herramientas adicionales (ej: MCP tools)
+            user_facts: Datos del usuario para contexto
+            checkpointer: Checkpointer para persistencia de estado
+            use_registry: Si True, usa ToolRegistry para obtener herramientas
         """
         self.model_name = model_name
         self.api_key = os.getenv("GOOGLE_API_KEY")
@@ -74,11 +97,41 @@ class AgentGraph:
         self.user_facts = user_facts
         self.checkpointer = checkpointer
         self.orchestrator = ModelOrchestrator()
+        self.use_registry = use_registry and TOOL_REGISTRY_AVAILABLE
+        self.tool_registry = None
         
         if not self.api_key:
             logger.warning("GOOGLE_API_KEY not found. AgentGraph may fail to initialize correctly.")
-            
-        # 1. Cargar Herramientas Agrupadas
+        
+        # 1. Cargar Herramientas
+        if self.use_registry:
+            # Usar ToolRegistry para obtener herramientas
+            try:
+                self.tool_registry = get_tool_registry()
+                logger.info("Using ToolRegistry for tools")
+            except Exception as e:
+                logger.warning(f"Failed to get ToolRegistry: {e}. Falling back to legacy loading.")
+                self.use_registry = False
+        
+        # Siempre cargar legacy tools para compatibilidad con Workers
+        # Esto asegura que skills_map esté disponible
+        self._load_legacy_tools()
+        
+        if not self.use_registry:
+            # Fallback: carga legacy de skills
+            self._load_legacy_tools()
+        
+        # 2. Definir Herramientas por Trabajador
+        self.worker_skills = self._get_worker_skills()
+
+        # 3. Configurar Modelo
+        self.llm = self._get_llm("supervisor") 
+        
+        # 4. Construir el Grafo
+        self.graph = self._build_graph()
+    
+    def _load_legacy_tools(self):
+        """Carga herramientas usando el método legacy (para backward compatibility)."""
         self.loader = SkillLoader()
         self.skills_map = self.loader.load_skills_map()
         
@@ -97,22 +150,78 @@ class AgentGraph:
         # Inyectar herramientas extra en un módulo virtual 'extra_tools'
         if self.extra_tools:
             self.skills_map["extra_tools"] = self.extra_tools
-
-        # 2. Configurar Modelo (Legacy/Fallback)
-        # We keep self.llm for backward compatibility or default usage, but nodes will use specific LLMs
-        self.llm = self._get_llm("supervisor") 
+    
+    def _get_worker_skills(self) -> dict:
+        """
+        Obtiene las herramientas para cada worker.
         
-        # 3. Definir Herramientas por Trabajador
-        # Mapeo de Workers a Módulos de Skills
-        self.worker_skills = {
-            "WebNavigator": ["browser", "search", "reader"],
-            "CalendarManager": ["calendar", "scheduler"],
-            "GeneralAssistant": ["workspace", "code_execution", "google_drive", "google_workspace_manager", "memory", "telegram", "extra_tools"] + secure_skill_names,
-            "ImageGenerator": ["image_generation"]
-        }
-
-        # 4. Construir el Grafo
-        self.graph = self._build_graph()
+        Returns:
+            Dict mapeando workers a nombres de skills
+        """
+        if self.use_registry and self.tool_registry:
+            # Usar registry: mapear workers a categorías
+            # IMPORTANTE: "development" incluye GitHub MCP tools
+            return {
+                "WebNavigator": ["search", "browser", "reader"],
+                "CalendarManager": ["productivity"],  # calendar, scheduler
+                "GeneralAssistant": ["files", "development", "communication", "memory", "utility", "extra_tools"],  # extra_tools = MCP
+                "ImageGenerator": ["media"]
+            }
+        else:
+            # Legacy: usar skills_map directamente
+            return {
+                "WebNavigator": ["browser", "search", "reader"],
+                "CalendarManager": ["calendar", "scheduler"],
+                "GeneralAssistant": ["workspace", "code_execution", "google_drive", 
+                                     "google_workspace_manager", "memory", "telegram", "extra_tools"],
+                "ImageGenerator": ["image_generation"]
+            }
+    
+    async def get_tools_for_worker(self, worker_name: str) -> List:
+        """
+        Obtiene las herramientas para un worker específico.
+        
+        Args:
+            worker_name: Nombre del worker
+            
+        Returns:
+            Lista de herramientas
+        """
+        if self.use_registry and self.tool_registry:
+            # Obtener tools del registry por categoría
+            skill_names = self.worker_skills.get(worker_name, [])
+            tools = []
+            
+            for skill_name in skill_names:
+                #skill_name puede ser una categoría o un nombre de skill
+                if skill_name in ["productivity", "files", "development", "communication", "memory", "utility", "media", "search"]:
+                    # Es una categoría
+                    category_tools = await self.tool_registry.get_tools_by_category(skill_name)
+                    tools.extend(category_tools)
+                else:
+                    # Es un nombre de skill específico
+                    tool = await self.tool_registry.get_tool(skill_name)
+                    if tool:
+                        tools.append(tool)
+            
+            # Agregar extra_tools si hay
+            tools.extend(self.extra_tools)
+            
+            return tools
+        else:
+            # Legacy: obtener de skills_map
+            skill_names = self.worker_skills.get(worker_name, [])
+            tools = []
+            
+            for skill_name in skill_names:
+                if skill_name in self.skills_map:
+                    skill_tools = self.skills_map[skill_name]
+                    if isinstance(skill_tools, list):
+                        tools.extend(skill_tools)
+                    else:
+                        tools.append(skill_tools)
+            
+            return tools
 
     def _get_llm(self, role_name: str, cached_content: str = None) -> BaseChatModel:
         """
@@ -261,8 +370,13 @@ class AgentGraph:
             # Convert tools to schema for caching
             for tool in worker_tools:
                 try:
+                    # Skip non-tool objects (dicts, etc.)
+                    if not hasattr(tool, 'name') and not hasattr(tool, '__name__'):
+                        logger.debug(f"Skipping non-tool object: {type(tool)}")
+                        continue
+                    
                     name = tool.name if hasattr(tool, 'name') else tool.__name__
-                    description = tool.description if hasattr(tool, 'description') else ""
+                    description = getattr(tool, 'description', "") or ""
                     args_schema = {}
                     if hasattr(tool, 'args_schema') and tool.args_schema:
                         try:
@@ -353,3 +467,26 @@ class AgentGraph:
 
     def get_runnable(self):
         return self.graph
+
+    async def astream(self, input_message: str, config: dict = None):
+        """
+        Ejecuta el grafo en modo streaming.
+        
+        Args:
+            input_message: Mensaje del usuario
+            config: Configuración para el grafo (incluye thread_id para checkpointer)
+            
+        Yields:
+            Eventos de streaming del grafo
+        """
+        from langchain_core.messages import HumanMessage
+        
+        # Preparar el estado inicial
+        initial_state = {
+            "messages": [HumanMessage(content=input_message)],
+            "next": ""
+        }
+        
+        # Usar astream_events para obtener streaming de eventos
+        async for event in self.graph.astream_events(initial_state, config=config, version="v1"):
+            yield event
