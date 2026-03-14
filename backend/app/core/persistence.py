@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, create_engine, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.core.runtime_context import get_session_id
@@ -64,6 +64,17 @@ class SessionSetting(Base):
     updated_at = Column(DateTime, default=_utcnow, nullable=False)
 
 
+class LLMProvider(Base):
+    __tablename__ = "llm_providers"
+    provider_id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    api_key_enc = Column(String, nullable=True)
+    base_url = Column(String, nullable=True)
+    is_active = Column(Boolean, default=False)
+    config_json = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
 Index("ix_app_settings_updated", AppSetting.updated_at)
 Index("ix_session_settings_updated", SessionSetting.updated_at)
 
@@ -109,6 +120,16 @@ def _get_session() -> Session:
     if _session_local is None:
         get_engine()
     return _session_local()
+
+
+def get_persistence_db():
+    if _session_local is None:
+        get_engine()
+    db = _session_local()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @contextmanager

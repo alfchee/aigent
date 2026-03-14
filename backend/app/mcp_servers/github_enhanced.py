@@ -1,16 +1,11 @@
 import os
-import sys
 import logging
-from typing import List, Optional, Dict, Any, Union
-from datetime import datetime, timedelta
-import asyncio
+from typing import List, Optional
+from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from github import Github, GithubException, Auth
-from github.Issue import Issue
-from github.PullRequest import PullRequest
-from github.Repository import Repository
 
 # Initialize FastMCP server
 mcp = FastMCP("github-enhanced")
@@ -61,8 +56,9 @@ def search_issues_and_prs(
     - label:bug
     - is:pr or is:issue
     """
-    g = get_github_client()
     try:
+        g = get_github_client()
+        
         # Construct search query
         final_query = query
         
@@ -73,6 +69,15 @@ def search_issues_and_prs(
         for i, item in enumerate(results):
             if i >= per_page:
                 break
+            
+            user_login = "unknown"
+            if item.user:
+                user_login = item.user.login
+                
+            labels = []
+            if item.labels:
+                labels = [l.name for l in item.labels]
+                
             items.append({
                 "number": item.number,
                 "title": item.title,
@@ -80,16 +85,18 @@ def search_issues_and_prs(
                 "html_url": item.html_url,
                 "created_at": item.created_at.isoformat(),
                 "updated_at": item.updated_at.isoformat(),
-                "user": item.user.login,
-                "labels": [l.name for l in item.labels],
+                "user": user_login,
+                "labels": labels,
                 "comments": item.comments,
                 "is_pr": item.pull_request is not None
             })
             
         return str(items)
     except GithubException as e:
+        logger.error(f"GitHub API Error: {e}", exc_info=True)
         return f"GitHub API Error: {e}"
     except Exception as e:
+        logger.error(f"Error in search_issues_and_prs: {e}", exc_info=True)
         return f"Error: {e}"
 
 @mcp.tool()
@@ -320,7 +327,7 @@ def batch_add_comments(
         for num in issue_numbers:
             try:
                 issue = repository.get_issue(num)
-                comment = issue.create_comment(body)
+                issue.create_comment(body)
                 results[num] = "Success"
             except Exception as e:
                 results[num] = f"Error: {e}"

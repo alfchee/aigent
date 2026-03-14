@@ -45,5 +45,11 @@ class BotPool:
             except Exception as e:
                 print(f"Error closing bot {bot.model_name}: {e}")
 
+    def clear(self):
+        """Clears all bots from the pool, forcing re-initialization on next use."""
+        with self._lock:
+            self._bots.clear()
+
+
 
 bot_pool = BotPool()

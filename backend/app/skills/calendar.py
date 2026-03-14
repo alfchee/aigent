@@ -1,5 +1,5 @@
 from typing import Optional, List
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import logging
 from langchain_core.tools import tool
 from app.core.google_auth import get_google_credentials, ALL_SCOPES

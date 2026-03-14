@@ -1,13 +1,12 @@
 import os
 import logging
-import functools
-from typing import Literal
 
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.language_models import BaseChatModel
+from app.core.llm_factory import get_agent_model
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode, create_react_agent
+from langgraph.prebuilt import create_react_agent
 
 from app.core.graph_state import AgentState
 from app.core.skill_loader import SkillLoader
@@ -15,7 +14,7 @@ from app.core.secure_skill_loader import SecureSkillLoader
 from app.core.supervisor import create_supervisor_node, WORKERS
 from app.core.model_orchestrator import ModelOrchestrator
 from app.core import prompt_cache
-from app.core.conversation_summarizer import node_summarizer, get_summarizer
+from app.core.conversation_summarizer import node_summarizer
 
 # Cargar variables de entorno
 load_dotenv()
@@ -115,7 +114,7 @@ class AgentGraph:
         # 4. Construir el Grafo
         self.graph = self._build_graph()
 
-    def _get_llm(self, role_name: str, cached_content: str = None) -> ChatGoogleGenerativeAI:
+    def _get_llm(self, role_name: str, cached_content: str = None) -> BaseChatModel:
         """
         Returns a configured LLM instance for a specific role/worker.
         
@@ -146,18 +145,17 @@ class AgentGraph:
         final_model = self.model_name if role_name == "supervisor" else self.orchestrator.get_model_for_role(config_role)
         
         # Build LLM kwargs
-        llm_kwargs = {
-            "model": final_model,
-            "google_api_key": self.api_key,
-            "temperature": 0,
-            "convert_system_message_to_human": True
-        }
+        kwargs = {}
         
         # Add cached content if available
         if cached_content:
-            llm_kwargs["cached_content"] = cached_content
+            kwargs["cached_content"] = cached_content
         
-        return ChatGoogleGenerativeAI(**llm_kwargs)
+        return get_agent_model(
+            model_name=final_model,
+            temperature=0,
+            **kwargs
+        )
 
     def _create_agent_node(self, agent_name: str, tools: list):
         """Helper para crear un nodo agente."""
@@ -196,10 +194,9 @@ class AgentGraph:
         # 1. Crear Nodo Supervisor
         # Use specific LLM for supervisor
         supervisor_llm = self._get_llm("supervisor")
-        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts=self.user_facts)
+        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts="")
         
         # Logging wrapper for Supervisor node
-        supervisor_call_count = {}  # Track calls per user message
         
         async def logging_supervisor_node(state: AgentState):
             import logging
@@ -256,10 +253,6 @@ class AgentGraph:
             
             # Obtener prompt del sistema
             system_prompt = WORKER_PROMPTS.get(worker_name, "You are a helpful assistant.")
-            
-            # Inyectar hechos del usuario si es el asistente general
-            if worker_name == "GeneralAssistant" and self.user_facts:
-                system_prompt += f"\n\nFacts about the user:\n{self.user_facts}"
             
             # Try to get or create cached content for this worker
             cached_content = None

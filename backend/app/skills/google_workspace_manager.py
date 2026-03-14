@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from typing import List, Union, Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
@@ -10,9 +10,7 @@ from app.core.google_auth import (
     get_google_credentials,
     get_authorization_url,
     save_credentials_from_code,
-    ALL_SCOPES,
-    ensure_oauth_dependencies,
-    check_google_dependencies
+    ALL_SCOPES
 )
 
 SCOPES = ALL_SCOPES  # Alias for backward compatibility if needed within this file
@@ -340,16 +338,15 @@ async def read_sheet_data(spreadsheet_id: str, range_name: str = "") -> str:
         logger.exception("Error reading sheet data")
         return f"Error reading sheet: {str(e)}"
 
-async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[List[Union[str, int, float]]]) -> str:
+async def update_sheet_data(spreadsheet_id: str, range_name: str, values: List[List[str]]) -> str:
     """
     Inserts or updates data in an existing spreadsheet.
     
     Args:
         spreadsheet_id: The document ID (can be obtained from the URL).
         range_name: The range (e.g. 'Sheet1!A1') or sheet name (e.g. 'Sheet1').
-        values: List of lists with data to insert [["cell1", "cell2"], ["row2cell1", "row2cell2"]].
-                IMPORTANT: Each cell must be a plain string, number, or boolean. Do NOT wrap values in dictionaries.
-        
+        values: List of lists with data to insert.
+    
     Returns:
         A confirmation or error message.
     """

@@ -37,6 +37,10 @@ def _is_allowed_model(model_name: str) -> bool:
     value = _normalize_model_name(model_name)
     if not value:
         return False
+    # Relax validation to allow OpenRouter models (e.g., qwen/qwen3-...) or LM Studio models
+    # If it contains a slash, it's likely an OpenRouter/external model ID.
+    if "/" in value or ":" in value:
+        return True
     if value in ALLOWED_MODELS:
         return True
     return bool(MODEL_NAME_RE.match(value))

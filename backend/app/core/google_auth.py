@@ -1,7 +1,6 @@
 import os
 import logging
 from typing import List, Optional
-import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import socket

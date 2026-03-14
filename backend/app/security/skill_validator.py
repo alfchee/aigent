@@ -150,7 +150,6 @@ class SkillValidator:
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Attribute):
                     # Check for things like os.system, subprocess.call (if import passed somehow)
-                    attr_name = node.func.attr
                     # We can't easily resolve the object type statically, but we can flag suspicious attributes
                     # combined with common module names if we track variables (complex).
                     # For now, rely on import restrictions + known dangerous attributes if possible.

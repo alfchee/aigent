@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Any
+from typing import Optional
 from app.core.config_manager import get_settings, resolve_model, RoutingConfig
 
 logger = logging.getLogger(__name__)

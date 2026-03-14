@@ -4,6 +4,9 @@
 .env
 .env.local
 .env.*.local
+# Secret keys
+*.key
+.secret.key
 
 # Python (Backend)
 __pycache__/
