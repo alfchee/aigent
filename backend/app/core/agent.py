@@ -647,6 +647,12 @@ class NaviBot:
     
         logger.info(f"[Agent] Execution complete. Response len: {len(response_text)}. Content snippet: {response_text[:100]}...")
 
+        # Auto-extract and save facts from the interaction
+        try:
+            await self._extract_and_save_facts(session_id, message, response_text)
+        except Exception as e:
+            logger.warning(f"Failed to auto-extract facts: {e}")
+
         return {
             "response": response_text,
             "iterations": iterations,
@@ -656,6 +662,69 @@ class NaviBot:
             "execution_time_seconds": 0 # Placeholder
         }
 
+    async def _extract_and_save_facts(
+        self, 
+        session_id: str, 
+        user_message: str, 
+        assistant_response: str
+    ) -> None:
+        """
+        Automatically extracts and saves facts from user messages.
+        
+        Uses regex patterns to detect personal information that should
+        be remembered (names, preferences, dislikes, etc.).
+        
+        Args:
+            session_id: The session ID
+            user_message: The user's input message
+            assistant_response: The assistant's response
+        """
+        import re
+        
+        # Patterns for personal information detection
+        patterns = [
+            # Names
+            (r"me llamo\s+(\w+)", "name"),
+            (r"mi nombre es\s+(\w+)", "name"),
+            (r"me dicen\s+(\w+)", "name"),
+            (r"soy\s+(\w+)", "name"),
+            # Preferences
+            (r"prefiero\s+(.+?)(?:\.|$)", "preference"),
+            (r"me gusta\s+(.+?)(?:\.|$)", "preference"),
+            (r"me encanta\s+(.+?)(?:\.|$)", "preference"),
+            # Dislikes
+            (r"no me gusta\s+(.+?)(?:\.|$)", "dislike"),
+            (r"no me gusta nada\s+(.+?)(?:\.|$)", "dislike"),
+            (r"odio\s+(.+?)(?:\.|$)", "dislike"),
+            # Location
+            (r"vivo en\s+(.+?)(?:\.|$)", "location"),
+            (r"estoy en\s+(.+?)(?:\.|$)", "location"),
+            # Work
+            (r"trabajo en\s+(.+?)(?:\.|$)", "work"),
+            (r"trabajo como\s+(.+?)(?:\.|$)", "work"),
+        ]
+        
+        text_lower = user_message.lower()
+        
+        for pattern, fact_type in patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                value = match.group(1).strip()
+                if len(value) > 2 and len(value) < 100:  # Reasonable length
+                    fact = f"Usuario: {match.group(0).strip()}"
+                    
+                    # Save to semantic memory
+                    await self.memory_controller.add_fact(
+                        user_id=session_id,
+                        fact=fact,
+                        metadata={
+                            "source": "auto_extract",
+                            "type": fact_type,
+                            "value": value
+                        }
+                    )
+                    logger.debug(f"Auto-extracted fact: {fact_type} = {value}")
+    
     def _load_tool_reference(self) -> str:
         if self._tool_reference is not None:
             return self._tool_reference

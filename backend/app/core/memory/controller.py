@@ -8,12 +8,19 @@ Provides a unified interface for managing all 4 levels of memory:
 - Global Context: Cross-session preferences
 
 This controller is provider-agnostic and works with any LLM provider.
+
+Features:
+- Context caching for improved performance
+- Automatic cache invalidation on new messages
+- TTL-based cache expiration
 """
 
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 import logging
 import uuid
+import hashlib
 
 from .abc import MemoryItem
 from .working import WorkingMemory, get_working_memory
@@ -21,6 +28,9 @@ from .episodic import EpisodicMemory, get_episodic_memory
 from .semantic import SemanticMemory, get_semantic_memory
 
 logger = logging.getLogger(__name__)
+
+# Cache configuration
+CONTEXT_CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
 @dataclass
@@ -102,6 +112,11 @@ class MemoryController:
         # Session tracking
         self._active_sessions: Dict[str, Dict[str, Any]] = {}
         
+        # Context cache for performance optimization
+        # Key: session_id, Value: (timestamp, context)
+        self._context_cache: Dict[str, tuple[datetime, MemoryContext]] = {}
+        self._cache_ttl = timedelta(seconds=CONTEXT_CACHE_TTL_SECONDS)
+        
         logger.info("MemoryController initialized with all memory levels")
     
     @classmethod
@@ -160,6 +175,9 @@ class MemoryController:
         # Also persist to episodic memory (persistent history)
         item.memory_type = "episodic"
         episodic_id = await self.episodic.add(item)
+        
+        # Invalidate context cache for this session
+        self._invalidate_session_cache(session_id)
         
         logger.debug(f"Added message to memory: session={session_id}, role={role}")
         return episodic_id or item.id
@@ -247,6 +265,58 @@ class MemoryController:
     # Context Retrieval
     # =========================================================================
     
+    def _get_cached_context(self, session_id: str, query_hash: str) -> Optional[MemoryContext]:
+        """
+        Get cached context if valid.
+        
+        Args:
+            session_id: The session ID
+            query_hash: Hash of the current query
+            
+        Returns:
+            Cached MemoryContext if valid, None otherwise
+        """
+        cache_key = f"{session_id}:{query_hash}"
+        if cache_key in self._context_cache:
+            timestamp, context = self._context_cache[cache_key]
+            if datetime.now() - timestamp < self._cache_ttl:
+                logger.debug(f"Cache hit for session {session_id}")
+                return context
+            else:
+                # Expired, remove from cache
+                del self._context_cache[cache_key]
+        return None
+    
+    def _set_cached_context(self, session_id: str, query_hash: str, context: MemoryContext) -> None:
+        """
+        Set cached context.
+        
+        Args:
+            session_id: The session ID
+            query_hash: Hash of the current query
+            context: The context to cache
+        """
+        # Clean up old entries for this session
+        keys_to_remove = [k for k in self._context_cache.keys() if k.startswith(f"{session_id}:")]
+        for key in keys_to_remove:
+            del self._context_cache[key]
+        
+        cache_key = f"{session_id}:{query_hash}"
+        self._context_cache[cache_key] = (datetime.now(), context)
+        logger.debug(f"Cached context for session {session_id}")
+    
+    def _invalidate_session_cache(self, session_id: str) -> None:
+        """
+        Invalidate all cached contexts for a session.
+        
+        Args:
+            session_id: The session ID to invalidate
+        """
+        keys_to_remove = [k for k in self._context_cache.keys() if k.startswith(f"{session_id}:")]
+        for key in keys_to_remove:
+            del self._context_cache[key]
+        logger.debug(f"Invalidated cache for session {session_id}")
+    
     async def get_context(
         self,
         session_id: str,
@@ -258,6 +328,7 @@ class MemoryController:
         
         This is the main method for retrieving context to inject into
         LLM prompts. It aggregates context from all 4 memory levels.
+        Uses caching for improved performance.
         
         Args:
             session_id: Current session ID
@@ -267,6 +338,15 @@ class MemoryController:
         Returns:
             MemoryContext with all context sections
         """
+        # Generate query hash for caching
+        query_hash = hashlib.md5(current_query.encode()).hexdigest()[:8] if current_query else "empty"
+        
+        # Check cache first (only for empty queries to avoid semantic search overhead)
+        if not current_query:
+            cached = self._get_cached_context(session_id, query_hash)
+            if cached:
+                return cached
+        
         # 1. Working memory: recent conversation context
         working = self.working.get_context_window(session_id, max_items=10)
         
@@ -299,12 +379,18 @@ class MemoryController:
         # 4. Global: User preferences
         global_pref = self._global_cache.get(user_id, "")
         
-        return MemoryContext(
+        context = MemoryContext(
             working_memory=working,
             episodic_summary=episodic,
             semantic_facts=semantic,
             global_preferences=global_pref
         )
+        
+        # Cache the context for empty queries (for performance)
+        if not current_query:
+            self._set_cached_context(session_id, query_hash, context)
+        
+        return context
     
     # =========================================================================
     # Global Preferences
