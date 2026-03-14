@@ -74,7 +74,7 @@ class HistoryItem:
 Base.metadata.create_all(bind=engine)
 
 class NaviBot:
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str = None, provider: str = None):
         # Check if we need to use a custom provider (OpenRouter/LM Studio) or default Google
         from app.core.persistence import LLMProvider, get_persistence_db
         from app.core.security.encryption import get_encryption_service
@@ -88,6 +88,7 @@ class NaviBot:
         self._mcp_loaded = False
         self.client = None
         self.is_google = True # Default flag
+        self.provider = provider  # Store the explicitly provided provider
         
         # If no model provided, use the configured current model
         if model_name is None:
@@ -99,7 +100,33 @@ class NaviBot:
         try:
             db = next(get_persistence_db())
             
-            # Logic for multiple providers:
+            # If provider is explicitly specified, use it directly
+            if provider:
+                # Query for the specified provider
+                selected_provider = db.query(LLMProvider).filter(
+                    LLMProvider.provider_id == provider,
+                    LLMProvider.is_active == True
+                ).first()
+                
+                if selected_provider:
+                    self.is_google = False
+                    encryption = get_encryption_service()
+                    api_key = encryption.decrypt(selected_provider.api_key_enc) if selected_provider.api_key_enc else None
+                    base_url = selected_provider.base_url
+                    
+                    from openai import OpenAI
+                    client_kwargs = {
+                        "api_key": api_key or "dummy",
+                        "base_url": base_url
+                    }
+                    self.openai_client = OpenAI(**client_kwargs)
+                    logger.info(f"NaviBot initialized with explicit provider {provider} for model {model_name}")
+                    self._register_default_tools()
+                    return
+                else:
+                    logger.warning(f"Provider {provider} not found or not active, falling back to default logic")
+            
+            # Logic for multiple providers (default behavior):
             # 1. Native Google Check (Priority)
             is_native_google = (
                 model_name.startswith("gemini-") and "/" not in model_name

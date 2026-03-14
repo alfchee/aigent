@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { useSessionsStore } from '../../stores/sessions'
+import ProviderSelector from '../ProviderSelector.vue'
 import {
   isCollapsed as isCollapsedState,
   nextSidebarState,
@@ -109,6 +110,7 @@ onMounted(() => {
         </Transition>
       </div>
     </Transition>
+    <ProviderSelector />
     <div class="p-4 border-b border-slate-200 flex items-center justify-between">
       <div v-if="!collapsed" class="text-xs font-bold text-slate-500 uppercase tracking-wider">
         Sesiones

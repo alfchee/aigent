@@ -9,6 +9,9 @@ import hashlib
 import hmac
 from typing import Optional, Dict, Any
 
+from pydantic import BaseModel, Field, ValidationError
+from typing import Literal
+
 from app.core.ws_manager import manager
 from app.core.agent import NaviBot
 from app.core.runtime_context import set_session_id, reset_session_id
@@ -25,7 +28,25 @@ ERROR_CODES = {
     "agent_error": "Error general del agente",
     "timeout": "Timeout de ejecución",
     "connection_error": "Error de conexión",
+    "validation_error": "Error de validación",
 }
+
+# Valid model providers
+VALID_PROVIDERS = Literal["google", "openrouter", "lm_studio"]
+
+
+class ChatMessageRequest(BaseModel):
+    """Pydantic model for validating WebSocket chat messages."""
+    model_provider: Optional[VALID_PROVIDERS] = None
+    content: str = Field(..., min_length=1)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: Optional[int] = None
+
+
+class ChatInitRequest(BaseModel):
+    """Pydantic model for validating WebSocket initialization message."""
+    model_provider: Optional[VALID_PROVIDERS] = None
+    model_name: Optional[str] = None
 
 
 def _classify_error(error: Exception) -> tuple[str, str]:
@@ -126,11 +147,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str, token: Option
     await manager.connect(websocket, client_id)
 
     running_task: Optional[asyncio.Task] = None
+    current_provider: Optional[str] = None
 
-    async def run_agent_message(user_content: str, msg_id: str):
+    async def run_agent_message(user_content: str, msg_id: str, provider: Optional[str] = None):
         token_ctx = set_session_id(session_id)
         try:
-            bot = NaviBot()
+            bot = NaviBot(provider=provider)
 
             async def event_callback(event_type: str, data: dict):
                 await manager.send_json({"type": f"agent.{event_type}", "data": data}, client_id)
@@ -188,8 +210,29 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str, token: Option
                 continue
 
             if msg_type == "chat.message":
-                user_content = message_data.get("content", "")
-                msg_id = message_data.get("id", str(uuid.uuid4()))
+                # Validate message using Pydantic
+                try:
+                    validated_msg = ChatMessageRequest(**message_data)
+                except ValidationError as e:
+                    # Send validation error and close connection
+                    error_details = e.errors()
+                    error_msg = "; ".join([f"{err['loc']}: {err['msg']}" for err in error_details])
+                    await manager.send_json({
+                        "type": "error",
+                        "code": "validation_error",
+                        "message": "Invalid message format",
+                        "description": error_msg,
+                    }, client_id)
+                    await manager.send_json({"type": "done", "data": {"id": message_data.get("id", "unknown"), "error": True}}, client_id)
+                    continue
+                
+                user_content = validated_msg.content
+                msg_id = validated_msg.id
+                provider = validated_msg.model_provider
+                
+                # Update current provider if provided
+                if provider:
+                    current_provider = provider
 
                 if running_task and not running_task.done():
                     running_task.cancel()
@@ -200,7 +243,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str, token: Option
                     except Exception:
                         pass
 
-                running_task = asyncio.create_task(run_agent_message(user_content, msg_id))
+                running_task = asyncio.create_task(run_agent_message(user_content, msg_id, current_provider))
                 running_task.add_done_callback(consume_task_result)
                 continue
 

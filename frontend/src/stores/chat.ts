@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { ApiError, NetworkError, TimeoutError, fetchJson } from '../lib/api'
 import { useSessionsStore } from './sessions'
 import { useModelSettingsStore } from './modelSettings'
+import { useProviderStore } from './providers'
 import { WebSocketService } from '../services/websocket'
 
 let wsService: WebSocketService | null = null
@@ -301,6 +302,10 @@ export const useChatStore = defineStore('chat', {
       // Create a placeholder message for assistant
       this.messages.push({ role: 'assistant', content: '' })
 
+      // Get selected provider
+      const providerStore = useProviderStore()
+      const selectedProvider = providerStore.selectedProvider
+
       // Try WebSocket first
       if (wsService && this.wsConnected && this.connectedSessionId === currentSessionId) {
         try {
@@ -308,6 +313,7 @@ export const useChatStore = defineStore('chat', {
             content: trimmed,
             id: crypto.randomUUID(), // requires secure context or polyfill, fall back to Date.now() if needed
             timestamp: Date.now(),
+            model_provider: selectedProvider || undefined,
           })
           // Wait for events...
           return
