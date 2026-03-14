@@ -95,7 +95,7 @@ class SkillLoader:
         total_tools = sum(len(t) for t in skills_map.values())
         logger.info(f"Total tools loaded: {total_tools} from {len(skills_map)} skills")
         
-        # Si hay un registry, registrar las herramientas
+        # Si hay un registry, registrar las herramientas (de forma síncrona)
         if self.registry:
             from app.core.tool_registry import ToolMetadata
             for skill_name, tools in skills_map.items():
@@ -106,7 +106,14 @@ class SkillLoader:
                         category=self._infer_category(skill_name),
                         description=tool.description or "",
                     )
-                    await self.registry.register_tool(tool, metadata)
+                    # Usar sync version si está disponible, sino skip
+                    try:
+                        import asyncio
+                        asyncio.get_event_loop().run_until_complete(
+                            self.registry.register_tool(tool, metadata)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not register tool {tool.name}: {e}")
         
         return skills_map
     
