@@ -5,7 +5,7 @@ from typing import Optional, List
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from app.core.llm_factory import get_agent_model
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import create_react_agent
 
@@ -58,9 +58,10 @@ WORKER_PROMPTS = {
         "- GOOGLE SHEETS: Use 'create_google_spreadsheet', 'update_sheet_data', 'list_spreadsheet_sheets', 'read_sheet_data' for spreadsheet operations. FIRST use 'list_spreadsheet_sheets' to discover existing sheets, then use 'read_sheet_data' to analyze data before creating summaries.\n"
         "- CODE EXECUTION: Use 'execute_python' to run code.\n"
         "- FILE MANAGEMENT: Use 'workspace' tools to manage session files.\n"
-        "- MEMORY: Use 'recall_facts', 'save_fact' to store/retrieve long-term memory.\n"
+        "- MEMORY: Use 'recall_facts' to search memory, 'save_fact' to save important info. After getting memory results, respond to user - DO NOT call memory tools again.\n"
         "- TELEGRAM: Use 'send_telegram_message' to send messages.\n"
         "- Be proactive and seek the most efficient solution.\n"
+        "- CRITICAL: After executing any tool and getting results, provide your final answer to the user. NEVER call the same tool repeatedly.\n"
         "IMPORTANT: For web searches (internet), use WebNavigator. For calendar, use CalendarManager."
     ),
     "ImageGenerator": (
@@ -108,18 +109,16 @@ class AgentGraph:
             # Usar ToolRegistry para obtener herramientas
             try:
                 self.tool_registry = get_tool_registry()
-                logger.info("Using ToolRegistry for tools")
+                if not self.tool_registry.is_initialized:
+                    logger.warning("ToolRegistry exists but is not initialized. Falling back to legacy loading.")
+                    self.use_registry = False
+                else:
+                    logger.info("Using ToolRegistry for tools")
             except Exception as e:
                 logger.warning(f"Failed to get ToolRegistry: {e}. Falling back to legacy loading.")
                 self.use_registry = False
         
-        # Siempre cargar legacy tools para compatibilidad con Workers
-        # Esto asegura que skills_map esté disponible
         self._load_legacy_tools()
-        
-        if not self.use_registry:
-            # Fallback: carga legacy de skills
-            self._load_legacy_tools()
         
         # 2. Definir Herramientas por Trabajador
         self.worker_skills = self._get_worker_skills()
@@ -159,13 +158,14 @@ class AgentGraph:
             Dict mapeando workers a nombres de skills
         """
         if self.use_registry and self.tool_registry:
-            # Usar registry: mapear workers a categorías
-            # IMPORTANTE: "development" incluye GitHub MCP tools
+            # Mantener mapeo por skill-name para compatibilidad con skills_map
+            # y asegurar que los workers tengan herramientas disponibles.
             return {
-                "WebNavigator": ["search", "browser", "reader"],
-                "CalendarManager": ["productivity"],  # calendar, scheduler
-                "GeneralAssistant": ["files", "development", "communication", "memory", "utility", "extra_tools"],  # extra_tools = MCP
-                "ImageGenerator": ["media"]
+                "WebNavigator": ["browser", "search", "reader"],
+                "CalendarManager": ["calendar", "scheduler"],
+                "GeneralAssistant": ["workspace", "code_execution", "google_drive",
+                                     "google_workspace_manager", "memory", "telegram", "extra_tools"],
+                "ImageGenerator": ["image_generation"]
             }
         else:
             # Legacy: usar skills_map directamente
@@ -311,19 +311,6 @@ class AgentGraph:
             import logging
             logger = logging.getLogger("navibot.graph")
             
-            # Get or initialize the supervisor call count for this thread
-            messages = state.get("messages", [])
-            user_msg_count = sum(1 for m in messages if hasattr(m, "type") and m.type == "human")
-            
-            # Get the last message to check if it's from a worker
-            last_msg = state.get("messages", [])[-1] if state.get("messages") else None
-            is_worker_response = hasattr(last_msg, "name") and last_msg.name in WORKERS
-            
-            # Force FINISH if this is the second supervisor call (worker already responded)
-            if user_msg_count > 0 and is_worker_response:
-                logger.info("[Graph] Supervisor forcing FINISH - worker already responded")
-                return {"next": "FINISH"}
-            
             logger.info(f"[Graph] Supervisor Input State: {state.get('messages')[-1] if state.get('messages') else 'Empty'}")
             
             result = await supervisor_node(state)
@@ -349,6 +336,8 @@ class AgentGraph:
             for skill in skill_names:
                 if skill in self.skills_map:
                     worker_tools.extend(self.skills_map[skill])
+
+            logger.info(f"[Graph Worker:{worker_name}] Loaded {len(worker_tools)} tools from skills {skill_names}")
             
             # Si no hay herramientas específicas, dar un set por defecto o vacío (para chat)
             if not worker_tools and worker_name == "GeneralAssistant":
@@ -411,34 +400,131 @@ class AgentGraph:
             # Use specific LLM for this worker (with or without cached content)
             worker_llm = self._get_llm(worker_name, cached_content=cached_content)
             
-            # When using cached content, we don't need to pass system prompt again
-            # because it's already in the cache
-            if cached_content:
-                worker_agent = create_react_agent(worker_llm, worker_tools, prompt=None)
-            else:
-                worker_agent = create_react_agent(worker_llm, worker_tools, prompt=system_prompt)
+            # Get worker system prompt
+            system_prompt = WORKER_PROMPTS.get(worker_name, "You are a helpful assistant.")
             
-            # Definir la función del nodo
-            # Usamos functools.partial para capturar worker_agent en el closure correctamente
-            async def node_func(state: AgentState, agent=worker_agent, name=worker_name):
+            # Instead of create_react_agent (which has internal tool-calling loop),
+            # we use a simple LLM with bind_tools for ONE tool-call cycle only.
+            # This ensures the worker returns to supervisor after each tool execution,
+            # allowing the supervisor to decide whether to continue or finish.
+            # The worker prompt instructs it to do only one tool call.
+            
+            # Create tool-binding LLM with system prompt
+            worker_tools_binding = worker_llm.bind_tools(worker_tools)
+            
+            # Define a simple function to invoke the LLM once with tools
+            async def node_func(
+                state: AgentState,
+                llm=worker_tools_binding,
+                name=worker_name,
+                sys_prompt=system_prompt,
+                tools_for_worker=worker_tools
+            ):
                 import logging
+                from langchain_core.messages import SystemMessage, HumanMessage
                 logger = logging.getLogger(f"navibot.worker.{name}")
                 
                 # Log entry
                 last_msg = state["messages"][-1]
                 logger.info(f"[Graph Worker:{name}] Processing: {last_msg.content[:100]}...")
                 
-                # Invocar al agente con el estado actual
-                result = await agent.ainvoke(state)
+                # Preserve worker_calls counter
+                worker_calls = state.get("worker_calls", 0)
+                
+                # Get messages from state
+                messages = state.get("messages", [])
+
+                # Sanitize messages for Gemini (avoid empty parts errors)
+                sanitized_messages = []
+                for m in messages:
+                    content = str(getattr(m, "content", "") or "").strip()
+                    if content:
+                        sanitized_messages.append(m)
+
+                if not sanitized_messages:
+                    sanitized_messages = [HumanMessage(content="Continue and provide the best possible answer.")]
+                elif getattr(sanitized_messages[-1], "type", "") != "human":
+                    sanitized_messages.append(
+                        HumanMessage(content="Continue with the latest user request and provide a direct answer.")
+                    )
+                
+                # Prepend system message
+                full_messages = [SystemMessage(content=sys_prompt)] + sanitized_messages
+                
+                # Invoke LLM ONCE with tools - this will return tool calls if the LLM decides to use them
+                response = await llm.ainvoke(full_messages)
+                
+                # If the LLM made tool calls, execute them
+                tool_messages = []
+                def _tool_name(tool_obj):
+                    if hasattr(tool_obj, "name") and getattr(tool_obj, "name"):
+                        return getattr(tool_obj, "name")
+                    if hasattr(tool_obj, "__name__"):
+                        return getattr(tool_obj, "__name__")
+                    return None
+
+                async def _execute_tool(tool_obj, args):
+                    if hasattr(tool_obj, "ainvoke"):
+                        return await tool_obj.ainvoke(args)
+                    if hasattr(tool_obj, "invoke"):
+                        return tool_obj.invoke(args)
+                    if callable(tool_obj):
+                        if isinstance(args, dict):
+                            try:
+                                return tool_obj(**args)
+                            except TypeError:
+                                return tool_obj(args)
+                        return tool_obj(args)
+                    raise RuntimeError(f"Unsupported tool object type: {type(tool_obj)}")
+
+                if hasattr(response, 'tool_calls') and response.tool_calls:
+                    for tool_call in response.tool_calls:
+                        tool_name = tool_call["name"]
+                        tool_args = tool_call.get("args", {})
+                        
+                        # Find the tool
+                        tool = next((t for t in tools_for_worker if _tool_name(t) == tool_name), None)
+                        if tool:
+                            try:
+                                # Execute tool (sync or async)
+                                tool_result = await _execute_tool(tool, tool_args)
+                                
+                                # Add tool result as message
+                                tool_msg = ToolMessage(
+                                    content=str(tool_result) if tool_result else "Tool executed successfully",
+                                    tool_call_id=tool_call.get("id", "")
+                                )
+                                tool_messages.append(tool_msg)
+                                logger.info(f"[Graph Worker:{name}] Executed tool: {tool_name}")
+                            except Exception as e:
+                                logger.error(f"[Graph Worker:{name}] Tool error: {e}", exc_info=True)
+                                tool_messages.append(ToolMessage(
+                                    content=f"Error: {str(e)}",
+                                    tool_call_id=tool_call.get("id", "")
+                                ))
+                        else:
+                            available_tools = [_tool_name(t) for t in tools_for_worker if _tool_name(t)]
+                            logger.error(f"[Graph Worker:{name}] Tool not found: {tool_name}. Available: {available_tools}")
+                            tool_messages.append(ToolMessage(
+                                content=f"Error: Tool '{tool_name}' not available for worker {name}",
+                                tool_call_id=tool_call.get("id", "")
+                            ))
+                
+                # Get final response from LLM after tool execution (or initial response if no tools)
+                if tool_messages:
+                    # Call LLM again with tool results to get final response
+                    final_response = await llm.ainvoke(full_messages + [response] + tool_messages)
+                else:
+                    final_response = response
                 
                 # Log output
-                last_response = result["messages"][-1]
-                logger.info(f"[Graph Worker:{name}] Completed. Response: {last_response.content[:100]}...")
+                content = final_response.content if hasattr(final_response, 'content') else str(final_response)
+                logger.info(f"[Graph Worker:{name}] Completed. Response: {content[:100]}...")
                 
-                # Devolver el último mensaje generado por el agente
+                # Return the result - the supervisor will decide next step
                 return {"messages": [
-                    HumanMessage(content=result["messages"][-1].content, name=name)
-                ]}
+                    AIMessage(content=content, name=name)
+                ], "worker_calls": worker_calls}
             
             workflow.add_node(worker_name, node_func)
 

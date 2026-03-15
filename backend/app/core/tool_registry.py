@@ -112,21 +112,30 @@ class ToolRegistry:
         
         Este método debe ser llamado al iniciar la aplicación.
         """
-        async with self._lock:
-            if self._initialized_properly:
-                logger.info("ToolRegistry already initialized")
-                return
-                
+        # Verificación rápida sin lock
+        if self._initialized_properly:
+            logger.info("ToolRegistry already initialized")
+            return
+            
+        # Evitar inicialización concurrente
+        if getattr(self, "_initializing", False):
+            logger.warning("ToolRegistry initialization already in progress")
+            return
+
+        self._initializing = True
+        try:
             logger.info("Initializing ToolRegistry...")
             
-            # Cargar skills
+            # Cargar skills (internamente manejan sus propios locks al registrar)
             await self._load_skills()
             
-            # Cargar MCPs
+            # Cargar MCPs (internamente manejan sus propios locks al registrar)
             await self._load_mcps()
             
             self._initialized_properly = True
             logger.info(f"ToolRegistry initialized with {len(self._tools)} tools")
+        finally:
+            self._initializing = False
     
     async def _load_skills(self) -> None:
         """Carga todos los skills locales."""
@@ -154,12 +163,17 @@ class ToolRegistry:
     async def _load_mcps(self) -> None:
         """Carga todas las herramientas MCP."""
         try:
-            from app.core.mcp_adapter import get_mcp_adapter
-            adapter = await get_mcp_adapter(self)
+            logger.info("Loading MCP tools via Adapter...")
+            # Use a timeout to prevent startup hang if MCP servers are unresponsive
+            async with asyncio.timeout(15.0): # 15 seconds max for all MCPs
+                from app.core.mcp_adapter import get_mcp_adapter
+                adapter = await get_mcp_adapter(self)
+                
+                mcp_tools = await adapter.discover_and_register_tools()
+                logger.info(f"Loaded {len(mcp_tools)} MCP tools")
             
-            mcp_tools = await adapter.discover_and_register_tools()
-            logger.info(f"Loaded {len(mcp_tools)} MCP tools")
-            
+        except asyncio.TimeoutError:
+            logger.error("Timeout loading MCP tools. Skipping MCP initialization to allow server startup.")
         except Exception as e:
             logger.error(f"Error loading MCP tools: {e}")
     

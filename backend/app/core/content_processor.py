@@ -81,7 +81,10 @@ def process_html(html_content: str, max_length: Optional[int] = None) -> str:
     
     try:
         # Convert HTML to Markdown
-        result = md.convert(html_content)
+        # MarkItDown.convert() expects a file path, so we use convert_stream for strings
+        import io
+        stream = io.BytesIO(html_content.encode('utf-8'))
+        result = md.convert_stream(stream, file_extension=".html")
         
         if hasattr(result, 'text_content'):
             markdown = result.text_content

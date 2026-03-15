@@ -153,14 +153,48 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str, token: Option
         token_ctx = set_session_id(session_id)
         try:
             bot = NaviBot(provider=provider)
+            stream_state = {
+                "has_error": False,
+                "has_visible_output": False,
+            }
 
             async def event_callback(event_type: str, data: dict):
+                if event_type == "error":
+                    stream_state["has_error"] = True
+                elif event_type == "token":
+                    content = str(data.get("content", "") or "")
+                    if content.strip():
+                        stream_state["has_visible_output"] = True
+                elif event_type == "response":
+                    content = str(data.get("content", "") or "")
+                    if content.strip():
+                        stream_state["has_visible_output"] = True
                 await manager.send_json({"type": f"agent.{event_type}", "data": data}, client_id)
 
-            await bot.stream_chat(message=user_content, session_id=session_id, callback=event_callback)
+            stream_timeout = int(os.getenv("NAVIBOT_STREAM_TIMEOUT_SECONDS", "240"))
+            await asyncio.wait_for(
+                bot.stream_chat(message=user_content, session_id=session_id, callback=event_callback),
+                timeout=stream_timeout
+            )
             
-            # Send done message after successful stream
-            await manager.send_json({"type": "done", "data": {"id": msg_id}}, client_id)
+            if stream_state["has_error"]:
+                logger.warning(f"Stream ended with error for session={session_id} msg_id={msg_id}")
+                await manager.send_json({"type": "done", "data": {"id": msg_id, "error": True}}, client_id)
+            elif not stream_state["has_visible_output"]:
+                logger.warning(f"Stream ended without visible output for session={session_id} msg_id={msg_id}")
+                await manager.send_json(
+                    {
+                        "type": "error",
+                        "code": "empty_response",
+                        "message": "El agente terminó sin generar respuesta visible.",
+                        "description": "El flujo terminó sin tokens ni contenido final.",
+                    },
+                    client_id,
+                )
+                await manager.send_json({"type": "done", "data": {"id": msg_id, "error": True}}, client_id)
+            else:
+                logger.info(f"Stream completed successfully for session={session_id} msg_id={msg_id}")
+                await manager.send_json({"type": "done", "data": {"id": msg_id}}, client_id)
             
         except asyncio.CancelledError:
             await manager.send_json(
@@ -173,6 +207,18 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str, token: Option
             # Send done message for cancelled state
             await manager.send_json({"type": "done", "data": {"id": msg_id, "cancelled": True}}, client_id)
             raise
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout processing message for session={session_id} msg_id={msg_id}", exc_info=True)
+            await manager.send_json(
+                {
+                    "type": "error",
+                    "code": "timeout",
+                    "message": "La generación excedió el tiempo máximo permitido.",
+                    "description": ERROR_CODES.get("timeout", "Timeout de ejecución"),
+                },
+                client_id,
+            )
+            await manager.send_json({"type": "done", "data": {"id": msg_id, "error": True}}, client_id)
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             # Use structured error message

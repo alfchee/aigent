@@ -13,6 +13,7 @@ from app.core.security.encryption import get_encryption_service
 import os
 import json
 import logging
+from cryptography.fernet import InvalidToken
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,21 @@ def get_agent_model(model_name: str, temperature: float = 0.7, **kwargs) -> Base
             )
         
         encryption = get_encryption_service()
-        api_key = encryption.decrypt(provider.api_key_enc) if provider.api_key_enc else ""
         
         if provider.provider_id == "google":
-            key_to_use = api_key or os.getenv("GOOGLE_API_KEY")
+            decrypted_key = ""
+            if provider.api_key_enc:
+                try:
+                    decrypted_key = encryption.decrypt(provider.api_key_enc)
+                except InvalidToken:
+                    logger.error(
+                        "Invalid encrypted API key for provider 'google'. "
+                        "Check ENCRYPTION_KEY/ENCRYPTION_KEY_FILE consistency. Falling back to GOOGLE_API_KEY."
+                    )
+                except Exception as e:
+                    logger.error(f"Unexpected error decrypting Google provider key: {e!r}", exc_info=True)
+
+            key_to_use = decrypted_key or os.getenv("GOOGLE_API_KEY")
             
             # Filter kwargs for Google
             google_kwargs = {k: v for k, v in kwargs.items() if k in ["cached_content", "convert_system_message_to_human"]}
@@ -64,7 +76,25 @@ def get_agent_model(model_name: str, temperature: float = 0.7, **kwargs) -> Base
             
         elif provider.provider_id == "openrouter":
             if not ChatOpenAI:
-                raise ImportError("langchain-openai not installed. Please install it to use OpenRouter.")
+                logger.warning(
+                    "OpenRouter provider is active but langchain-openai is not installed. "
+                    "Falling back to Google provider."
+                )
+                return ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=os.getenv("GOOGLE_API_KEY"),
+                    temperature=temperature,
+                    convert_system_message_to_human=True
+                )
+            api_key = ""
+            if provider.api_key_enc:
+                try:
+                    api_key = encryption.decrypt(provider.api_key_enc)
+                except InvalidToken:
+                    raise RuntimeError(
+                        "OpenRouter API key cannot be decrypted (InvalidToken). "
+                        "Re-save provider credentials with current ENCRYPTION_KEY."
+                    )
 
             provider_config = {}
             if provider.config_json:
@@ -89,7 +119,16 @@ def get_agent_model(model_name: str, temperature: float = 0.7, **kwargs) -> Base
             
         elif provider.provider_id == "lm_studio":
             if not ChatOpenAI:
-                raise ImportError("langchain-openai not installed. Please install it to use LM Studio.")
+                logger.warning(
+                    "LM Studio provider is active but langchain-openai is not installed. "
+                    "Falling back to Google provider."
+                )
+                return ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=os.getenv("GOOGLE_API_KEY"),
+                    temperature=temperature,
+                    convert_system_message_to_human=True
+                )
                 
             base_url = provider.base_url or "http://localhost:1234/v1"
             # Ensure base_url ends with /v1
@@ -113,7 +152,7 @@ def get_agent_model(model_name: str, temperature: float = 0.7, **kwargs) -> Base
             )
             
     except Exception as e:
-        logger.error(f"Error initializing agent model: {e}")
+        logger.error(f"Error initializing agent model: {e!r}", exc_info=True)
         # Last resort fallback
         return ChatGoogleGenerativeAI(
             model="gemini-flash-latest",

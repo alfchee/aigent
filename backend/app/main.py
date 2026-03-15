@@ -44,6 +44,14 @@ async def lifespan(app: FastAPI):
     init_db()
     start_scheduler()
     await channel_manager.start_all()
+    
+    # Initialize ToolRegistry (Unified Tool System)
+    try:
+        from app.core.tool_registry import ToolRegistry
+        await ToolRegistry().initialize()
+    except Exception as e:
+        logger.error(f"Failed to initialize ToolRegistry: {e}")
+        
     yield
     # Shutdown
     await channel_manager.stop_all()

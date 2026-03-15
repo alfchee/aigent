@@ -1185,6 +1185,15 @@ class NaviBot:
         # Set session context for tools to access
         session_token = set_session_id(session_id)
         
+        # DEBUG: Log session_id being set for AgentGraph
+        logger.info(f"[AgentGraph DEBUG] Setting session_id: {session_id}")
+        
+        # CRITICAL: Also set memory_user_id like the normal flow does
+        from app.core.runtime_context import resolve_memory_user_id, set_memory_user_id
+        resolved_memory_user_id = resolve_memory_user_id(None, session_id)
+        memory_token = set_memory_user_id(resolved_memory_user_id)
+        logger.info(f"[AgentGraph DEBUG] Setting memory_user_id: {resolved_memory_user_id}")
+        
         try:
             # Get MCP tools from existing mcp_manager
             mcp_lc_tools = []
@@ -1216,57 +1225,68 @@ class NaviBot:
                 # Config for checkpointer
                 config = {
                     "configurable": {"thread_id": session_id},
-                    "recursion_limit": 100  # Increase limit for complex tasks
+                    "recursion_limit": 25  # Limit to prevent infinite loops and save tokens
                 }
                 
-                # Collect response and tool calls for session saving
                 full_response = ""
-                tool_calls = []
-                tool_results = []
-                
-                # Stream events
-                async for event in agent_graph.astream(message, config):
-                    event_type = event.get("event")
-                    
-                    # Handle different event types
-                    if event_type == "on_chat_model_stream":
-                        # Token from model
-                        chunk = event.get("data", {}).get("chunk")
-                        if chunk and hasattr(chunk, "content"):
-                            content = chunk.content
-                            # Extract text from content
-                            extracted_text = ""
-                            if hasattr(content, '__iter__') and not isinstance(content, str):
-                                for part in content:
-                                    if hasattr(part, 'text'):
-                                        extracted_text += part.text
-                                    elif isinstance(part, dict):
-                                        extracted_text += part.get('text', '')
-                            elif hasattr(content, 'text'):
-                                extracted_text = content.text
-                            else:
-                                extracted_text = str(content)
-                            
-                            full_response += extracted_text
-                            # Send the extracted text, not the raw content object
-                            await callback("token", {"content": extracted_text})
-                            
-                    elif event_type == "on_tool_start":
-                        # Tool execution started
-                        tool_name = event.get("name", "unknown")
-                        input_data = event.get("data", {}).get("input", {})
-                        tool_calls.append({"name": tool_name, "input": input_data})
-                        await callback("tool_start", {"tool": tool_name, "input": str(input_data)})
-                        
-                    elif event_type == "on_tool_end":
-                        # Tool execution finished
-                        tool_name = event.get("name", "unknown")
-                        output_data = event.get("data", {}).get("output", {})
-                        tool_results.append({"name": tool_name, "output": output_data})
-                        await callback("tool_end", {"tool": tool_name, "output": str(output_data)[:200] + "..."})
-                
+                emitted_tokens = False
+                final_state = {"messages": []}
+                graph = agent_graph.get_runnable()
+                initial_state = {"messages": [HumanMessage(content=message)], "next": ""}
+
+                async for state in graph.astream(initial_state, config=config, stream_mode="values"):
+                    final_state = state
+
+                messages = final_state.get("messages", []) if isinstance(final_state, dict) else []
+
+                def _content_to_text(value):
+                    if isinstance(value, str):
+                        return value.strip()
+                    if isinstance(value, list):
+                        parts = []
+                        for part in value:
+                            if isinstance(part, str):
+                                parts.append(part)
+                            elif isinstance(part, dict):
+                                text = part.get("text")
+                                if text:
+                                    parts.append(str(text))
+                            elif hasattr(part, "text") and part.text:
+                                parts.append(str(part.text))
+                        return "".join(parts).strip()
+                    return str(value).strip() if value is not None else ""
+
+                worker_names = {"WebNavigator", "CalendarManager", "GeneralAssistant", "ImageGenerator"}
+                for msg in reversed(messages):
+                    text = _content_to_text(getattr(msg, "content", ""))
+                    if not text:
+                        continue
+                    msg_name = getattr(msg, "name", None)
+                    msg_type = getattr(msg, "type", "")
+                    msg_class = msg.__class__.__name__
+                    if msg_name in worker_names or msg_type in ("ai", "assistant") or msg_class == "AIMessage":
+                        full_response = text
+                        break
+
+                if not full_response:
+                    for msg in reversed(messages):
+                        text = _content_to_text(getattr(msg, "content", ""))
+                        if text and text != message:
+                            full_response = text
+                            break
+
                 logger.info(f"[AgentGraph] Stream completed for session {session_id}")
-                await callback("response", {"content": "", "done": True})
+                if not full_response.strip():
+                    logger.warning(f"[AgentGraph] Stream completed with empty response for session {session_id}. Falling back to direct stream.")
+                    if not self.is_google and hasattr(self, "openai_client"):
+                        await self._stream_chat_openai(session_id, message, callback)
+                    else:
+                        await self._stream_chat_google(session_id, message, callback)
+                    return
+                if full_response and not emitted_tokens:
+                    await callback("token", {"content": full_response})
+                    emitted_tokens = True
+                await callback("response", {"content": full_response, "done": True})
                 
                 # Save messages to session
                 try:
@@ -1291,7 +1311,9 @@ class NaviBot:
             logger.error(f"[AgentGraph] Error in stream: {e}", exc_info=True)
             await callback("error", {"message": str(e)})
         finally:
+            from app.core.runtime_context import reset_session_id, reset_memory_user_id
             reset_session_id(session_token)
+            reset_memory_user_id(memory_token)
 
     async def _get_openai_tools(self) -> List[Dict[str, Any]]:
         """Converts available tools to OpenAI format."""
@@ -1708,16 +1730,22 @@ class NaviBot:
             tool_func = self._session_tools.get(name)
             if not tool_func:
                 for t in self.tools:
-                    if t.name == name:
+                    t_name = getattr(t, "name", None) or getattr(t, "__name__", None)
+                    if t_name == name:
                         tool_func = t
                         break
             
             result = None
             if tool_func:
-                if inspect.iscoroutinefunction(tool_func.func):
-                    result = await tool_func.func(**args)
+                if hasattr(tool_func, "func"):
+                    callable_obj = tool_func.func
                 else:
-                    result = await asyncio.to_thread(tool_func.func, **args)
+                    callable_obj = tool_func
+
+                if inspect.iscoroutinefunction(callable_obj):
+                    result = await callable_obj(**args)
+                else:
+                    result = await asyncio.to_thread(callable_obj, **args)
             elif self._mcp_loaded:
                 result = await self.mcp_manager.call_tool(name, args)
             else:

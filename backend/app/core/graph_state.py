@@ -12,8 +12,10 @@ class AgentState(TypedDict):
         next: El siguiente nodo a ejecutar (decidido por el supervisor).
         session_id: Identificador de sesión para seguimiento.
         summarization_metadata: Metadatos de la operación de resumen (si se ejecutó).
+        worker_calls: Contador de llamadas a workers (para limitar recursion).
     """
     messages: Annotated[List[BaseMessage], add_messages]
     next: str
     session_id: Optional[str] = None
     summarization_metadata: Optional[Any] = None
+    worker_calls: int = 0  # Contador de llamadas a workers

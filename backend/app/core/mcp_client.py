@@ -165,12 +165,28 @@ class McpManager:
         self._server_tasks[server_id] = task
         
         # Wait for connection to be established
-        await ready_event.wait()
-        
-        if server_id in self.active_sessions:
-            print(f"✅ MCP Server conectado: {server_id}")
-        else:
-            print(f"❌ Falló conexión con {server_id}")
+        try:
+            await asyncio.wait_for(ready_event.wait(), timeout=10.0)
+            
+            if server_id in self.active_sessions:
+                print(f"✅ MCP Server conectado: {server_id}")
+            else:
+                print(f"❌ Falló conexión con {server_id} (Session not active)")
+                # Cleanup if session creation failed but task is running
+                if not task.done():
+                    task.cancel()
+                if server_id in self._server_tasks:
+                    del self._server_tasks[server_id]
+                    
+        except asyncio.TimeoutError:
+            print(f"❌ Timeout conectando con {server_id}")
+            if not task.done():
+                task.cancel()
+            if server_id in self._server_tasks:
+                del self._server_tasks[server_id]
+            # Ensure cleanup of shutdown event
+            if server_id in self._shutdown_events:
+                del self._shutdown_events[server_id]
 
     async def get_all_tools(self) -> List[Dict[str, Any]]: 
         """Recupera herramientas de TODOS los servidores conectados.""" 
