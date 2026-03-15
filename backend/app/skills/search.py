@@ -24,7 +24,14 @@ async def search_brave(query: str, count: int = 5, offset: int = 0, lang: str = 
     """
     api_key = _get_brave_api_key()
     if not api_key:
-        return "Error: BRAVE_API_KEY no configurado."
+        fallback = await search_duckduckgo_fallback(query, max_results=count)
+        try:
+            payload = json.loads(fallback)
+            payload["fallback_reason"] = "BRAVE_API_KEY no configurado"
+            payload["source"] = "duckduckgo"
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return fallback
     params = {
         "q": query,
         "count": count,
@@ -54,7 +61,14 @@ async def search_brave(query: str, count: int = 5, offset: int = 0, lang: str = 
         payload = {"query": query, "source": "brave", "results": results}
         return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
-        return f"Error en Brave Search: {str(e)}"
+        fallback = await search_duckduckgo_fallback(query, max_results=count)
+        try:
+            payload = json.loads(fallback)
+            payload["fallback_reason"] = f"Brave error: {str(e)}"
+            payload["source"] = "duckduckgo"
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return f"Error en Brave Search: {str(e)} | fallback_error: {fallback}"
 
 
 async def search_duckduckgo_fallback(query: str, max_results: int = 5) -> str:

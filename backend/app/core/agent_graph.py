@@ -1,5 +1,8 @@
 import os
 import logging
+import json
+import re
+from urllib.parse import urlparse, urlunparse
 from typing import Optional, List
 
 from dotenv import load_dotenv
@@ -100,6 +103,12 @@ class AgentGraph:
         self.orchestrator = ModelOrchestrator()
         self.use_registry = use_registry and TOOL_REGISTRY_AVAILABLE
         self.tool_registry = None
+        self.identity_prompt = "You are NaviBot."
+        try:
+            from app.core.config_manager import get_settings
+            self.identity_prompt = get_settings().system_prompt or self.identity_prompt
+        except Exception:
+            pass
         
         if not self.api_key:
             logger.warning("GOOGLE_API_KEY not found. AgentGraph may fail to initialize correctly.")
@@ -303,7 +312,8 @@ class AgentGraph:
         # 1. Crear Nodo Supervisor
         # Use specific LLM for supervisor
         supervisor_llm = self._get_llm("supervisor")
-        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts="")
+        supervisor_context = self.user_facts or self.identity_prompt
+        supervisor_node = create_supervisor_node(supervisor_llm, WORKERS, user_facts=supervisor_context)
         
         # Logging wrapper for Supervisor node
         
@@ -383,8 +393,10 @@ class AgentGraph:
                 except Exception as e:
                     logger.warning(f"Failed to convert tool to schema: {e}")
             
-            # Try to get or create cache for this worker
-            if tools_schema and system_prompt:
+            # Try to get or create cache for this worker.
+            # IMPORTANT: Gemini cached_content is incompatible with requests that also set tools/tool_config.
+            # Since workers use bind_tools(), we must disable cached_content when worker_tools are present.
+            if tools_schema and system_prompt and not worker_tools:
                 try:
                     cache_manager = prompt_cache.get_cache_manager()
                     cached_content = cache_manager.get_or_create_worker_cache(
@@ -396,6 +408,8 @@ class AgentGraph:
                         logger.info(f"Using cached content for worker {worker_name}")
                 except Exception as e:
                     logger.warning(f"Failed to get/create cache for worker {worker_name}: {e}")
+            elif worker_tools:
+                logger.debug(f"Skipping cached_content for worker {worker_name}: bind_tools enabled")
             
             # Use specific LLM for this worker (with or without cached content)
             worker_llm = self._get_llm(worker_name, cached_content=cached_content)
@@ -418,7 +432,8 @@ class AgentGraph:
                 llm=worker_tools_binding,
                 name=worker_name,
                 sys_prompt=system_prompt,
-                tools_for_worker=worker_tools
+                tools_for_worker=worker_tools,
+                identity_prompt=self.identity_prompt,
             ):
                 import logging
                 from langchain_core.messages import SystemMessage, HumanMessage
@@ -448,14 +463,12 @@ class AgentGraph:
                         HumanMessage(content="Continue with the latest user request and provide a direct answer.")
                     )
                 
-                # Prepend system message
-                full_messages = [SystemMessage(content=sys_prompt)] + sanitized_messages
-                
-                # Invoke LLM ONCE with tools - this will return tool calls if the LLM decides to use them
-                response = await llm.ainvoke(full_messages)
-                
-                # If the LLM made tool calls, execute them
-                tool_messages = []
+                if identity_prompt:
+                    combined_system_prompt = f"{identity_prompt}\n\n{sys_prompt}"
+                else:
+                    combined_system_prompt = sys_prompt
+                full_messages = [SystemMessage(content=combined_system_prompt)] + sanitized_messages
+
                 def _tool_name(tool_obj):
                     if hasattr(tool_obj, "name") and getattr(tool_obj, "name"):
                         return getattr(tool_obj, "name")
@@ -476,6 +489,108 @@ class AgentGraph:
                                 return tool_obj(args)
                         return tool_obj(args)
                     raise RuntimeError(f"Unsupported tool object type: {type(tool_obj)}")
+
+                latest_human_text = ""
+                for m in reversed(sanitized_messages):
+                    if getattr(m, "type", "") == "human":
+                        latest_human_text = str(getattr(m, "content", "") or "")
+                        break
+
+                if name == "WebNavigator" and "linkedin" in latest_human_text.lower():
+                    search_tool = next(
+                        (t for t in tools_for_worker if _tool_name(t) in {"search_brave", "search_duckduckgo_fallback"}),
+                        None,
+                    )
+                    if search_tool:
+                        stop_words = {
+                            "dame", "darme", "mi", "mio", "mia", "perfil", "linkedin", "url", "de", "del", "la",
+                            "el", "y", "en", "por", "favor", "busca", "internet", "search", "profile", "my", "find",
+                        }
+                        human_blob = " ".join(
+                            str(getattr(m, "content", "") or "")
+                            for m in sanitized_messages
+                            if getattr(m, "type", "") == "human"
+                        )
+                        quoted = re.findall(r"[\"'“”‘’]([A-Za-z0-9._-]{3,})[\"'“”‘’]", human_blob)
+                        handles = [h.lstrip("@") for h in re.findall(r"@([A-Za-z0-9._-]{3,})", human_blob)]
+                        tokens = re.findall(r"[A-Za-z0-9._-]{3,}", human_blob)
+                        identifiers = []
+                        for token in quoted + handles + tokens:
+                            low = token.lower()
+                            if low in stop_words:
+                                continue
+                            if any(c.isdigit() for c in low) and len(low) <= 4:
+                                continue
+                            if token not in identifiers:
+                                identifiers.append(token)
+                        candidate_queries = [f"site:linkedin.com/in {identifier}" for identifier in identifiers[:5]]
+                        if not candidate_queries:
+                            candidate_queries.append(latest_human_text)
+                        collected_linkedin_urls = []
+                        collected_reference_urls = []
+
+                        for query in candidate_queries:
+                            try:
+                                raw_result = await _execute_tool(search_tool, {"query": query, "count": 5})
+                                parsed = json.loads(str(raw_result))
+                                results = parsed.get("results", []) if isinstance(parsed, dict) else []
+                                linkedin_urls = []
+                                for item in results:
+                                    if isinstance(item, dict):
+                                        url = str(item.get("url", "") or "")
+                                        if url and url not in collected_reference_urls:
+                                            collected_reference_urls.append(url)
+                                        if "linkedin.com/in/" in url:
+                                            parsed_url = urlparse(url)
+                                            cleaned_url = urlunparse(
+                                                (
+                                                    parsed_url.scheme or "https",
+                                                    parsed_url.netloc,
+                                                    parsed_url.path,
+                                                    "",
+                                                    "",
+                                                    "",
+                                                )
+                                            )
+                                            if re.search(r"linkedin\.com/in/[A-Za-z0-9][A-Za-z0-9\-_%]{1,}", cleaned_url):
+                                                linkedin_urls.append(cleaned_url.rstrip("/"))
+                                if linkedin_urls:
+                                    for u in linkedin_urls:
+                                        if u not in collected_linkedin_urls:
+                                            collected_linkedin_urls.append(u)
+                                    primary = linkedin_urls[0]
+                                    for candidate in identifiers:
+                                        lowered = candidate.lower()
+                                        matched = next((u for u in linkedin_urls if lowered in u.lower()), None)
+                                        if matched:
+                                            primary = matched
+                                            break
+                                    alternatives = "\n".join(f"- {u}" for u in linkedin_urls[1:4])
+                                    content = (
+                                        f"Encontré un posible URL de tu perfil de LinkedIn: {primary}"
+                                        if not alternatives
+                                        else f"Encontré un posible URL de tu perfil de LinkedIn: {primary}\n\nAlternativas:\n{alternatives}"
+                                    )
+                                    logger.info(f"[Graph Worker:{name}] LinkedIn URL candidates found via query: {query}")
+                                    return {"messages": [AIMessage(content=content, name=name)], "worker_calls": worker_calls}
+                            except Exception as e:
+                                logger.warning(f"[Graph Worker:{name}] LinkedIn pre-search failed for query '{query}': {e}")
+                        if not collected_linkedin_urls:
+                            refs = "\n".join(f"- {u}" for u in collected_reference_urls[:4]) if collected_reference_urls else "- Sin resultados relevantes"
+                            guidance = identifiers[0] if identifiers else "tu identificador exacto"
+                            content = (
+                                "No encontré un URL verificable de perfil en formato linkedin.com/in/ para tu consulta. "
+                                f"Probé búsquedas públicas con referencia a '{guidance}'.\n\n"
+                                f"Resultados consultados:\n{refs}\n\n"
+                                "Compárteme tu nombre exacto o username de LinkedIn para localizar el perfil correcto."
+                            )
+                            return {"messages": [AIMessage(content=content, name=name)], "worker_calls": worker_calls}
+                
+                # Invoke LLM ONCE with tools - this will return tool calls if the LLM decides to use them
+                response = await llm.ainvoke(full_messages)
+                
+                # If the LLM made tool calls, execute them
+                tool_messages = []
 
                 if hasattr(response, 'tool_calls') and response.tool_calls:
                     for tool_call in response.tool_calls:

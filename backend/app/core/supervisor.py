@@ -76,6 +76,7 @@ def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: s
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
+            ("system", "{global_context}"),
             MessagesPlaceholder(variable_name="messages"),
             (
                 "system",
@@ -83,7 +84,11 @@ def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: s
                 " Or should we FINISH? Select one of: {options}",
             ),
         ]
-    ).partial(options=str(options), worker_desc=worker_desc_block)
+    ).partial(
+        options=str(options),
+        worker_desc=worker_desc_block,
+        global_context=user_facts or "You are NaviBot. Keep worker selection aligned with tool capabilities and role instructions.",
+    )
 
     supervisor_chain = (
         prompt
@@ -97,6 +102,16 @@ def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: s
     async def supervisor_node(state: AgentState):
         import logging
         logger = logging.getLogger("navibot.supervisor")
+
+        def _route_from_text(text: str):
+            lower = (text or "").lower()
+            if any(k in lower for k in ["linkedin", "internet", "web", "buscar", "search", "sitio", "url", "navega", "navegar", "profile", "perfil"]):
+                return "WebNavigator"
+            if any(k in lower for k in ["calendario", "calendar", "evento", "schedule", "agenda"]):
+                return "CalendarManager"
+            if any(k in lower for k in ["imagen", "image", "dibuja", "generar imagen"]):
+                return "ImageGenerator"
+            return "GeneralAssistant"
         
         # Get worker call count from state (default to 0 if not present)
         worker_calls = state.get("worker_calls", 0)
@@ -157,6 +172,18 @@ def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: s
 
         safe_state = dict(state)
         safe_state["messages"] = sanitized_messages
+        latest_human = ""
+        for m in reversed(sanitized_messages):
+            if getattr(m, "type", "") == "human":
+                latest_human = str(getattr(m, "content", "") or "")
+                break
+
+        forced_route = _route_from_text(latest_human) if latest_human else None
+        if forced_route and forced_route != "GeneralAssistant":
+            worker_calls += 1
+            result = {"next": forced_route, "worker_calls": worker_calls}
+            logger.info(f"[SUPERVISOR DEBUG] Deterministic route applied: {result}")
+            return result
         result = await supervisor_chain.ainvoke(safe_state)
 
         # Safety: never finish before at least one worker produces a visible response
@@ -171,15 +198,7 @@ def create_supervisor_node(llm: BaseChatModel, members: List[str], user_facts: s
                 if getattr(m, "type", "") == "human":
                     user_text = str(getattr(m, "content", "") or "")
                     break
-            lower = user_text.lower()
-            if any(k in lower for k in ["internet", "web", "buscar", "search", "sitio", "url", "navega"]):
-                result["next"] = "WebNavigator"
-            elif any(k in lower for k in ["calendario", "calendar", "evento", "schedule", "agenda"]):
-                result["next"] = "CalendarManager"
-            elif any(k in lower for k in ["imagen", "image", "dibuja", "generar imagen"]):
-                result["next"] = "ImageGenerator"
-            else:
-                result["next"] = "GeneralAssistant"
+            result["next"] = _route_from_text(user_text)
             logger.warning(f"[SUPERVISOR DEBUG] FINISH without worker output blocked, rerouting to {result['next']}")
         
         # If supervisor chooses a worker, increment the counter
