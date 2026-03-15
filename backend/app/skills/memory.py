@@ -26,6 +26,15 @@ def recall_facts(query: str) -> str:
     Returns:
         Formatted string with relevant facts or error message.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # DEBUG: Log what we get from context
+    from app.core.runtime_context import get_memory_user_id, get_session_id
+    debug_user_id = get_memory_user_id()
+    debug_session_id = get_session_id()
+    logger.info(f"[Memory DEBUG recall_facts] memory_user_id from context: {debug_user_id}, session_id: {debug_session_id}")
+    
     # GHOST USER: Scheduler entities should not access human user memories
     if is_scheduler_entity():
         entity_meta = get_entity_metadata()
@@ -36,41 +45,36 @@ def recall_facts(query: str) -> str:
     if not memory_user_id:
         return "Error: Could not identify user for memory."
     
-    import asyncio
+    logger.info(f"[Memory DEBUG recall_facts] Using memory_user_id: {memory_user_id}")
     
-    async def _recall():
-        mc = get_memory_controller()
-        results = await mc.search_memories(memory_user_id, query, limit=5)
-        return results
+    import asyncio
+    import concurrent.futures
+    
+    def _recall_sync():
+        """Run recall in a separate thread with its own event loop."""
+        import asyncio
+        async def _recall():
+            mc = get_memory_controller()
+            results = await mc.search_memories(memory_user_id, query, limit=5)
+            return results
+        
+        # Run in a new event loop in a separate thread
+        return asyncio.run(_recall())
     
     try:
-        # Try to get event loop
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Can't use run_until_complete in async context
-            # Use get_context with current query as fallback
-            mc = get_memory_controller()
-            # Sync fallback - just use memory_controller directly
-            results = []
-            try:
-                # Try sync access through the controller
-                results = loop.run_until_complete(_recall())
-            except:
-                pass
-                
+        # Use thread pool to run async code from sync context
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(_recall_sync)
+            results = future.result()  # Wait for result
+            
             if not results:
                 return "I found no relevant information in memory about that topic."
             
-            formatted = "\n".join([f"- {r.content}" for r in results])
-            return f"Information retrieved from memory:\n{formatted}"
-        else:
-            results = loop.run_until_complete(_recall())
-            if not results:
-                return "I found no relevant information in memory about that topic."
             formatted = "\n".join([f"- {r.content}" for r in results])
             return f"Information retrieved from memory:\n{formatted}"
             
     except Exception as e:
+        logger.error(f"[Memory ERROR recall_facts] {str(e)}")
         return f"Error searching memory: {str(e)}"
 
 
@@ -89,6 +93,15 @@ def save_fact(fact: str) -> str:
     Returns:
         Success or error message.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # DEBUG: Log what we get from context
+    from app.core.runtime_context import get_memory_user_id, get_session_id
+    debug_user_id = get_memory_user_id()
+    debug_session_id = get_session_id()
+    logger.info(f"[Memory DEBUG save_fact] memory_user_id from context: {debug_user_id}, session_id: {debug_session_id}")
+    
     # GHOST USER: Scheduler entities should not store to human user memories
     if is_scheduler_entity():
         entity_meta = get_entity_metadata()
@@ -100,6 +113,8 @@ def save_fact(fact: str) -> str:
     if not memory_user_id:
         return "Error: Could not identify user for memory."
     
+    logger.info(f"[Memory DEBUG save_fact] Using memory_user_id: {memory_user_id}")
+    
     text = (fact or "").strip()
     if not text:
         return "Error: Content is empty."
@@ -108,20 +123,27 @@ def save_fact(fact: str) -> str:
         return "I cannot store sensitive credentials or secrets in memory for security."
     
     import asyncio
+    import concurrent.futures
     
-    async def _save():
-        mc = get_memory_controller()
-        await mc.add_fact(memory_user_id, text, metadata={"source": "skill"})
+    def _save_sync():
+        """Run save in a separate thread with its own event loop."""
+        import asyncio
+        async def _save():
+            mc = get_memory_controller()
+            await mc.add_fact(memory_user_id, text, metadata={"source": "skill"})
+        
+        # Run in a new event loop in a separate thread
+        asyncio.run(_save())
     
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Schedule the task
-            asyncio.create_task(_save())
-        else:
-            loop.run_until_complete(_save())
+        # Use thread pool to run async code from sync context
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(_save_sync)
+            future.result()  # Wait for completion
+            
         return "Memory updated successfully."
     except Exception as e:
+        logger.error(f"[Memory ERROR save_fact] {str(e)}")
         return f"Error saving to memory: {str(e)}"
 
 

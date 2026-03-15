@@ -28,6 +28,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+DEPRECATED_SUMMARIZER_MODELS = {"gemini-2.0-flash-lite", "models/gemini-2.0-flash-lite"}
+
 
 class CompressionLevel(Enum):
     """Compression levels affecting summary detail."""
@@ -108,13 +110,22 @@ class ConversationSummarizer:
         # Use configured model for summarization
         try:
             from app.core.config_manager import get_settings
-            self._summarizer_model = get_settings().current_model
+            # Use a known stable model for summarization, fallback to current if not set
+            # Avoid using models that might be deprecated like -lite versions if hardcoded
+            self._summarizer_model = os.getenv("NAVIBOT_SUMMARIZER_MODEL", "gemini-2.0-flash")
         except ImportError:
-            self._summarizer_model = os.getenv("NAVIBOT_SUMMARIZER_MODEL", "gemini-1.5-flash-001")
+            self._summarizer_model = os.getenv("NAVIBOT_SUMMARIZER_MODEL", "gemini-2.0-flash")
             
         # Allow override
         if os.getenv("NAVIBOT_SUMMARIZER_MODEL"):
             self._summarizer_model = os.getenv("NAVIBOT_SUMMARIZER_MODEL")
+
+        if self._summarizer_model in DEPRECATED_SUMMARIZER_MODELS:
+            logger.warning(
+                f"Deprecated summarizer model configured ({self._summarizer_model}). "
+                "Switching to gemini-2.0-flash."
+            )
+            self._summarizer_model = "gemini-2.0-flash"
         
         # Track recent summary hashes to avoid duplicate summaries
         self._recent_summary_hashes: Dict[str, str] = {}
@@ -302,23 +313,31 @@ Conversación a resumir:
 
 Responde ÚNICAMENTE con el resumen, sin introducciones ni conclusiones."""
 
-        try:
-            response = client.models.generate_content(
-                model=self._summarizer_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=500
+        candidate_models = [self._summarizer_model, "gemini-2.0-flash", "gemini-flash-latest"]
+        tried = []
+        for model_name in candidate_models:
+            if not model_name or model_name in tried:
+                continue
+            tried.append(model_name)
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.3,
+                        max_output_tokens=500
+                    )
                 )
-            )
-            
-            if response and response.text:
-                return response.text.strip()
-            return ""
-            
-        except Exception as e:
-            logger.error(f"LLM summarization failed: {e}")
-            return self._fallback_summary(messages)
+                if response and response.text:
+                    if model_name != self._summarizer_model:
+                        logger.warning(
+                            f"Summarizer fallback model used: {model_name} (primary: {self._summarizer_model})"
+                        )
+                    return response.text.strip()
+            except Exception as e:
+                logger.error(f"LLM summarization failed with model {model_name}: {e}")
+                continue
+        return self._fallback_summary(messages)
     
     def _fallback_summary(self, messages: List[Any]) -> str:
         """Simple fallback summary when LLM is unavailable."""
@@ -359,9 +378,13 @@ async def node_summarizer(state: Dict[str, Any]) -> Dict[str, Any]:
     
     result = await summarizer.summarize(messages, session_id)
     
+    # Preserve worker_calls counter through summarization
+    worker_calls = state.get("worker_calls", 0)
+    
     return {
         "messages": result["messages"],
-        "summarization_metadata": result.get("summarization_metadata")
+        "summarization_metadata": result.get("summarization_metadata"),
+        "worker_calls": worker_calls
     }
 
 

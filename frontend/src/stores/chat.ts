@@ -200,6 +200,8 @@ export const useChatStore = defineStore('chat', {
           if (data.content && data.content.length > lastMsg.content.length) {
             lastMsg.content = data.content
           }
+        } else if (data.content) {
+          this.messages.push({ role: 'assistant', content: data.content })
         }
       }
     },

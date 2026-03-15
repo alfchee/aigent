@@ -76,13 +76,22 @@ class CacheStatus(Enum):
 
 # Cache TTL configuration (in minutes)
 DEFAULT_CACHE_TTL_MINUTES = int(os.getenv("NAVIBOT_CACHE_TTL_MINUTES", "60"))
-MIN_CACHE_TOKENS = 32000  # Minimum tokens required for efficient caching
+# Minimum tokens required for efficient caching
+# Google GenAI requires ~32k tokens minimum for caching to be cost-effective,
+# but the API allows creating caches with fewer tokens (though they might be auto-deleted or rejected).
+# However, creating a cache with very few tokens often results in 400 INVALID_ARGUMENT.
+# We'll use a lower threshold for creation attempts but warn if low.
+MIN_CACHE_TOKENS = 1000 
+# Actual hard limit from API seems to be around ~32k for *billing* but creation might fail below 4k?
+# The error message says: "Cached content is too small. total_token_count=728, min_total_token_count=4096"
+# So the HARD limit is 4096.
+API_MIN_TOKEN_LIMIT = 4096
 
 # Model configuration
 # Note: Caching is only supported on specific stable models, not preview models.
 # gemini-1.5-flash-001 is stable and supports caching.
 # Default to gemini-1.5-pro-001 for better caching support if flash fails
-DEFAULT_CACHE_MODEL = os.getenv("NAVIBOT_CACHE_MODEL", "models/gemini-2.0-flash")
+DEFAULT_CACHE_MODEL = os.getenv("NAVIBOT_CACHE_MODEL", "models/gemini-1.5-flash-001")
 
 
 @dataclass
@@ -249,6 +258,14 @@ class PromptCacheManager:
                 len(str(tool)) for tool in tools_schema
             ) // 4
             
+            # Check against API minimum limit
+            if estimated_tokens < API_MIN_TOKEN_LIMIT:
+                logger.warning(
+                    f"Agency cache content ({estimated_tokens} tokens) is below "
+                    f"API minimum ({API_MIN_TOKEN_LIMIT} tokens). Skipping cache creation to avoid 400 error."
+                )
+                return None
+            
             if estimated_tokens < MIN_CACHE_TOKENS:
                 logger.warning(
                     f"Agency cache content ({estimated_tokens} tokens) is below "
@@ -332,6 +349,13 @@ class PromptCacheManager:
                 len(str(tool)) for tool in tools_schema
             ) // 4
             
+            if estimated_tokens < API_MIN_TOKEN_LIMIT:
+                logger.warning(
+                    f"Worker {worker_name} cache content ({estimated_tokens} tokens) is below "
+                    f"API minimum ({API_MIN_TOKEN_LIMIT} tokens). Skipping cache creation."
+                )
+                return None
+
             if estimated_tokens < MIN_CACHE_TOKENS:
                 logger.warning(
                     f"Worker {worker_name} cache content ({estimated_tokens} tokens) is below "

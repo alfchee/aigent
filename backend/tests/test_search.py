@@ -7,10 +7,14 @@ from app.skills.search import search_brave, search_duckduckgo_fallback
 
 
 class TestSearchTools(unittest.IsolatedAsyncioTestCase):
-    async def test_search_brave_requires_api_key(self):
-        with patch.dict(os.environ, {}, clear=True):
+    @patch("app.skills.search.search_duckduckgo_fallback", new_callable=AsyncMock)
+    async def test_search_brave_falls_back_without_api_key(self, mock_fallback):
+        mock_fallback.return_value = json.dumps({"query": "hola", "source": "duckduckgo", "results": []})
+        with patch.dict(os.environ, {"BRAVE_API_KEY": ""}, clear=False):
             output = await search_brave("hola")
-        self.assertIn("BRAVE_API_KEY", output)
+        data = json.loads(output)
+        self.assertEqual(data["source"], "duckduckgo")
+        self.assertIn("fallback_reason", data)
 
     @patch("app.skills.search.httpx.AsyncClient")
     async def test_search_brave_parses_results(self, mock_client):
