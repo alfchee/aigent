@@ -1,38 +1,41 @@
-fastapi
-uvicorn[standard]
-google-genai
-playwright
-apscheduler
-pydantic
-python-dotenv
-httpx
-sqlalchemy
-sse-starlette
-pypdf
-python-multipart
-markdownify
-markitdown
-pandas
-numpy
-matplotlib
-seaborn
-scipy
-pillow
-gspread
-google-auth
-google-auth-oauthlib
-tenacity
-google-api-python-client
-python-telegram-bot
-cryptography
-chromadb
-sentence-transformers
-mem0ai
-mcp
-langchain
-langgraph
-langchain-google-genai
-langgraph-checkpoint-sqlite
-aiosqlite
-flake8
-PyGithub
+# NaviBot 2.0 (The Phoenix) - Dependencies
+
+# Core Framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-dotenv>=1.0.1
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+
+# LLM Abstraction & Orchestration
+litellm>=1.35.0
+langgraph>=0.0.35
+langchain>=0.1.15
+langchain-core>=0.1.40
+langchain-community>=0.0.30
+
+# Memory & Persistence
+openviking>=0.0.38  # OpenViking Context Database
+aiosqlite>=0.20.0  # Checkpoints (kept for LangGraph)
+sqlalchemy>=2.0.28  # ORM for Structured Data
+
+# Sandbox & Code Execution
+e2b>=0.14.0  # Secure Python Sandbox (Optional, fallback if API key present)
+
+# Tools & Skills
+mcp>=0.1.0  # Model Context Protocol
+playwright>=1.42.0  # Headless Browser (Panda)
+markitdown>=0.0.1  # Content Processing
+duckduckgo-search>=5.3.0  # Fallback Search
+# brave-search-python-client (if available, or direct API via requests)
+
+# Communication
+python-telegram-bot>=21.0
+websockets>=12.0
+
+# Utilities
+apscheduler>=3.10.4  # Cron Jobs
+httpx>=0.27.0
+tenacity>=8.2.3
+numpy>=1.26.0
+pandas>=2.2.0

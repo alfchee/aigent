@@ -1,153 +1,71 @@
-# 🤖 Navibot
+# NaviBot 2.0 (The Phoenix) 🦅🔥
 
-**Navibot** is an intelligent, AI-powered assistant designed to automate your daily workflows by integrating deeply with **Google Workspace**. It acts as a bridge between natural language instructions and your productivity tools, allowing you to manage files, schedule events, and process data through a simple chat interface (via Telegram).
+NaviBot 2.0 is a next-generation agentic ecosystem orchestrated by LangGraph, designed for modularity, security, and multi-provider LLM support.
 
-Built with a robust **Python backend** and powered by **LLMs (Large Language Models)**, Navibot employs a **ReAct (Reason + Act)** cognitive loop to autonomously plan and execute complex tasks.
+## Architecture (The "Phoenix" Stack)
 
----
+*   **Orchestrator**: [LangGraph](https://langchain-ai.github.io/langgraph/) (Supervisor-Worker topology)
+*   **LLM Abstraction**: [LiteLM](https://docs.litellm.ai/) (Support for Gemini, OpenAI, Anthropic, Local)
+*   **Memory**: OpinViking Layered Memory (Working, Episodic, Semantic)
+*   **Tools**: Unified Tool Registry (MCP + Local Skills) with Pydantic validation
+*   **Sandbox**: Secure Code Execution (E2B / Python-in-Rust)
+*   **Interface**: WebSockets + Telegram
 
-## 🏗️ Architecture
+## Directory Structure
 
-NaviBot uses a **Multi-Agent Supervisor Pattern** with specialized workers:
-
-```mermaid
-graph TD
-    User[User Message] --> Supervisor[Supervisor]
-    Supervisor -->|Web Search| WebNavigator[WebNavigator]
-    Supervisor -->|Calendar| CalendarManager[CalendarManager]
-    Supervisor -->|Drive/Sheets| GeneralAssistant[GeneralAssistant]
-    Supervisor -->|Images| ImageGenerator[ImageGenerator]
-    
-    WebNavigator --> Supervisor
-    CalendarManager --> Supervisor
-    GeneralAssistant --> Supervisor
-    ImageGenerator --> Supervisor
-    Supervisor --> User[Final Response]
+```
+/workspace          # Runtime data (DB, sessions, config) - Docker Volume
+backend/
+  app/
+    core/           # Core logic (Graph, LLM, Config)
+    skills/         # Tool Registry & Implementations
+    memory/         # Memory Controllers
+    api/            # FastAPI Endpoints
+  tests/            # Pytest suite
 ```
 
-### Workers
-
-| Worker | Responsibility | Tools |
-|--------|---------------|-------|
-| **WebNavigator** | Web searches, browsing public websites | `search_brave`, `search_duckduckgo_fallback`, `navigate`, `get_page_content`, `screenshot` |
-| **CalendarManager** | Calendar events, scheduling | `list_upcoming_events`, `create_calendar_event` |
-| **GeneralAssistant** | Google Drive, Sheets, code, memory, Telegram | `list_drive_files`, `search_drive`, `move_drive_file`, `create_google_spreadsheet`, `execute_python`, `recall_facts`, `save_fact`, `send_telegram_message` |
-| **ImageGenerator** | Image generation from text | `generate_image` |
-
----
-
-## 🚀 Key Features
-
-- **🧠 Intelligent Agent:** Uses advanced LLMs to understand intent, break down complex requests, and reason through multi-step tasks.
-- **Multi-Agent System:** Supervisor orchestrates specialized workers for optimal task handling.
-- **📂 Google Drive Integration:**
-  - List, search, and organize files and folders.
-  - Move files between directories.
-  - Download files for local processing (with auto-conversion for Google Docs/Sheets).
-- **dV Google Calendar Management:**
-  - Retrieve upcoming events and daily schedules.
-  - Create and schedule new meetings and events intelligently.
-- **📊 Google Sheets Automation:**
-  - Create new spreadsheets from scratch.
-  - Populate and update sheets with structured data.
-- **💾 Long-term Memory:**
-  - Vector-based memory system (ChromaDB) to retain user preferences, past interactions, and important context.
-- **🐍 Secure Code Execution:**
-  - Sandboxed Python environment to perform calculations, data analysis, and logic processing on the fly.
-- **💬 Telegram Interface:**
-  - Native integration with Telegram for a seamless, mobile-friendly user experience.
-- **⚡ Ghost User Pattern (Scheduler):**
-  - Scheduled tasks run in isolated sessions (`ghost_scheduler_{job_id}`).
-  - Prevents DB locking conflicts with live user chats.
-  - Memory isolation - scheduler tasks cannot access human user memories.
-
----
-
-## 🛠️ Available Skills
-
-Navibot comes equipped with a suite of "skills" (tools) that the AI agent can invoke to fulfill your requests:
-
-| Category | Skill Name | Description |
-|----------|------------|-------------|
-| **Drive** | `list_drive_files` | Lists contents of a specific folder. |
-| | `search_drive` | Searches for files/folders by name. |
-| | `move_drive_file` | Moves a file to a target folder. |
-| | `download_file_from_drive` | Downloads a file to the workspace (supports PDF, xlsx export). |
-| **Calendar** | `list_upcoming_events` | Fetches upcoming calendar events. |
-| | `create_calendar_event` | Creates a new event in the calendar. |
-| **Sheets** | `create_google_sheet` | Creates a new Google Sheet. |
-| | `update_sheet_data` | Writes data to a specific range in a Sheet. |
-| **System** | `execute_python` | Runs Python code for calculation/processing. |
-| | `read_file` | Reads the content of a local file. |
-| | `memory_manager` | Stores/retrieves user-specific facts and context. |
-| | `scheduler` | Schedules recurring background tasks. |
-
----
-
-## ⚡ Getting Started
+## Getting Started
 
 ### Prerequisites
 
-- **Python 3.10+**
-- **Google Cloud Project** with Drive, Calendar, and Sheets APIs enabled.
-- **Telegram Bot Token** (via @BotFather).
-- **LLM API Key** (e.g., OpenAI, Gemini, etc., depending on configuration).
+*   Python 3.11+
+*   Docker (optional, for sandbox/db)
 
 ### Installation
 
-1.  **Clone the repository:**
+1.  **Clone and Clean**:
+    (Project has been reset to Phoenix baseline)
+
+2.  **Install Dependencies**:
     ```bash
-    git clone https://github.com/yourusername/navibot.git
-    cd navibot
+    pip install -r backend/requirements.txt
     ```
 
-2.  **Set up the Backend:**
-    The core logic resides in the `backend` directory. Follow the detailed setup guide there.
-    
-    👉 **[Read the Backend Documentation](backend/README.md)**
+3.  **Environment Setup**:
+    Copy `.env.example` to `backend/.env` and configure your keys:
+    ```bash
+    cp backend/.env.example backend/.env
+    ```
 
-3.  **Configure Credentials:**
-    -   Place your `google_service.json` (Service Account) or OAuth credentials in `backend/app/core/credentials/`.
-    -   Create a `.env` file with your API keys.
-
-4.  **Run the Bot:**
+4.  **Run Backend**:
     ```bash
     cd backend
     uvicorn app.main:app --reload
     ```
 
----
+### Development
 
-## ⚙️ Configuration
+*   **Run Tests**:
+    ```bash
+    PYTHONPATH=backend pytest backend/tests/
+    ```
 
-The application is highly configurable via `backend/app/core/config_manager.py` and environment variables. Key configurations include:
+## Roadmap
 
--   **Model Selection:** Choose between different LLM models (e.g., Gemini Pro, Flash).
--   **Auth Mode:** Switch between `service_account` (server-side) and `oauth` (user-consent) for Google Workspace.
--   **Memory Settings:** Configure the persistence path for ChromaDB.
+*   [x] **Phase 1: Foundation** (LiteLM, LangGraph, Tool Registry)
+*   [ ] **Phase 2: Memory & Sandbox** (OpinViking, E2B)
+*   [ ] **Phase 3: Roles & UI** (WebSockets, Telegram)
 
-For more details, check the **[Backend README](backend/README.md)**.
+## License
 
----
-
-## 🧪 Testing
-
-To ensure everything is working correctly, you can run the included test suite:
-
-```bash
-# Run all tests
-cd backend
-python -m unittest discover tests
-```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
----
-
-## 📄 License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Apache 2.0
