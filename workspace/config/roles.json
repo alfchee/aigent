@@ -1,0 +1,26 @@
+{
+  "supervisor": {
+    "name": "NaviBot Supervisor",
+    "description": "Orchestrates user requests and delegates to specialized workers.",
+    "model": "gemini-2.0-flash",
+    "system_prompt": "You are the Supervisor. Analyze the user's request. If it requires specialized skills, delegate to the appropriate worker. If it's a general query, answer directly using your knowledge and available tools."
+  },
+  "workers": [
+    {
+      "role_id": "coder",
+      "name": "Code Specialist",
+      "description": "Expert in writing, debugging, and executing Python code.",
+      "model": "gemini-2.0-flash",
+      "system_prompt": "You are a senior software engineer. Write clean, efficient Python code. Use the sandbox for execution. Always handle errors gracefully.",
+      "skills": ["python_repl", "file_read", "file_write"]
+    },
+    {
+      "role_id": "researcher",
+      "name": "Web Researcher",
+      "description": "Expert in finding information on the internet.",
+      "model": "gemini-2.0-flash", 
+      "system_prompt": "You are a web researcher. Use search tools to find accurate information. Cite your sources.",
+      "skills": ["web_search", "web_browse"]
+    }
+  ]
+}

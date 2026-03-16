@@ -8,6 +8,8 @@ from app.skills.registry import ToolRegistry, registry
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
 
+from app.core.roles import role_manager
+
 # Define the state of the graph
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], "messages"]
@@ -15,6 +17,7 @@ class AgentState(TypedDict):
     tool_calls: Optional[List[Dict[str, Any]]]
     user_id: Optional[str]
     session_id: Optional[str]
+    current_worker: Optional[str] # Track which worker is active
 
 class AgentGraph:
     """
@@ -35,6 +38,11 @@ class AgentGraph:
         # Add nodes
         self.workflow.add_node("supervisor", self.supervisor_node)
         self.workflow.add_node("tools", self.tools_node)
+        
+        # Add dynamic worker nodes
+        workers = role_manager.get_all_workers()
+        for worker in workers:
+            self.workflow.add_node(f"worker_{worker.role_id}", self.create_worker_node(worker))
 
         # Set entry point
         self.workflow.set_entry_point("supervisor")
@@ -45,15 +53,29 @@ class AgentGraph:
             self.should_continue,
             {
                 "continue": "tools",
-                "end": END
+                "end": END,
+                **{f"worker_{w.role_id}": f"worker_{w.role_id}" for w in workers}
             }
         )
+
+        # Add edges from workers back to supervisor (or tools if needed)
+        for worker in workers:
+            self.workflow.add_edge(f"worker_{worker.role_id}", "supervisor")
 
         # Add edge from tools back to supervisor
         self.workflow.add_edge("tools", "supervisor")
 
         # Compile the graph
         self.app = self.workflow.compile()
+    
+    def create_worker_node(self, worker_role):
+        """Factory for worker node functions."""
+        async def worker_func(state: AgentState) -> Dict[str, Any]:
+            # Similar to supervisor but scoped skills and prompt
+            # For simplicity in this iteration, workers just process and return to supervisor
+            # Real implementation would have specialized logic
+            return {"messages": [AIMessage(content=f"Worker {worker_role.name} processed request.")]}
+        return worker_func
 
     async def supervisor_node(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -73,12 +95,17 @@ class AgentGraph:
         semantic_context = memory.retrieve_context(last_message) if last_message else ""
         
         # 2. Add System Prompt with Context
-        system_prompt = f"""You are NaviBot, an intelligent assistant.
+        system_prompt = f"""You are NaviBot Supervisor, an intelligent orchestrator.
         
 Context from Memory:
 {semantic_context}
 
-Please assist the user based on the tools available.
+Available Workers:
+{json.dumps([w.dict() for w in role_manager.get_all_workers()], indent=2)}
+
+Analyze the user's request. 
+- If it requires a specialist (e.g. coding, research), call the worker by returning 'DELEGATE: <role_id>'.
+- If you can answer directly or use general tools, do so.
 """
         
         litellm_messages = [{"role": "system", "content": system_prompt}]
@@ -95,21 +122,30 @@ Please assist the user based on the tools available.
             tools=available_tools if available_tools else None
         )
         
-        # Extract response content and tool calls
-        content = response.choices[0].message.content
+        # Extract response content
+        content = response.choices[0].message.content or ""
         tool_calls = response.choices[0].message.tool_calls
 
         new_messages = []
-        if content:
-            new_messages.append(AIMessage(content=content))
+        next_step = "end"
         
-        # If tool calls are present, add them to state but don't execute yet
-        # The tools_node will handle execution
+        if tool_calls:
+            next_step = "tools"
+        elif content.startswith("DELEGATE:"):
+            role_id = content.replace("DELEGATE:", "").strip()
+            # Verify role exists
+            if role_manager.get_worker(role_id):
+                next_step = f"worker_{role_id}"
+                new_messages.append(AIMessage(content=f"Delegating to {role_id}..."))
+            else:
+                new_messages.append(AIMessage(content=f"Error: Worker {role_id} not found."))
+        elif content:
+            new_messages.append(AIMessage(content=content))
         
         return {
             "messages": new_messages,
             "tool_calls": tool_calls,
-            "next_step": "tools" if tool_calls else "end"
+            "next_step": next_step
         }
 
     async def tools_node(self, state: AgentState) -> Dict[str, Any]:
@@ -132,9 +168,10 @@ Please assist the user based on the tools available.
         return {"messages": results, "tool_calls": None}
 
     def should_continue(self, state: AgentState) -> Literal["continue", "end"]:
-        """Determine if the graph should continue to tools or end."""
-        if state.get("next_step") == "tools":
-            return "continue"
+        """Determine next node."""
+        step = state.get("next_step")
+        if step and (step == "tools" or step.startswith("worker_")):
+            return step
         return "end"
 
 # Initialize graph (singleton pattern or factory could be used)
