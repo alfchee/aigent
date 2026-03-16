@@ -8,12 +8,17 @@ from app.core.scheduler import SchedulerService
 import logging
 import json
 import asyncio
+import time
+import uuid
+from collections import defaultdict
+from typing import Dict, List
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("navibot")
 
 scheduler = SchedulerService()
+session_histories: Dict[str, List[Dict[str, str]]] = defaultdict(list)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,14 +53,74 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     try:
         while True:
             data = await websocket.receive_text()
-            # Handle incoming message
-            # For now, just echo or pass to agent (future)
             logger.info(f"Received message: {data} from session {session_id}")
-            
-            # TODO: Integrate with AgentGraph here
-            # graph.invoke(...)
-            
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                await manager.send_json(
+                    {
+                        "type": "error",
+                        "content": "Invalid JSON payload",
+                        "ts": int(time.time() * 1000),
+                    },
+                    session_id,
+                )
+                continue
+
+            msg_type = payload.get("type")
+
+            if msg_type == "ping":
+                await manager.send_json(
+                    {"type": "pong", "ts": payload.get("ts", int(time.time() * 1000))},
+                    session_id,
+                )
+                continue
+
+            if msg_type != "user_message":
+                await manager.send_json(
+                    {"type": "ack", "content": "Message received", "ts": int(time.time() * 1000)},
+                    session_id,
+                )
+                continue
+
+            text = (payload.get("text") or "").strip()
+            conversation_id = payload.get("conversationId") or session_id
+            if not text:
+                await manager.send_json(
+                    {
+                        "type": "error",
+                        "content": "Empty message",
+                        "conversationId": conversation_id,
+                        "ts": int(time.time() * 1000),
+                    },
+                    session_id,
+                )
+                continue
+
             await manager.send_json({"type": "ack", "content": "Message received"}, session_id)
+
+            history = session_histories[session_id]
+            history.append({"role": "user", "content": text})
+
+            try:
+                response = await default_llm.generate(messages=history)
+                assistant_text = response.choices[0].message.content or ""
+            except Exception as e:
+                logger.exception(f"Error generating assistant response for session {session_id}: {e}")
+                assistant_text = "Hubo un problema al generar la respuesta del agente."
+
+            history.append({"role": "assistant", "content": assistant_text})
+
+            await manager.send_json(
+                {
+                    "type": "assistant_message",
+                    "conversationId": conversation_id,
+                    "messageId": str(uuid.uuid4()),
+                    "text": assistant_text,
+                    "createdAt": int(time.time() * 1000),
+                },
+                session_id,
+            )
     except WebSocketDisconnect:
         manager.disconnect(websocket, session_id)
 

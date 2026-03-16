@@ -26,7 +26,7 @@ class LLMService:
     def __init__(self, default_config: Optional[ModelConfig] = None):
         self.default_config = default_config or ModelConfig(
             provider="gemini",
-            model_name="gemini-1.5-flash",
+            model_name="gemini-flash-lite-latest",
             temperature=0.7
         )
         self._setup_litellm()

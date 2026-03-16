@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --c-bg: 255 255 255;
+  --c-surface: 248 250 252;
+  --c-surface-2: 241 245 249;
+  --c-border: 226 232 240;
+  --c-text: 15 23 42;
+  --c-muted: 100 116 139;
+  --c-brand: 99 102 241;
+  --c-brand-2: 79 70 229;
+  --c-danger: 239 68 68;
+
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'Noto Sans',
+    Helvetica,
+    Arial,
+    sans-serif,
+    'Apple Color Emoji',
+    'Segoe UI Emoji';
+  line-height: 1.5;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.dark {
+  --c-bg: 2 6 23;
+  --c-surface: 15 23 42;
+  --c-surface-2: 30 41 59;
+  --c-border: 51 65 85;
+  --c-text: 241 245 249;
+  --c-muted: 148 163 184;
+  --c-brand: 129 140 248;
+  --c-brand-2: 99 102 241;
+  --c-danger: 248 113 113;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  background: rgb(var(--c-bg));
+  color: rgb(var(--c-text));
+}
+
+:focus-visible {
+  outline: none;
+}
