@@ -32,4 +32,10 @@ class MemoryController:
         return f"Relevant Context:\n{body}"
 
     def save_session_summary(self, session_id: str, summary: str) -> None:
-        self.episodic.save_summary(session_id, summary)
+        self.episodic.append_summary(session_id, summary)
+
+    def get_latest_summary(self, session_id: str) -> Optional[str]:
+        return self.episodic.get_latest_summary(session_id)
+
+    def get_summaries_since(self, session_id: str, since_ts: int, limit: int = 20) -> list[dict]:
+        return self.episodic.list_summaries(session_id=session_id, since_ts=since_ts, limit=limit)

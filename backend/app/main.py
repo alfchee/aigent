@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from app.core.llm import default_llm
 from app.skills.registry import registry
 from app.api.websockets import manager
@@ -7,6 +7,7 @@ from app.channels.telegram import telegram_bot
 from app.core.scheduler import SchedulerService
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
+from app.core.agent_graph import graph_app
 import logging
 import json
 import asyncio
@@ -33,6 +34,15 @@ def extract_python_code(message: str) -> str:
     if fenced:
         return fenced[0].strip()
     return ""
+
+
+def extract_role_hint(message: str) -> str:
+    stripped = message.strip()
+    if stripped.startswith("@"):
+        token = stripped.split(maxsplit=1)[0]
+        role = token.removeprefix("@").strip().lower()
+        return re.sub(r"[^a-z0-9_-]", "", role)
+    return "default"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -123,6 +133,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             memory.add_fact(text, path="facts/messages.md")
 
             code_to_run = extract_python_code(text)
+            role_hint = extract_role_hint(text)
             if code_to_run:
                 await manager.send_json(
                     {
@@ -136,6 +147,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     code=code_to_run,
                     timeout=15,
                     session_id=session_id,
+                    role_id=role_hint,
                 )
                 assistant_text = (
                     f"Resultado de ejecución:\n\nSTDOUT:\n{execution.stdout or '(vacío)'}\n\n"
@@ -150,11 +162,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     prompt_text = f"{semantic_context}\n\nUser input:\n{text}"
 
                 try:
-                    response = await default_llm.generate(messages=[*history[:-1], {"role": "user", "content": prompt_text}])
-                    assistant_text = response.choices[0].message.content or ""
+                    assistant_text = await graph_app.run_turn(
+                        user_text=prompt_text,
+                        user_id=session_id,
+                        session_id=session_id,
+                    )
                 except Exception as e:
-                    logger.exception(f"Error generating assistant response for session {session_id}: {e}")
-                    assistant_text = "Hubo un problema al generar la respuesta del agente."
+                    logger.exception("Error in AgentGraph runtime for session %s: %s", session_id, e)
+                    try:
+                        response = await default_llm.generate(
+                            messages=[*history[:-1], {"role": "user", "content": prompt_text}]
+                        )
+                        assistant_text = response.choices[0].message.content or ""
+                    except Exception as fallback_exc:
+                        logger.exception(
+                            "Fallback LLM error for session %s: %s",
+                            session_id,
+                            fallback_exc,
+                        )
+                        assistant_text = "Hubo un problema al generar la respuesta del agente."
 
             history.append({"role": "assistant", "content": assistant_text})
             if len(history) % 6 == 0:
@@ -182,3 +208,22 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/sandbox/metrics")
+async def sandbox_metrics():
+    return {"status": "ok", "metrics": default_sandbox.metrics_snapshot()}
+
+
+@app.get("/memory/{session_id}/summaries")
+async def memory_summaries(
+    session_id: str,
+    since_ts: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=20, ge=1, le=200),
+):
+    memory = session_memory.setdefault(session_id, MemoryController(user_id=session_id))
+    if since_ts is not None:
+        summaries = memory.get_summaries_since(session_id=session_id, since_ts=since_ts, limit=limit)
+    else:
+        summaries = memory.get_summaries_since(session_id=session_id, since_ts=0, limit=limit)
+    return {"status": "ok", "session_id": session_id, "count": len(summaries), "items": summaries}

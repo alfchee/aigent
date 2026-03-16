@@ -1,4 +1,5 @@
 import pytest
+import time
 from app.memory.semantic import SemanticMemory, SemanticMemoryConfig
 from app.memory.episodic import EpisodicMemory, EpisodicMemoryConfig
 from app.sandbox.e2b_sandbox import SecureSandbox, SandboxConfig
@@ -43,6 +44,19 @@ def test_episodic_memory_save_retrieve(tmp_path):
     
     assert retrieved == summary
 
+def test_episodic_memory_versioning_window(tmp_path):
+    db_file = tmp_path / "test_episodic_versions.db"
+    memory = EpisodicMemory(EpisodicMemoryConfig(db_path=str(db_file)))
+    session_id = "sess_window"
+    memory.append_summary(session_id, "summary v1")
+    time.sleep(1)
+    marker = int(time.time())
+    time.sleep(1)
+    memory.append_summary(session_id, "summary v2")
+    items = memory.list_summaries(session_id=session_id, since_ts=marker)
+    assert len(items) == 1
+    assert items[0]["summary"] == "summary v2"
+
 @pytest.mark.asyncio
 async def test_sandbox_execution_success(tmp_path):
     config = SandboxConfig(base_dir=str(tmp_path))
@@ -61,3 +75,28 @@ async def test_sandbox_policy_violation(tmp_path):
     result = await sandbox.execute_code("import os\nprint('Fail')", timeout=3, session_id="sess_deny")
     assert result.error == "PolicyViolation"
     assert "Blocked code pattern" in result.stderr
+
+@pytest.mark.asyncio
+async def test_sandbox_role_profile_timeout(tmp_path):
+    config = SandboxConfig(base_dir=str(tmp_path))
+    sandbox = SecureSandbox(config)
+    result = await sandbox.execute_code("import time\ntime.sleep(10)", timeout=30, session_id="sess_role", role_id="researcher")
+    assert result.error in {"Timeout", "ExitCode:-9", "ExitCode:137"}
+
+@pytest.mark.asyncio
+async def test_sandbox_role_allowlist_violation(tmp_path):
+    config = SandboxConfig(base_dir=str(tmp_path))
+    sandbox = SecureSandbox(config)
+    result = await sandbox.execute_code("import itertools\nprint('x')", timeout=3, session_id="sess_allow", role_id="researcher")
+    assert result.error == "PolicyViolation"
+    assert "no permitido" in result.stderr
+
+@pytest.mark.asyncio
+async def test_sandbox_metrics_snapshot(tmp_path):
+    config = SandboxConfig(base_dir=str(tmp_path))
+    sandbox = SecureSandbox(config)
+    await sandbox.execute_code("print('ok')", timeout=3, session_id="sess_metrics", role_id="default")
+    metrics = sandbox.metrics_snapshot()
+    assert "global" in metrics
+    assert metrics["global"]["total_runs"] >= 1
+    assert metrics["default"]["success_runs"] >= 1

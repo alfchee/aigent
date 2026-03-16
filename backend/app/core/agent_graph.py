@@ -1,8 +1,8 @@
-from typing import Annotated, Dict, List, Literal, Optional, Sequence, TypedDict, Union, Any
+from typing import Annotated, Dict, List, Optional, TypedDict, Any
 import json
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage
-from app.core.llm import LLMService, ModelConfig
+from app.core.llm import LLMService, ModelConfig, default_llm
 from app.skills.registry import ToolRegistry, registry
 
 from app.memory.controller import MemoryController
@@ -52,7 +52,7 @@ class AgentGraph:
             "supervisor",
             self.should_continue,
             {
-                "continue": "tools",
+                "tools": "tools",
                 "end": END,
                 **{f"worker_{w.role_id}": f"worker_{w.role_id}" for w in workers}
             }
@@ -71,10 +71,23 @@ class AgentGraph:
     def create_worker_node(self, worker_role):
         """Factory for worker node functions."""
         async def worker_func(state: AgentState) -> Dict[str, Any]:
-            # Similar to supervisor but scoped skills and prompt
-            # For simplicity in this iteration, workers just process and return to supervisor
-            # Real implementation would have specialized logic
-            return {"messages": [AIMessage(content=f"Worker {worker_role.name} processed request.")]}
+            messages = state["messages"]
+            worker_messages = [{"role": "system", "content": worker_role.system_prompt}]
+            for msg in messages:
+                role = "user" if isinstance(msg, HumanMessage) else "assistant"
+                worker_messages.append({"role": role, "content": msg.content})
+            worker_model = worker_role.model
+            worker_config = ModelConfig(
+                provider=self.llm.default_config.provider,
+                model_name=worker_model,
+                temperature=self.llm.default_config.temperature,
+                max_tokens=self.llm.default_config.max_tokens,
+                api_key=self.llm.default_config.api_key,
+                base_url=self.llm.default_config.base_url,
+            )
+            response = await self.llm.generate(messages=worker_messages, config=worker_config)
+            worker_text = response.choices[0].message.content or f"Worker {worker_role.name} has no output."
+            return {"messages": [AIMessage(content=worker_text)], "next_step": "end"}
         return worker_func
 
     async def supervisor_node(self, state: AgentState) -> Dict[str, Any]:
@@ -167,12 +180,27 @@ Analyze the user's request.
 
         return {"messages": results, "tool_calls": None}
 
-    def should_continue(self, state: AgentState) -> Literal["continue", "end"]:
+    def should_continue(self, state: AgentState) -> str:
         """Determine next node."""
         step = state.get("next_step")
         if step and (step == "tools" or step.startswith("worker_")):
             return step
         return "end"
 
-# Initialize graph (singleton pattern or factory could be used)
-# graph_app = AgentGraph(default_llm, registry)
+    async def run_turn(self, user_text: str, user_id: str, session_id: str) -> str:
+        initial_state: AgentState = {
+            "messages": [HumanMessage(content=user_text)],
+            "next_step": None,
+            "tool_calls": None,
+            "user_id": user_id,
+            "session_id": session_id,
+            "current_worker": None,
+        }
+        result = await self.app.ainvoke(initial_state)
+        out_messages = result.get("messages", [])
+        for msg in reversed(out_messages):
+            if isinstance(msg, AIMessage):
+                return msg.content
+        return "No se pudo generar una respuesta desde el orquestador."
+
+graph_app = AgentGraph(default_llm, registry)

@@ -23,31 +23,68 @@ class EpisodicMemory:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS session_summaries (
-                    session_id TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
                     summary TEXT NOT NULL,
                     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_session_summaries_session_updated
+                ON session_summaries(session_id, updated_at DESC)
+                """
+            )
             conn.commit()
 
     def save_summary(self, session_id: str, summary: str) -> None:
+        self.append_summary(session_id, summary)
+
+    def append_summary(self, session_id: str, summary: str) -> None:
         with sqlite3.connect(self.db_file) as conn:
             conn.execute(
                 """
                 INSERT INTO session_summaries(session_id, summary, updated_at)
                 VALUES (?, ?, strftime('%s','now'))
-                ON CONFLICT(session_id)
-                DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at
                 """,
                 (session_id, summary),
             )
             conn.commit()
 
     def get_summary(self, session_id: str) -> Optional[str]:
+        return self.get_latest_summary(session_id)
+
+    def get_latest_summary(self, session_id: str) -> Optional[str]:
         with sqlite3.connect(self.db_file) as conn:
             row = conn.execute(
-                "SELECT summary FROM session_summaries WHERE session_id = ?",
+                """
+                SELECT summary
+                FROM session_summaries
+                WHERE session_id = ?
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+                """,
                 (session_id,),
             ).fetchone()
         return row[0] if row else None
+
+    def list_summaries(self, session_id: str, since_ts: Optional[int] = None, limit: int = 20) -> list[dict]:
+        safe_limit = max(1, min(limit, 200))
+        query = """
+            SELECT id, session_id, summary, updated_at
+            FROM session_summaries
+            WHERE session_id = ?
+        """
+        params: list = [session_id]
+        if since_ts is not None:
+            query += " AND updated_at >= ?"
+            params.append(since_ts)
+        query += " ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params.append(safe_limit)
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [
+            {"id": row[0], "session_id": row[1], "summary": row[2], "updated_at": row[3]}
+            for row in rows
+        ]
