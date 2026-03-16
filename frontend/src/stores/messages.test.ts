@@ -25,4 +25,14 @@ describe('messages store', () => {
     })
     expect(store.conversations[0].title.toLowerCase()).toContain('hola')
   })
+
+  it('permite actualizar agente y carpeta de conversación', async () => {
+    const store = useMessagesStore()
+    const c = await store.createConversation()
+    await store.setConversationAgent(c.id, 'planner')
+    await store.setConversationFolder(c.id, 'Clientes')
+    const updated = store.conversations.find((x) => x.id === c.id)
+    expect(updated?.agentId).toBe('planner')
+    expect(updated?.folder).toBe('Clientes')
+  })
 })

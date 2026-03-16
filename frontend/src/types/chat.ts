@@ -9,6 +9,7 @@ export type Conversation = {
   updatedAt: number
   tags: string[]
   agentId?: string
+  folder?: string
   archived?: boolean
 }
 

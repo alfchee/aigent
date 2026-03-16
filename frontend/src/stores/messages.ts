@@ -29,6 +29,7 @@ function newConversation(): Conversation {
     updatedAt: now,
     tags: [],
     agentId: user.activeAgentId,
+    folder: 'General',
   }
 }
 
@@ -141,6 +142,18 @@ export const useMessagesStore = defineStore('messages', {
       const updated: Conversation = {
         ...this.conversations[idx],
         agentId: cleanAgentId,
+        updatedAt: Date.now(),
+      }
+      this.conversations.splice(idx, 1, updated)
+      await upsertConversation(updated)
+    },
+    async setConversationFolder(id: string, folder: string) {
+      const idx = this.conversations.findIndex((c) => c.id === id)
+      if (idx < 0) return
+      const cleanFolder = sanitizeText(folder).slice(0, 40).trim() || 'General'
+      const updated: Conversation = {
+        ...this.conversations[idx],
+        folder: cleanFolder,
         updatedAt: Date.now(),
       }
       this.conversations.splice(idx, 1, updated)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { Conversation } from '@/types/chat'
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
@@ -10,6 +10,7 @@ import {
   PanelLeftOpen,
   Settings,
   Tag,
+  FolderOpen,
 } from 'lucide-vue-next'
 import { cn } from '@/lib/utils'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -23,20 +24,65 @@ const emit = defineEmits<{
   (e: 'remove', id: string): void
   (e: 'setTags', id: string, tags: string[]): void
   (e: 'setAgent', id: string, agentId: string): void
+  (e: 'setFolder', id: string, folder: string): void
   (e: 'openSettings'): void
 }>()
 
 const prefs = usePreferencesStore()
 const q = ref('')
+const folderFilter = ref('all')
+const agentFilter = ref('all')
+const FILTERS_KEY = 'navibot:conversation-filters'
+
+function readFilters() {
+  try {
+    const raw = localStorage.getItem(FILTERS_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as { folder?: string; agent?: string }
+    folderFilter.value = parsed.folder || 'all'
+    agentFilter.value = parsed.agent || 'all'
+  } catch {
+    folderFilter.value = 'all'
+    agentFilter.value = 'all'
+  }
+}
+
+function persistFilters() {
+  localStorage.setItem(
+    FILTERS_KEY,
+    JSON.stringify({ folder: folderFilter.value, agent: agentFilter.value }),
+  )
+}
 
 const filtered = computed(() => {
   const s = q.value.trim().toLowerCase()
-  if (!s) return props.conversations
-  return props.conversations.filter((c) => {
+  const base = props.conversations.filter((c) => {
+    if (folderFilter.value !== 'all' && (c.folder ?? 'General') !== folderFilter.value) {
+      return false
+    }
+    if (agentFilter.value !== 'all' && (c.agentId ?? 'default') !== agentFilter.value) {
+      return false
+    }
+    return true
+  })
+  if (!s) return base
+  return base.filter((c) => {
+    if ((c.folder ?? 'General').toLowerCase().includes(s)) return true
+    if ((c.agentId ?? 'default').toLowerCase().includes(s)) return true
     if (c.title.toLowerCase().includes(s)) return true
     return c.tags.some((t) => t.toLowerCase().includes(s))
   })
 })
+
+const folderOptions = computed(() => {
+  const set = new Set<string>(['General'])
+  for (const c of props.conversations) set.add(c.folder ?? 'General')
+  return [...set]
+})
+
+watch([folderFilter, agentFilter], persistFilters)
+
+onMounted(readFilters)
 
 function rename(conv: Conversation) {
   const next = window.prompt('Renombrar conversación', conv.title)
@@ -53,6 +99,13 @@ function editTags(conv: Conversation) {
     .map((t) => t.trim())
     .filter(Boolean)
   emit('setTags', conv.id, tags)
+}
+
+function editFolder(conv: Conversation) {
+  const current = conv.folder ?? 'General'
+  const next = window.prompt('Carpeta', current)
+  if (next == null) return
+  emit('setFolder', conv.id, next.trim())
 }
 
 function remove(conv: Conversation) {
@@ -112,6 +165,29 @@ function editAgent(conv: Conversation) {
           aria-label="Buscar conversaciones"
         />
       </div>
+
+      <div class="mt-2 grid grid-cols-2 gap-2">
+        <select
+          v-model="folderFilter"
+          class="h-9 rounded-lg border border-border bg-bg px-2 text-xs outline-none"
+          aria-label="Filtrar por carpeta"
+        >
+          <option value="all">Carpeta: todas</option>
+          <option v-for="folder in folderOptions" :key="folder" :value="folder">
+            {{ folder }}
+          </option>
+        </select>
+        <select
+          v-model="agentFilter"
+          class="h-9 rounded-lg border border-border bg-bg px-2 text-xs outline-none"
+          aria-label="Filtrar por agente"
+        >
+          <option value="all">Agente: todos</option>
+          <option v-for="agent in AGENT_OPTIONS" :key="agent.id" :value="agent.id">
+            @{{ agent.id }}
+          </option>
+        </select>
+      </div>
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4">
@@ -136,6 +212,12 @@ function editAgent(conv: Conversation) {
               <div class="truncate text-sm font-medium">{{ c.title }}</div>
               <div class="mt-1 flex flex-wrap gap-1">
                 <span
+                  class="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-muted"
+                >
+                  <FolderOpen class="h-3 w-3" />
+                  {{ c.folder ?? 'General' }}
+                </span>
+                <span
                   class="inline-flex items-center rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[11px] text-brand"
                 >
                   @{{ findAgentById(c.agentId ?? 'default').id }}
@@ -153,6 +235,14 @@ function editAgent(conv: Conversation) {
             <div
               class="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100"
             >
+              <IconButton
+                aria-label="Cambiar carpeta"
+                size="sm"
+                variant="ghost"
+                @click.stop="editFolder(c)"
+              >
+                <FolderOpen class="h-4 w-4" />
+              </IconButton>
               <IconButton
                 aria-label="Cambiar agente"
                 size="sm"

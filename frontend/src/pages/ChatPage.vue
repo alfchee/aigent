@@ -60,6 +60,11 @@ async function onSend(text: string) {
   if (text.startsWith('/clear')) {
     return
   }
+  if (text.startsWith('/folder')) {
+    const folder = text.replace('/folder', '').trim()
+    if (folder) await messages.setConversationFolder(activeId.value, folder)
+    return
+  }
 
   let finalText = text
   const mentionMatch = finalText.match(/^@([a-zA-Z0-9_-]+)\s+/)
@@ -161,6 +166,7 @@ watch(
           @rename="messages.renameConversation"
           @set-tags="messages.setTags"
           @set-agent="messages.setConversationAgent"
+          @set-folder="messages.setConversationFolder"
           @remove="messages.removeConversation"
           @open-settings="openSettings"
         />
@@ -177,6 +183,11 @@ watch(
               {{ activeConv?.title ?? 'Chat' }}
             </div>
             <div class="mt-1 flex items-center gap-2 text-xs text-muted">
+              <span
+                class="inline-flex items-center rounded-full border border-border px-2 py-0.5"
+              >
+                {{ activeConv?.folder ?? 'General' }}
+              </span>
               <span
                 class="inline-flex items-center rounded-full border border-brand/30 px-2 py-0.5 text-brand"
               >

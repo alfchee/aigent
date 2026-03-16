@@ -11,3 +11,6 @@ Learn more about the recommended Project Setup and IDE Support in the [Vue Docs 
 - La zona central del chat usa `min-h-0 flex-1 overflow-hidden` para delegar scroll.
 - Solo `MessageList` aplica `overflow-y-auto` para scroll vertical de mensajes.
 - El sidebar aplica `min-h-0` y `overflow-y-auto` para evitar doble scrollbar global.
+- La organización usa carpeta por conversación (`folder`) y agente (`agentId`) persistidos.
+- El sidebar incluye filtros persistentes por carpeta y agente en localStorage.
+- El compositor soporta comando `/folder <nombre>` y prefijo `@agente` por conversación.

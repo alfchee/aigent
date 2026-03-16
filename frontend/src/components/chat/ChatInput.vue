@@ -24,6 +24,7 @@ const suggestions = computed(() => {
     return [
       { key: '/new', label: 'Nueva conversación' },
       { key: '/export', label: 'Exportar conversación' },
+      { key: '/folder', label: 'Mover a carpeta' },
       { key: '/clear', label: 'Limpiar borrador' },
     ]
   }

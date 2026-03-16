@@ -42,4 +42,27 @@ describe('Chat', () => {
       })
     }
   })
+
+  it('filtra conversaciones por carpeta y agente', () => {
+    cy.visit('/')
+    cy.contains('Nueva').click()
+    cy.contains('Nueva').click()
+
+    cy.window().then((win) => {
+      cy.stub(win, 'prompt').callsFake((label: string) => {
+        if (label.includes('Carpeta')) return 'Clientes'
+        if (label.includes('Agente')) return 'planner'
+        return null
+      })
+    })
+
+    cy.get('button[aria-label="Cambiar carpeta"]').first().click({ force: true })
+    cy.get('button[aria-label="Cambiar agente"]').first().click({ force: true })
+
+    cy.get('select[aria-label="Filtrar por carpeta"]').select('Clientes')
+    cy.contains('Clientes').should('exist')
+
+    cy.get('select[aria-label="Filtrar por agente"]').select('planner')
+    cy.contains('@planner').should('exist')
+  })
 })
