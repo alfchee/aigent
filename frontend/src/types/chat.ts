@@ -8,6 +8,7 @@ export type Conversation = {
   createdAt: number
   updatedAt: number
   tags: string[]
+  agentId?: string
   archived?: boolean
 }
 
@@ -29,6 +30,7 @@ export type OutboundWsEnvelope =
       messageId: string
       text: string
       createdAt: number
+      agentId?: string
       e2ee?: boolean
     }
   | {

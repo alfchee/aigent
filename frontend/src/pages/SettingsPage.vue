@@ -9,6 +9,7 @@ import { useUserConfigStore } from '@/stores/userConfig'
 import { useWebSocketStore } from '@/stores/websocket'
 import { downloadText } from '@/services/exportChat'
 import { listConversations } from '@/services/storage'
+import { AGENT_OPTIONS } from '@/config/agents'
 
 const router = useRouter()
 const prefs = usePreferencesStore()
@@ -136,6 +137,21 @@ onMounted(() => {
             label="Cifrado end-to-end (experimental)"
             @update:model-value="setE2ee"
           />
+
+          <div class="grid gap-2">
+            <div class="text-sm text-muted">Agente predeterminado</div>
+            <div class="flex flex-wrap gap-2">
+              <Button
+                v-for="agent in AGENT_OPTIONS"
+                :key="agent.id"
+                :variant="user.activeAgentId === agent.id ? 'primary' : 'secondary'"
+                size="sm"
+                @click="user.setActiveAgentId(agent.id)"
+              >
+                @{{ agent.id }}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 

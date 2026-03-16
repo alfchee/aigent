@@ -11,6 +11,7 @@ import { useMessagesStore } from '@/stores/messages'
 import { useWebSocketStore } from '@/stores/websocket'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useUserConfigStore } from '@/stores/userConfig'
+import { AGENT_OPTIONS, findAgentById } from '@/config/agents'
 import {
   downloadText,
   exportConversationAsJson,
@@ -60,11 +61,24 @@ async function onSend(text: string) {
     return
   }
 
+  let finalText = text
+  const mentionMatch = finalText.match(/^@([a-zA-Z0-9_-]+)\s+/)
+  if (mentionMatch) {
+    const candidate = mentionMatch[1]
+    const exists = AGENT_OPTIONS.some((a) => a.id === candidate)
+    if (exists) {
+      await messages.setConversationAgent(activeId.value, candidate)
+      user.setActiveAgentId(candidate)
+      finalText = finalText.slice(mentionMatch[0].length).trim()
+      if (!finalText) return
+    }
+  }
+
   messages.setAssistantTyping(activeId.value, true)
   const msg = await messages.addMessage({
     conversationId: activeId.value,
     role: 'user',
-    text,
+    text: finalText,
     status: 'sending',
   })
 
@@ -75,6 +89,7 @@ async function onSend(text: string) {
     messageId: msg.id,
     text: msg.text,
     createdAt: msg.createdAt,
+    agentId: activeConv.value?.agentId ?? user.activeAgentId,
     e2ee: prefs.e2eeEnabled,
   }
 
@@ -145,6 +160,7 @@ watch(
           @select="messages.setActiveConversation"
           @rename="messages.renameConversation"
           @set-tags="messages.setTags"
+          @set-agent="messages.setConversationAgent"
           @remove="messages.removeConversation"
           @open-settings="openSettings"
         />
@@ -161,6 +177,11 @@ watch(
               {{ activeConv?.title ?? 'Chat' }}
             </div>
             <div class="mt-1 flex items-center gap-2 text-xs text-muted">
+              <span
+                class="inline-flex items-center rounded-full border border-brand/30 px-2 py-0.5 text-brand"
+              >
+                @{{ findAgentById(activeConv?.agentId ?? user.activeAgentId).id }}
+              </span>
               <component :is="statusIcon" class="h-3.5 w-3.5" />
               <span>{{ statusLabel }}</span>
               <span v-if="ws.latencyMs != null">· {{ ws.latencyMs }}ms</span>

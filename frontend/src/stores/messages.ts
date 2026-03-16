@@ -8,6 +8,7 @@ import {
   deleteConversation as dbDeleteConversation,
 } from '@/services/storage'
 import { sanitizeText } from '@/services/sanitize'
+import { useUserConfigStore } from '@/stores/userConfig'
 
 type MessagesState = {
   conversations: Conversation[]
@@ -19,6 +20,7 @@ type MessagesState = {
 }
 
 function newConversation(): Conversation {
+  const user = useUserConfigStore()
   const now = Date.now()
   return {
     id: crypto.randomUUID(),
@@ -26,6 +28,7 @@ function newConversation(): Conversation {
     createdAt: now,
     updatedAt: now,
     tags: [],
+    agentId: user.activeAgentId,
   }
 }
 
@@ -126,6 +129,18 @@ export const useMessagesStore = defineStore('messages', {
       const updated: Conversation = {
         ...this.conversations[idx],
         tags: cleanTags,
+        updatedAt: Date.now(),
+      }
+      this.conversations.splice(idx, 1, updated)
+      await upsertConversation(updated)
+    },
+    async setConversationAgent(id: string, agentId: string) {
+      const idx = this.conversations.findIndex((c) => c.id === id)
+      if (idx < 0) return
+      const cleanAgentId = sanitizeText(agentId).slice(0, 40).trim() || 'default'
+      const updated: Conversation = {
+        ...this.conversations[idx],
+        agentId: cleanAgentId,
         updatedAt: Date.now(),
       }
       this.conversations.splice(idx, 1, updated)

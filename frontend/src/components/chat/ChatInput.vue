@@ -5,6 +5,7 @@ import IconButton from '@/components/ui/IconButton.vue'
 import { Send, CornerDownLeft, Wand2 } from 'lucide-vue-next'
 import { usePreferencesStore } from '@/stores/preferences'
 import { cn } from '@/lib/utils'
+import { AGENT_OPTIONS } from '@/config/agents'
 
 const emit = defineEmits<{ (e: 'send', text: string): void }>()
 const prefs = usePreferencesStore()
@@ -27,10 +28,7 @@ const suggestions = computed(() => {
     ]
   }
   if (t.startsWith('@')) {
-    return [
-      { key: '@default', label: 'Agente por defecto' },
-      { key: '@planner', label: 'Agente planificador' },
-    ]
+    return AGENT_OPTIONS.map((a) => ({ key: `@${a.id}`, label: a.description }))
   }
   return []
 })

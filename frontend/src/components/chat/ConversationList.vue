@@ -13,6 +13,7 @@ import {
 } from 'lucide-vue-next'
 import { cn } from '@/lib/utils'
 import { usePreferencesStore } from '@/stores/preferences'
+import { AGENT_OPTIONS, findAgentById } from '@/config/agents'
 
 const props = defineProps<{ conversations: Conversation[]; activeId: string | null }>()
 const emit = defineEmits<{
@@ -21,6 +22,7 @@ const emit = defineEmits<{
   (e: 'rename', id: string, title: string): void
   (e: 'remove', id: string): void
   (e: 'setTags', id: string, tags: string[]): void
+  (e: 'setAgent', id: string, agentId: string): void
   (e: 'openSettings'): void
 }>()
 
@@ -57,6 +59,14 @@ function remove(conv: Conversation) {
   const ok = window.confirm('¿Borrar conversación? Esta acción no se puede deshacer.')
   if (!ok) return
   emit('remove', conv.id)
+}
+
+function editAgent(conv: Conversation) {
+  const current = conv.agentId ?? 'default'
+  const options = AGENT_OPTIONS.map((a) => `${a.id}: ${a.label}`).join('\n')
+  const next = window.prompt(`Agente para esta conversación\n${options}`, current)
+  if (next == null) return
+  emit('setAgent', conv.id, next.trim())
 }
 </script>
 
@@ -126,6 +136,11 @@ function remove(conv: Conversation) {
               <div class="truncate text-sm font-medium">{{ c.title }}</div>
               <div class="mt-1 flex flex-wrap gap-1">
                 <span
+                  class="inline-flex items-center rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[11px] text-brand"
+                >
+                  @{{ findAgentById(c.agentId ?? 'default').id }}
+                </span>
+                <span
                   v-for="t in c.tags"
                   :key="t"
                   class="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-muted"
@@ -138,6 +153,14 @@ function remove(conv: Conversation) {
             <div
               class="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100"
             >
+              <IconButton
+                aria-label="Cambiar agente"
+                size="sm"
+                variant="ghost"
+                @click.stop="editAgent(c)"
+              >
+                <span class="text-xs text-muted">@</span>
+              </IconButton>
               <IconButton
                 aria-label="Editar tags"
                 size="sm"
