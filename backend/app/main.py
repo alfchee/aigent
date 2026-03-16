@@ -5,6 +5,8 @@ from app.skills.registry import registry
 from app.api.websockets import manager
 from app.channels.telegram import telegram_bot
 from app.core.scheduler import SchedulerService
+from app.memory.controller import MemoryController
+from app.sandbox.e2b_sandbox import default_sandbox
 import logging
 import json
 import asyncio
@@ -12,6 +14,7 @@ import time
 import uuid
 from collections import defaultdict
 from typing import Dict, List
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +22,17 @@ logger = logging.getLogger("navibot")
 
 scheduler = SchedulerService()
 session_histories: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+session_memory: Dict[str, MemoryController] = {}
+
+
+def extract_python_code(message: str) -> str:
+    stripped = message.strip()
+    if stripped.startswith("/python"):
+        return stripped.replace("/python", "", 1).strip()
+    fenced = re.findall(r"```python(.*?)```", stripped, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced[0].strip()
+    return ""
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,18 +112,55 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 continue
 
             await manager.send_json({"type": "ack", "content": "Message received"}, session_id)
+            await manager.send_json(
+                {"type": "status", "state": "thinking", "action": "Analyzing", "details": "Processing user request"},
+                session_id,
+            )
 
             history = session_histories[session_id]
             history.append({"role": "user", "content": text})
+            memory = session_memory.setdefault(session_id, MemoryController(user_id=session_id))
+            memory.add_fact(text, path="facts/messages.md")
 
-            try:
-                response = await default_llm.generate(messages=history)
-                assistant_text = response.choices[0].message.content or ""
-            except Exception as e:
-                logger.exception(f"Error generating assistant response for session {session_id}: {e}")
-                assistant_text = "Hubo un problema al generar la respuesta del agente."
+            code_to_run = extract_python_code(text)
+            if code_to_run:
+                await manager.send_json(
+                    {
+                        "type": "tool_call",
+                        "tool_name": "python_sandbox",
+                        "details": "Executing validated code",
+                    },
+                    session_id,
+                )
+                execution = await default_sandbox.execute_code(
+                    code=code_to_run,
+                    timeout=15,
+                    session_id=session_id,
+                )
+                assistant_text = (
+                    f"Resultado de ejecución:\n\nSTDOUT:\n{execution.stdout or '(vacío)'}\n\n"
+                    f"STDERR:\n{execution.stderr or '(vacío)'}"
+                )
+                if execution.error:
+                    assistant_text += f"\n\nERROR: {execution.error}"
+            else:
+                semantic_context = memory.retrieve_context(text)
+                prompt_text = text
+                if semantic_context:
+                    prompt_text = f"{semantic_context}\n\nUser input:\n{text}"
+
+                try:
+                    response = await default_llm.generate(messages=[*history[:-1], {"role": "user", "content": prompt_text}])
+                    assistant_text = response.choices[0].message.content or ""
+                except Exception as e:
+                    logger.exception(f"Error generating assistant response for session {session_id}: {e}")
+                    assistant_text = "Hubo un problema al generar la respuesta del agente."
 
             history.append({"role": "assistant", "content": assistant_text})
+            if len(history) % 6 == 0:
+                chunk = history[-6:]
+                summary = "\n".join(f"{item['role']}: {item['content']}" for item in chunk)
+                memory.save_session_summary(session_id, summary)
 
             await manager.send_json(
                 {

@@ -1,36 +1,20 @@
 import pytest
-import os
-from unittest.mock import MagicMock, patch
 from app.memory.semantic import SemanticMemory, SemanticMemoryConfig
 from app.memory.episodic import EpisodicMemory, EpisodicMemoryConfig
 from app.sandbox.e2b_sandbox import SecureSandbox, SandboxConfig
 
-# Mock Mem0 and Qdrant to avoid actual connections during unit tests
-@pytest.fixture
-def mock_mem0():
-    # Use patch.object to patch the actual instance method if possible, 
-    # but since we are creating a new instance inside __init__, 
-    # we need to patch the class `Memory.from_config` which returns the mock
-    with patch("app.memory.semantic.Memory.from_config") as MockFromConfig:
-        mock_instance = MagicMock()
-        MockFromConfig.return_value = mock_instance
-        
-        mock_instance.add.return_value = {"id": "test_id"}
-        mock_instance.search.return_value = [{"text": "test memory"}]
-        mock_instance.get_all.return_value = [{"text": "test memory"}]
-        
-        yield mock_instance
 
-def test_semantic_memory_initialization(mock_mem0):
-    config = SemanticMemoryConfig(user_id="test_user", qdrant_url="http://localhost:6333")
-    memory = SemanticMemory(config)
-    assert memory.memory is not None
-    
-def test_semantic_memory_add(mock_mem0):
+def test_semantic_memory_fallback_search(monkeypatch):
+    def fail_openviking(*args, **kwargs):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr("app.memory.semantic.OpenVikingMemoryController", fail_openviking)
     config = SemanticMemoryConfig(user_id="test_user")
     memory = SemanticMemory(config)
     memory.add("The user likes Python.")
-    mock_mem0.add.assert_called()
+    memory.add("The user likes Rust.")
+    results = memory.search("python")
+    assert any("Python" in item for item in results)
 
 def test_episodic_memory_db_creation(tmp_path):
     db_file = tmp_path / "test_episodic.db"
@@ -39,7 +23,6 @@ def test_episodic_memory_db_creation(tmp_path):
     
     assert db_file.exists()
     
-    # Check table existence
     import sqlite3
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
@@ -60,30 +43,21 @@ def test_episodic_memory_save_retrieve(tmp_path):
     
     assert retrieved == summary
 
-# Mock E2B Sandbox
-@pytest.fixture
-def mock_e2b_sandbox():
-    with patch("app.sandbox.e2b_sandbox.Sandbox") as MockSandbox:
-        mock_instance = MockSandbox.return_value
-        mock_instance.run_code.return_value = MagicMock(stdout="Hello World", stderr="", error=None)
-        yield mock_instance
-
 @pytest.mark.asyncio
-async def test_sandbox_execution(mock_e2b_sandbox):
-    config = SandboxConfig(api_key="fake_key")
+async def test_sandbox_execution_success(tmp_path):
+    config = SandboxConfig(base_dir=str(tmp_path))
     sandbox = SecureSandbox(config)
-    
-    result = await sandbox.execute_code("print('Hello World')")
-    
-    assert result.stdout == "Hello World"
+
+    result = await sandbox.execute_code("print('Hello World')", timeout=3, session_id="sess_ok")
+
+    assert result.stdout.strip() == "Hello World"
     assert result.error is None
-    mock_e2b_sandbox.run_code.assert_called_with("print('Hello World')")
+    assert result.stderr == ""
 
 @pytest.mark.asyncio
-async def test_sandbox_missing_key():
-    config = SandboxConfig(api_key=None)
+async def test_sandbox_policy_violation(tmp_path):
+    config = SandboxConfig(base_dir=str(tmp_path))
     sandbox = SecureSandbox(config)
-    
-    result = await sandbox.execute_code("print('Fail')")
-    
-    assert "API Key missing" in result.stderr
+    result = await sandbox.execute_code("import os\nprint('Fail')", timeout=3, session_id="sess_deny")
+    assert result.error == "PolicyViolation"
+    assert "Blocked code pattern" in result.stderr

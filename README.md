@@ -8,7 +8,7 @@ NaviBot 2.0 is a next-generation agentic ecosystem orchestrated by LangGraph, de
 *   **LLM Abstraction**: [LiteLM](https://docs.litellm.ai/) (Support for Gemini, OpenAI, Anthropic, Local)
 *   **Memory**: OpinViking Layered Memory (Working, Episodic, Semantic)
 *   **Tools**: Unified Tool Registry (MCP + Local Skills) with Pydantic validation
-*   **Sandbox**: Secure Code Execution (E2B / Python-in-Rust)
+*   **Sandboxing/Guardrails**: Secure Code Execution (Pydantic + Monty)
 *   **Interface**: WebSockets + Telegram
 
 ## Directory Structure
@@ -63,7 +63,7 @@ backend/
 ## Roadmap
 
 *   [x] **Phase 1: Foundation** (LiteLM, LangGraph, Tool Registry)
-*   [ ] **Phase 2: Memory & Sandbox** (OpinViking, E2B)
+*   [ ] **Phase 2: Memory & Sandboxing** (OpinViking, Pydantic/Monty)
 *   [ ] **Phase 3: Roles & UI** (WebSockets, Telegram)
 
 ## License
