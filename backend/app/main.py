@@ -8,6 +8,7 @@ from app.core.scheduler import SchedulerService
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
 from app.core.agent_graph import graph_app
+from app.core.roles import role_manager
 import logging
 import json
 import asyncio
@@ -227,3 +228,26 @@ async def memory_summaries(
     else:
         summaries = memory.get_summaries_since(session_id=session_id, since_ts=0, limit=limit)
     return {"status": "ok", "session_id": session_id, "count": len(summaries), "items": summaries}
+
+
+@app.get("/roles")
+async def get_roles():
+    snapshot = role_manager.snapshot()
+    return {
+        "status": "ok",
+        "config_path": snapshot.config_path,
+        "updated_at": snapshot.updated_at,
+        "supervisor": snapshot.supervisor.model_dump(),
+        "workers": [worker.model_dump() for worker in snapshot.workers],
+    }
+
+
+@app.post("/roles/reload")
+async def reload_roles():
+    snapshot = role_manager.reload()
+    return {
+        "status": "ok",
+        "config_path": snapshot.config_path,
+        "updated_at": snapshot.updated_at,
+        "workers_count": len(snapshot.workers),
+    }

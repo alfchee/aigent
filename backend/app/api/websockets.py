@@ -1,18 +1,11 @@
 import logging
-import asyncio
-from typing import Dict, Any, Optional
-from fastapi import WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from typing import Any, Dict, List
+from fastapi import WebSocket
 
 logger = logging.getLogger("navibot.api.websockets")
 
 class ConnectionManager:
-    """
-    Manages active WebSocket connections.
-    Supports broadcasting and targeted messaging.
-    """
     def __init__(self):
-        # Map session_id -> List of WebSockets
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, session_id: str):
@@ -32,22 +25,36 @@ class ConnectionManager:
                 pass
         logger.info(f"WebSocket disconnected: {session_id}")
 
+    def _session_connections(self, session_id: str) -> List[WebSocket]:
+        return list(self.active_connections.get(session_id, []))
+
+    def _cleanup_stale(self, session_id: str, stale: List[WebSocket]) -> None:
+        if not stale:
+            return
+        for conn in stale:
+            self.disconnect(conn, session_id)
+
     async def send_message(self, message: str, session_id: str):
-        """Send text message to all clients in a session."""
-        if session_id in self.active_connections:
-            for connection in self.active_connections[session_id]:
-                try:
-                    await connection.send_text(message)
-                except Exception as e:
-                    logger.error(f"Error sending message: {e}")
+        stale: List[WebSocket] = []
+        for connection in self._session_connections(session_id):
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                logger.error("Error sending message: %s", e)
+                stale.append(connection)
+        self._cleanup_stale(session_id, stale)
 
     async def send_json(self, data: Dict[str, Any], session_id: str):
-        """Send JSON payload to all clients in a session."""
-        if session_id in self.active_connections:
-            for connection in self.active_connections[session_id]:
-                try:
-                    await connection.send_json(data)
-                except Exception as e:
-                    logger.error(f"Error sending JSON: {e}")
+        stale: List[WebSocket] = []
+        for connection in self._session_connections(session_id):
+            try:
+                await connection.send_json(data)
+            except Exception as e:
+                logger.error("Error sending JSON: %s", e)
+                stale.append(connection)
+        self._cleanup_stale(session_id, stale)
+
+    def active_count(self, session_id: str) -> int:
+        return len(self.active_connections.get(session_id, []))
 
 manager = ConnectionManager()
