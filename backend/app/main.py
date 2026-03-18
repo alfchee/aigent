@@ -9,6 +9,9 @@ from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
 from app.core.agent_graph import graph_app
 from app.core.roles import role_manager
+from app.core.chat_persistence import ChatPersistence
+from app.api.telegram_webhook import router as telegram_webhook_router
+from app.core.paths import repo_root, workspace_db_dir, workspace_config_dir
 import logging
 import json
 import asyncio
@@ -17,12 +20,15 @@ import uuid
 from collections import defaultdict
 from typing import Dict, List
 import re
+import os
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("navibot")
 
 scheduler = SchedulerService()
+chat_persistence = ChatPersistence()
 session_histories: Dict[str, List[Dict[str, str]]] = defaultdict(list)
 session_memory: Dict[str, MemoryController] = {}
 
@@ -45,10 +51,45 @@ def extract_role_hint(message: str) -> str:
         return re.sub(r"[^a-z0-9_-]", "", role)
     return "default"
 
+
+def resolve_openviking_workspace() -> str:
+    conf_path = os.getenv("OPENVIKING_CONFIG_FILE")
+    if conf_path:
+        conf_file = Path(conf_path).expanduser()
+    else:
+        conf_file = workspace_config_dir() / "ov.conf"
+    if not conf_file.exists():
+        return "not_configured"
+    try:
+        data = json.loads(conf_file.read_text(encoding="utf-8"))
+    except Exception:
+        return f"invalid_config:{conf_file.as_posix()}"
+    storage = data.get("storage", {})
+    workspace = storage.get("workspace")
+    if not workspace:
+        return f"default_storage:{conf_file.as_posix()}"
+    return Path(workspace).expanduser().as_posix()
+
+
+def log_startup_paths() -> None:
+    scheduler_db = (workspace_db_dir() / "scheduler.db").as_posix()
+    episodic_db = (workspace_db_dir() / "episodic_memory.db").as_posix()
+    chat_db = (workspace_db_dir() / "chat_messages.db").as_posix()
+    roles_file = (workspace_config_dir() / "roles.json").as_posix()
+    ov_config_file = os.getenv("OPENVIKING_CONFIG_FILE") or (workspace_config_dir() / "ov.conf").as_posix()
+    logger.info("Startup paths -> repo_root=%s", repo_root().as_posix())
+    logger.info("Startup paths -> scheduler_db=%s", scheduler_db)
+    logger.info("Startup paths -> episodic_db=%s", episodic_db)
+    logger.info("Startup paths -> chat_db=%s", chat_db)
+    logger.info("Startup paths -> roles_config=%s", roles_file)
+    logger.info("Startup paths -> openviking_config=%s", ov_config_file)
+    logger.info("Startup paths -> openviking_workspace=%s", resolve_openviking_workspace())
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
     logger.info("NaviBot 2.0 (Phoenix) is starting up...")
+    log_startup_paths()
     
     # Start Scheduler
     scheduler.start()
@@ -71,6 +112,7 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
+app.include_router(telegram_webhook_router)
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -110,6 +152,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
             text = (payload.get("text") or "").strip()
             conversation_id = payload.get("conversationId") or session_id
+            user_message_id = payload.get("messageId") or str(uuid.uuid4())
+            user_created_at = payload.get("createdAt")
+            if not isinstance(user_created_at, int):
+                user_created_at = int(time.time() * 1000)
             if not text:
                 await manager.send_json(
                     {
@@ -130,6 +176,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
             history = session_histories[session_id]
             history.append({"role": "user", "content": text})
+            chat_persistence.save_message(
+                message_id=user_message_id,
+                session_id=session_id,
+                conversation_id=conversation_id,
+                role="user",
+                text=text,
+                created_at=user_created_at,
+                meta={"source": "websocket"},
+            )
             memory = session_memory.setdefault(session_id, MemoryController(user_id=session_id))
             memory.add_fact(text, path="facts/messages.md")
 
@@ -189,13 +244,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 summary = "\n".join(f"{item['role']}: {item['content']}" for item in chunk)
                 memory.save_session_summary(session_id, summary)
 
+            assistant_message_id = str(uuid.uuid4())
+            assistant_created_at = int(time.time() * 1000)
+            chat_persistence.save_message(
+                message_id=assistant_message_id,
+                session_id=session_id,
+                conversation_id=conversation_id,
+                role="assistant",
+                text=assistant_text,
+                created_at=assistant_created_at,
+                meta={"source": "websocket"},
+            )
+
             await manager.send_json(
                 {
                     "type": "assistant_message",
                     "conversationId": conversation_id,
-                    "messageId": str(uuid.uuid4()),
+                    "messageId": assistant_message_id,
                     "text": assistant_text,
-                    "createdAt": int(time.time() * 1000),
+                    "createdAt": assistant_created_at,
                 },
                 session_id,
             )
@@ -228,6 +295,22 @@ async def memory_summaries(
     else:
         summaries = memory.get_summaries_since(session_id=session_id, since_ts=0, limit=limit)
     return {"status": "ok", "session_id": session_id, "count": len(summaries), "items": summaries}
+
+
+@app.get("/chat/{session_id}/messages")
+async def chat_messages(
+    session_id: str,
+    conversation_id: str | None = Query(default=None, alias="conversationId"),
+    before_created_at: int | None = Query(default=None, ge=0, alias="beforeCreatedAt"),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    items = chat_persistence.list_messages(
+        session_id=session_id,
+        conversation_id=conversation_id,
+        before_created_at=before_created_at,
+        limit=limit,
+    )
+    return {"status": "ok", "session_id": session_id, "count": len(items), "items": items}
 
 
 @app.get("/roles")

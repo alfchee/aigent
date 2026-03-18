@@ -2,7 +2,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
-from datetime import datetime
+from app.core.paths import workspace_db_dir
 
 logger = logging.getLogger("navibot.core.scheduler")
 
@@ -11,7 +11,11 @@ class SchedulerService:
     Task Scheduler for Cron Jobs (e.g., recurring summaries, cleanup).
     Persists jobs to SQLite database.
     """
-    def __init__(self, db_url: str = "sqlite:///workspace/db/scheduler.db"):
+    def __init__(self, db_url: str | None = None):
+        if db_url is None:
+            db_path = workspace_db_dir() / "scheduler.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            db_url = f"sqlite:///{db_path.as_posix()}"
         jobstores = {
             'default': SQLAlchemyJobStore(url=db_url)
         }

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from app.core.paths import workspace_db_dir
 from app.memory.episodic import EpisodicMemory, EpisodicMemoryConfig
 from app.memory.semantic import SemanticMemory, SemanticMemoryConfig
 
@@ -10,7 +11,7 @@ from app.memory.semantic import SemanticMemory, SemanticMemoryConfig
 @dataclass
 class MemoryControllerConfig:
     user_id: str
-    episodic_db_path: str = "workspace/db/episodic_memory.db"
+    episodic_db_path: str = str((workspace_db_dir() / "episodic_memory.db").as_posix())
 
 
 class MemoryController:

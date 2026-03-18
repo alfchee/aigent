@@ -7,6 +7,7 @@ from app.core.agent_graph import graph_app
 from app.core.llm import default_llm
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
+from app.core.content_processor import content_processor
 
 logger = logging.getLogger("navibot.channels.telegram")
 
@@ -19,6 +20,7 @@ class TelegramBot:
             return
 
         self.app = ApplicationBuilder().token(self.token).build()
+        self._initialized = False
         self._register_handlers()
 
     def _register_handlers(self):
@@ -91,10 +93,37 @@ class TelegramBot:
             os.makedirs(session_path, exist_ok=True)
             target_path = os.path.join(session_path, file_name)
             await file.download_to_drive(custom_path=target_path)
-            MemoryController(user_id=str(chat_id)).add_fact(
+            memory = MemoryController(user_id=str(chat_id))
+            memory.add_fact(
                 f"Archivo recibido: {file_name} en {target_path}",
                 path="facts/telegram_files.md",
             )
+            extracted_text, processing_error = await content_processor.extract_text(target_path)
+            if extracted_text:
+                memory.add_fact(
+                    f"Contenido extraído ({file_name}):\n{extracted_text[:6000]}",
+                    path="facts/telegram_file_contents.md",
+                )
+                prompt = (
+                    "Resume en español el siguiente contenido extraído de un archivo enviado por Telegram:\n\n"
+                    f"{extracted_text[:10000]}"
+                )
+                try:
+                    summary = await graph_app.run_turn(
+                        user_text=prompt,
+                        user_id=str(chat_id),
+                        session_id=str(chat_id),
+                    )
+                except Exception:
+                    fallback = await default_llm.generate(messages=[{"role": "user", "content": prompt}])
+                    summary = fallback.choices[0].message.content or "No fue posible resumir el contenido."
+                await update.message.reply_text(f"Archivo procesado: {file_name}\n\nResumen:\n{summary[:3000]}")
+                return
+            if processing_error:
+                await update.message.reply_text(
+                    f"Archivo guardado: {file_name}. No se pudo extraer contenido ({processing_error})."
+                )
+                return
             await update.message.reply_text(f"Archivo recibido y guardado: {file_name}")
         else:
             await update.message.reply_text("Could not process file.")
@@ -106,15 +135,28 @@ class TelegramBot:
             self.app.run_polling()
 
     async def initialize(self):
-        """Initialize for webhook mode (prod) or manual polling control."""
         if self.app:
+            if self._initialized:
+                return
             await self.app.initialize()
             await self.app.start()
+            self._initialized = True
+
+    async def process_webhook_update(self, payload: dict) -> bool:
+        if not self.app:
+            return False
+        await self.initialize()
+        update = Update.de_json(payload, self.app.bot)
+        await self.app.process_update(update)
+        return True
 
     async def shutdown(self):
         if self.app:
+            if not self._initialized:
+                return
             await self.app.stop()
             await self.app.shutdown()
+            self._initialized = False
 
 # Singleton
 telegram_bot = TelegramBot()

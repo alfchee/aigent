@@ -4,6 +4,7 @@
 .env
 .env.local
 .env.*.local
+data/
 
 # Python (Backend)
 __pycache__/
@@ -30,19 +31,13 @@ wheels/
 .venv/
 venv/
 ENV/
-scheduler.db
-navibot.db
-backend/workspace_data/
+backend/ov.conf
 backend/app/core/credentials/
 backend/navi_memory_db/
-navi_memory_db/
 backend/logs/
 backend/app/settings/active_mcp.json
 backend/app/settings/scheduler_logs.jsonl
-backend/navi_memory_qdrant/
-backend/navi_memory_db/
-navi_memory_qdrant/
-workspace_data/
+workspace/
 logs/
 *.har
 docs/fetch_debugging.md

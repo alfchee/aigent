@@ -4,6 +4,7 @@ import os
 from threading import Lock
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
+from app.core.paths import workspace_config_dir
 
 logger = logging.getLogger("navibot.core.roles")
 
@@ -28,8 +29,8 @@ class RolesSnapshot(BaseModel):
     workers: List[AgentRole]
 
 class RoleManager:
-    def __init__(self, config_path: str = "workspace/config/roles.json"):
-        self.config_path = config_path
+    def __init__(self, config_path: str = str((workspace_config_dir() / "roles.json").as_posix())):
+        self.config_path = os.path.abspath(config_path)
         self.supervisor: Optional[SupervisorConfig] = None
         self.workers: List[AgentRole] = []
         self.updated_at: float = 0.0

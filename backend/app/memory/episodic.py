@@ -4,11 +4,12 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from app.core.paths import workspace_db_dir
 
 
 @dataclass
 class EpisodicMemoryConfig:
-    db_path: str = "workspace/db/episodic_memory.db"
+    db_path: str = str((workspace_db_dir() / "episodic_memory.db").as_posix())
 
 
 class EpisodicMemory:
