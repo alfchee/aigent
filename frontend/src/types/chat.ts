@@ -23,6 +23,16 @@ export type ChatMessage = {
   meta?: Record<string, unknown>
 }
 
+export type ExecutionEventType = 'status' | 'tool_call' | 'error'
+
+export type ExecutionEvent = {
+  id: string
+  type: ExecutionEventType
+  label: string
+  details?: string
+  createdAt: number
+}
+
 export type OutboundWsEnvelope =
   | {
       type: 'user_message'
@@ -52,6 +62,23 @@ export type InboundWsEnvelope =
       messageId: string
       text: string
       createdAt: number
+    }
+  | {
+      type: 'status'
+      state?: string
+      action?: string
+      details?: string
+    }
+  | {
+      type: 'tool_call'
+      tool_name?: string
+      details?: string
+    }
+  | {
+      type: 'error'
+      content?: string
+      conversationId?: string
+      ts?: number
     }
   | {
       type: 'pong'

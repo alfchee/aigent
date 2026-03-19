@@ -4,12 +4,15 @@ import type { ChatMessage } from '@/types/chat'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import MessageBubble from './MessageBubble.vue'
 import TypingIndicator from './TypingIndicator.vue'
+import ExecutionStatus from './ExecutionStatus.vue'
 import { useMessagesStore } from '@/stores/messages'
+import { useWebSocketStore } from '@/stores/websocket'
 import { useUserConfigStore } from '@/stores/userConfig'
 
 const props = defineProps<{ conversationId: string }>()
 
 const store = useMessagesStore()
+const ws = useWebSocketStore()
 const user = useUserConfigStore()
 
 const wrap = ref<HTMLDivElement | null>(null)
@@ -18,6 +21,9 @@ const atBottom = ref(true)
 const items = computed(() => store.messagesByConversationId[props.conversationId] ?? [])
 const typing = computed(
   () => store.assistantTypingByConversationId[props.conversationId] ?? false,
+)
+const executionEvents = computed(
+  () => ws.executionEventsByConversationId[props.conversationId] ?? [],
 )
 
 function onScroll() {
@@ -62,6 +68,10 @@ defineExpose({ scrollToBottom })
 
       <div v-if="typing" class="mt-4">
         <TypingIndicator />
+      </div>
+
+      <div v-if="executionEvents.length" class="mt-3">
+        <ExecutionStatus :events="executionEvents" />
       </div>
 
       <div v-if="store.loadingMore" class="mt-4 text-center text-xs text-muted">

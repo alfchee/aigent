@@ -7,6 +7,8 @@ import {
   upsertMessages,
   deleteConversation as dbDeleteConversation,
 } from '@/services/storage'
+import { fetchChatMessages } from '@/services/chatApi'
+import { mergeChatMessageLists } from '@/services/chatSync'
 import { sanitizeText } from '@/services/sanitize'
 import { useUserConfigStore } from '@/stores/userConfig'
 
@@ -17,6 +19,33 @@ type MessagesState = {
   hasMoreByConversationId: Record<string, boolean>
   loadingMore: boolean
   assistantTypingByConversationId: Record<string, boolean>
+}
+
+function shouldSyncBackendHistory() {
+  return (import.meta.env.VITE_BACKEND_HISTORY_SYNC as string | undefined) === 'true'
+}
+
+const PAGE_SIZE = 40
+
+function buildConversationFromMessages(
+  conversationId: string,
+  messages: ChatMessage[],
+): Conversation {
+  const sorted = [...messages].sort((a, b) => a.createdAt - b.createdAt)
+  const firstUser = sorted.find((m) => m.role === 'user')
+  const last = sorted[sorted.length - 1]
+  const now = Date.now()
+  const title =
+    (firstUser?.text ?? sorted[0]?.text ?? 'Conversación').slice(0, 28) || 'Conversación'
+  return {
+    id: conversationId,
+    title,
+    createdAt: sorted[0]?.createdAt ?? now,
+    updatedAt: last?.createdAt ?? now,
+    tags: [],
+    folder: 'General',
+    agentId: 'default',
+  }
 }
 
 function newConversation(): Conversation {
@@ -52,9 +81,65 @@ export const useMessagesStore = defineStore('messages', {
     },
   },
   actions: {
+    mergeMessages(conversationId: string, incoming: ChatMessage[]) {
+      const current = this.messagesByConversationId[conversationId] ?? []
+      const merged = mergeChatMessageLists(current, incoming)
+      this.messagesByConversationId[conversationId] = merged
+      return merged
+    },
+    async bootstrapFromBackend(sessionId: string) {
+      const remote = await fetchChatMessages({ sessionId, limit: 200 })
+      if (!remote.length) return false
+      const grouped: Record<string, ChatMessage[]> = {}
+      for (const msg of remote) {
+        if (!grouped[msg.conversationId]) grouped[msg.conversationId] = []
+        grouped[msg.conversationId].push(msg)
+      }
+      const conversations = Object.entries(grouped).map(([conversationId, msgs]) =>
+        buildConversationFromMessages(conversationId, msgs),
+      )
+      conversations.sort((a, b) => b.updatedAt - a.updatedAt)
+      this.conversations = conversations
+      this.activeConversationId = conversations[0]?.id ?? null
+      for (const conv of conversations) {
+        const merged = this.mergeMessages(conv.id, grouped[conv.id] ?? [])
+        this.hasMoreByConversationId[conv.id] = merged.length >= PAGE_SIZE
+        await upsertConversation(conv)
+        await upsertMessages(merged)
+      }
+      return conversations.length > 0
+    },
+    async hydrateConversationFromBackend(sessionId: string, conversationId: string) {
+      const remote = await fetchChatMessages({
+        sessionId,
+        conversationId,
+        limit: PAGE_SIZE,
+      })
+      if (!remote.length) return
+      const merged = this.mergeMessages(conversationId, remote)
+      this.hasMoreByConversationId[conversationId] = remote.length === PAGE_SIZE
+      await upsertMessages(merged)
+      const idx = this.conversations.findIndex((c) => c.id === conversationId)
+      if (idx >= 0) {
+        const conv = {
+          ...this.conversations[idx],
+          updatedAt: merged[merged.length - 1]?.createdAt ?? Date.now(),
+        }
+        this.conversations.splice(idx, 1, conv)
+        await upsertConversation(conv)
+      }
+    },
     async bootstrap() {
+      const user = useUserConfigStore()
       const convs = await listConversations()
       this.conversations = convs
+
+      if (!this.conversations.length && shouldSyncBackendHistory()) {
+        try {
+          const synced = await this.bootstrapFromBackend(user.sessionId)
+          if (synced) return
+        } catch {}
+      }
 
       if (!this.conversations.length) {
         const c = newConversation()
@@ -67,12 +152,35 @@ export const useMessagesStore = defineStore('messages', {
       }
 
       await this.ensureMessagesLoaded(this.activeConversationId)
+      if (shouldSyncBackendHistory()) {
+        try {
+          await this.hydrateConversationFromBackend(
+            user.sessionId,
+            this.activeConversationId,
+          )
+        } catch {}
+      }
     },
     async ensureMessagesLoaded(conversationId: string) {
       if (this.messagesByConversationId[conversationId]?.length) return
-      const page = await listMessagesPage({ conversationId, pageSize: 40 })
-      this.messagesByConversationId[conversationId] = page
-      this.hasMoreByConversationId[conversationId] = page.length === 40
+      const localPage = await listMessagesPage({ conversationId, pageSize: PAGE_SIZE })
+      let merged = this.mergeMessages(conversationId, localPage)
+      let hasMore = localPage.length === PAGE_SIZE
+      if (shouldSyncBackendHistory()) {
+        const user = useUserConfigStore()
+        try {
+          const remotePage = await fetchChatMessages({
+            sessionId: user.sessionId,
+            conversationId,
+            limit: PAGE_SIZE,
+          })
+          merged = this.mergeMessages(conversationId, remotePage)
+          hasMore = remotePage.length === PAGE_SIZE || hasMore
+          await upsertMessages(merged)
+        } catch {}
+      }
+      this.messagesByConversationId[conversationId] = merged
+      this.hasMoreByConversationId[conversationId] = hasMore
     },
     async loadMore(conversationId: string) {
       if (this.loadingMore) return
@@ -82,13 +190,32 @@ export const useMessagesStore = defineStore('messages', {
       const before = current.length ? current[0].createdAt : undefined
       this.loadingMore = true
       try {
-        const page = await listMessagesPage({
+        if (shouldSyncBackendHistory()) {
+          const user = useUserConfigStore()
+          try {
+            const remotePage = await fetchChatMessages({
+              sessionId: user.sessionId,
+              conversationId,
+              beforeCreatedAt: before,
+              limit: PAGE_SIZE,
+            })
+            const merged = this.mergeMessages(conversationId, remotePage)
+            this.messagesByConversationId[conversationId] = merged
+            this.hasMoreByConversationId[conversationId] = remotePage.length === PAGE_SIZE
+            await upsertMessages(merged)
+            return
+          } catch {}
+        }
+        const localPage = await listMessagesPage({
           conversationId,
-          pageSize: 40,
+          pageSize: PAGE_SIZE,
           beforeCreatedAt: before,
         })
-        this.messagesByConversationId[conversationId] = [...page, ...current]
-        this.hasMoreByConversationId[conversationId] = page.length === 40
+        this.messagesByConversationId[conversationId] = mergeChatMessageLists(
+          localPage,
+          current,
+        )
+        this.hasMoreByConversationId[conversationId] = localPage.length === PAGE_SIZE
       } finally {
         this.loadingMore = false
       }
@@ -197,7 +324,9 @@ export const useMessagesStore = defineStore('messages', {
       }
 
       const list = this.messagesByConversationId[msg.conversationId] ?? []
-      this.messagesByConversationId[msg.conversationId] = [...list, msg]
+      this.messagesByConversationId[msg.conversationId] = mergeChatMessageLists(list, [
+        msg,
+      ])
 
       const cIdx = this.conversations.findIndex((c) => c.id === msg.conversationId)
       if (cIdx >= 0) {

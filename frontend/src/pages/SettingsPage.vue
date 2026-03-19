@@ -10,6 +10,10 @@ import { useWebSocketStore } from '@/stores/websocket'
 import { downloadText } from '@/services/exportChat'
 import { listConversations } from '@/services/storage'
 import { AGENT_OPTIONS } from '@/config/agents'
+import {
+  fetchTechnicalPanelData,
+  type TechnicalPanelData,
+} from '@/services/operationsApi'
 
 const router = useRouter()
 const prefs = usePreferencesStore()
@@ -17,6 +21,9 @@ const user = useUserConfigStore()
 const ws = useWebSocketStore()
 
 const installable = ref(false)
+const technical = ref<TechnicalPanelData | null>(null)
+const technicalLoading = ref(false)
+const technicalError = ref<string | null>(null)
 let deferred: any = null
 
 const themeLabel = computed(() => {
@@ -69,6 +76,19 @@ async function installPwa() {
   const res = await deferred.userChoice
   if (res?.outcome === 'accepted') installable.value = false
   deferred = null
+}
+
+async function loadTechnicalPanel() {
+  technicalLoading.value = true
+  technicalError.value = null
+  try {
+    technical.value = await fetchTechnicalPanelData()
+  } catch (err) {
+    technicalError.value =
+      err instanceof Error ? err.message : 'No se pudo cargar panel técnico'
+  } finally {
+    technicalLoading.value = false
+  }
 }
 
 onMounted(() => {
@@ -201,6 +221,68 @@ onMounted(() => {
         <div class="mt-4 flex gap-2">
           <Button variant="secondary" @click="ws.connect">Probar conexión</Button>
           <Button variant="secondary" @click="ws.disconnect">Desconectar</Button>
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-border bg-surface p-5">
+        <div class="text-sm font-semibold">Panel técnico backend</div>
+        <div class="mt-3 text-sm text-muted">
+          Consulta métricas de sandbox y snapshot activo de roles.
+        </div>
+        <div class="mt-4 flex gap-2">
+          <Button
+            variant="secondary"
+            :disabled="technicalLoading"
+            @click="loadTechnicalPanel"
+          >
+            {{ technicalLoading ? 'Cargando…' : 'Refrescar panel' }}
+          </Button>
+        </div>
+        <div v-if="technicalError" class="mt-3 text-xs text-danger">
+          {{ technicalError }}
+        </div>
+        <div v-if="technical" class="mt-4 grid gap-3 text-sm">
+          <div class="rounded-lg border border-border bg-bg p-3">
+            <div class="font-medium">Roles</div>
+            <div class="mt-2 grid gap-1 text-xs text-muted">
+              <div>Supervisor: {{ technical.roles.supervisorName }}</div>
+              <div>Workers: {{ technical.roles.workerCount }}</div>
+              <div>
+                Actualizado: {{ new Date(technical.roles.updatedAt).toLocaleString() }}
+              </div>
+              <div class="truncate">Config: {{ technical.roles.configPath }}</div>
+            </div>
+            <div class="mt-2 flex flex-wrap gap-1">
+              <span
+                v-for="worker in technical.roles.workers"
+                :key="worker.id"
+                class="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] text-muted"
+              >
+                {{ worker.id }} · {{ worker.skills.length }} skills
+              </span>
+            </div>
+          </div>
+          <div class="rounded-lg border border-border bg-bg p-3">
+            <div class="font-medium">Sandbox metrics</div>
+            <div class="mt-2 grid gap-2">
+              <div
+                v-for="[scope, bucket] in Object.entries(technical.metrics)"
+                :key="scope"
+                class="rounded-md border border-border px-2 py-2 text-xs text-muted"
+              >
+                <div class="font-medium text-text">{{ scope }}</div>
+                <div class="mt-1">
+                  runs={{ bucket.total_runs }} · ok={{ bucket.success_runs }} · policy={{
+                    bucket.policy_violations
+                  }}
+                </div>
+                <div>
+                  timeout={{ bucket.timeouts }} · errors={{ bucket.execution_errors }} ·
+                  avg={{ bucket.avg_duration_ms }}ms
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

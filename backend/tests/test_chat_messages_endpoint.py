@@ -34,3 +34,23 @@ def test_chat_messages_endpoint(monkeypatch):
     assert payload["status"] == "ok"
     assert payload["count"] == 1
     assert payload["items"][0]["id"] == "m1"
+
+
+def test_roles_endpoint_includes_cors_headers():
+    client = TestClient(app)
+    response = client.get("/roles", headers={"Origin": "http://localhost:5173"})
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_roles_preflight_cors():
+    client = TestClient(app)
+    response = client.options(
+        "/roles",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"

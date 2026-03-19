@@ -27,6 +27,7 @@ OPENVIKING_EMBED_PROVIDER=openai
 OPENVIKING_EMBED_MODEL=text-embedding-3-small
 OPENVIKING_EMBED_API_KEY=<AZURE_OPENAI_API_KEY>
 OPENVIKING_EMBED_BASE_URL=https://<your-resource>.openai.azure.com/openai/v1
+OPENVIKING_CONFIG_FILE=/home/alfchee/Workspace/own/navibot/workspace/config/ov.conf
 ```
 
 If your Azure setup uses deployment names, set `OPENVIKING_LLM_MODEL` and `OPENVIKING_EMBED_MODEL` to those deployment identifiers.
@@ -57,3 +58,20 @@ The backend will:
 - extract text with MarkItDown,
 - store extracted content in memory,
 - generate a summary response.
+
+## 5) Test backend chat persistence API
+
+Every websocket turn now persists `user` and `assistant` messages in:
+- `workspace/db/chat_messages.db`
+
+Read paginated history:
+
+```bash
+curl "http://localhost:8000/chat/<session_id>/messages?conversationId=<conversation_id>&limit=50"
+```
+
+Read previous page (older than timestamp):
+
+```bash
+curl "http://localhost:8000/chat/<session_id>/messages?conversationId=<conversation_id>&beforeCreatedAt=<ts>&limit=50"
+```

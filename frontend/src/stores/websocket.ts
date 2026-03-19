@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { InboundWsEnvelope, OutboundWsEnvelope } from '@/types/chat'
+import type { ExecutionEvent, InboundWsEnvelope, OutboundWsEnvelope } from '@/types/chat'
 import { WebSocketClient, type WsStatus } from '@/services/websocketClient'
 import { logEvent } from '@/services/logger'
 import { createRateLimiter } from '@/services/rateLimit'
@@ -13,6 +13,8 @@ type WsState = {
   reconnectCount: number
   lastConnectedAt: number | null
   outbox: OutboundWsEnvelope[]
+  lastOutboundConversationId: string | null
+  executionEventsByConversationId: Record<string, ExecutionEvent[]>
 }
 
 function computeWsUrl(sessionId: string) {
@@ -40,6 +42,8 @@ export const useWebSocketStore = defineStore('websocket', {
     reconnectCount: 0,
     lastConnectedAt: null,
     outbox: [],
+    lastOutboundConversationId: null,
+    executionEventsByConversationId: {},
   }),
   actions: {
     connect() {
@@ -103,6 +107,7 @@ export const useWebSocketStore = defineStore('websocket', {
                 })
                 .catch(() => {})
               messages.setAssistantTyping(conversationId, false)
+              this.clearExecutionEvents(conversationId)
               if (messages.activeConversationId === conversationId)
                 messages.markAllRead(conversationId)
             }
@@ -128,6 +133,45 @@ export const useWebSocketStore = defineStore('websocket', {
     },
     handleInbound(msg: InboundWsEnvelope) {
       logEvent({ level: 'debug', name: 'ws_in', data: { type: msg.type } })
+      const messages = useMessagesStore()
+      const conversationId =
+        this.resolveConversationId(msg) ?? messages.activeConversationId
+      if (!conversationId) return
+
+      if (msg.type === 'status') {
+        const label = String(msg.action ?? msg.state ?? 'Procesando')
+        const details = typeof msg.details === 'string' ? msg.details : undefined
+        this.addExecutionEvent(conversationId, {
+          type: 'status',
+          label,
+          details,
+        })
+        messages.setAssistantTyping(conversationId, true)
+        return
+      }
+
+      if (msg.type === 'tool_call') {
+        const toolName = typeof msg.tool_name === 'string' ? msg.tool_name : 'tool'
+        const details = typeof msg.details === 'string' ? msg.details : undefined
+        this.addExecutionEvent(conversationId, {
+          type: 'tool_call',
+          label: `Ejecutando ${toolName}`,
+          details,
+        })
+        messages.setAssistantTyping(conversationId, true)
+        return
+      }
+
+      if (msg.type === 'error') {
+        const details =
+          typeof msg.content === 'string' ? msg.content : 'Error en ejecución'
+        this.addExecutionEvent(conversationId, {
+          type: 'error',
+          label: 'Error',
+          details,
+        })
+        messages.setAssistantTyping(conversationId, false)
+      }
     },
     enqueue(out: OutboundWsEnvelope) {
       this.outbox.push(out)
@@ -151,6 +195,10 @@ export const useWebSocketStore = defineStore('websocket', {
         return { ok: false as const, error: 'Demasiados mensajes: espera unos segundos.' }
       }
 
+      if (out.type === 'user_message') {
+        this.lastOutboundConversationId = out.conversationId
+      }
+
       limiter.recordSend()
       const client: WebSocketClient | null = (this as any)._client ?? null
       if (!client || client.getStatus() !== 'open') {
@@ -164,6 +212,28 @@ export const useWebSocketStore = defineStore('websocket', {
         return { ok: true as const, queued: true as const }
       }
       return { ok: true as const, queued: false as const }
+    },
+    resolveConversationId(msg: InboundWsEnvelope) {
+      if ('conversationId' in msg && typeof msg.conversationId === 'string') {
+        return msg.conversationId
+      }
+      return this.lastOutboundConversationId
+    },
+    addExecutionEvent(
+      conversationId: string,
+      input: Omit<ExecutionEvent, 'id' | 'createdAt'>,
+    ) {
+      const list = this.executionEventsByConversationId[conversationId] ?? []
+      const event: ExecutionEvent = {
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        ...input,
+      }
+      const next = [...list, event].slice(-20)
+      this.executionEventsByConversationId[conversationId] = next
+    },
+    clearExecutionEvents(conversationId: string) {
+      this.executionEventsByConversationId[conversationId] = []
     },
   },
 })

@@ -79,6 +79,7 @@ async function onSend(text: string) {
     }
   }
 
+  ws.clearExecutionEvents(activeId.value)
   messages.setAssistantTyping(activeId.value, true)
   const msg = await messages.addMessage({
     conversationId: activeId.value,

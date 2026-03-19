@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from app.core.llm import default_llm
 from app.skills.registry import registry
 from app.api.websockets import manager
@@ -85,6 +86,12 @@ def log_startup_paths() -> None:
     logger.info("Startup paths -> openviking_config=%s", ov_config_file)
     logger.info("Startup paths -> openviking_workspace=%s", resolve_openviking_workspace())
 
+
+def resolve_cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+    items = [item.strip() for item in raw.split(",")]
+    return [item for item in items if item]
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
@@ -111,6 +118,13 @@ app = FastAPI(
     description="Agentic Ecosystem Orchestrated by LangGraph",
     version="2.0.0",
     lifespan=lifespan
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=resolve_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 app.include_router(telegram_webhook_router)
 
