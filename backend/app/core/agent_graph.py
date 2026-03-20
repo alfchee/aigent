@@ -5,6 +5,9 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, ToolMessage
 from app.core.llm import LLMService, ModelConfig, default_llm
+from app.core.state_manager import get_state_manager
+from app.core.prompt_composer import get_prompt_composer
+from app.core.refiner import RefinerNode
 from app.skills.registry import ToolRegistry, registry
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
@@ -107,6 +110,7 @@ class AgentGraph:
         self.tools = tool_registry
         self.workflow = StateGraph(AgentState)
         self._build_graph()
+        self.refiner = RefinerNode(llm_service)
 
     def get_memory_controller(self, user_id: str) -> MemoryController:
         return MemoryController(user_id=user_id)
@@ -244,12 +248,18 @@ class AgentGraph:
 
         semantic_context = memory.retrieve_context(last_message_text) if last_message_text else ""
 
-        system_prompt = f"""You are NaviBot Supervisor, an intelligent orchestrator.
+        state_mgr = get_state_manager()
+        dashboard = state_mgr.get_dashboard(session_id=state.get("session_id", ""))
 
-Context from Memory:
+        base_prompt = f"""You are NaviBot Supervisor, an intelligent orchestrator.
+
+## Global State Dashboard
+{dashboard}
+
+## Memory Context
 {semantic_context if semantic_context else '(no memory context)'}
 
-Available Workers:
+## Available Workers
 {json.dumps([w.dict() for w in role_manager.get_all_workers()], indent=2)}
 
 Analyze the user's request.
@@ -257,6 +267,13 @@ Analyze the user's request.
 - If you need external information, use a tool.
 - If you can answer directly, provide a clear response.
 Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a tool call."""
+
+        composer = get_prompt_composer()
+        system_prompt = composer.compose(
+            base_prompt=base_prompt,
+            user_message=last_message_text,
+            context={"session_id": state.get("session_id", "")},
+        )
 
         litellm_messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         formatted = _format_messages_for_llm(messages)
@@ -415,18 +432,24 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
         )
 
         out_messages: List[BaseMessage] = result.get("messages", [])
-        
-        # The out_messages from ainvoke will contain ALL messages (including the initial ones we passed)
-        # We update our session history to be exactly this new complete list of messages.
-        # This ensures AIMessages with tool_calls and ToolMessages are preserved for the next turn.
+
+        state_mgr = get_state_manager()
+        session_id_for_state = session_id or "default"
+        state_mgr.update_activity(session_id_for_state)
+
+        for msg in out_messages:
+            if isinstance(msg, ToolMessage):
+                state_mgr.record_tool_use(session_id_for_state, getattr(msg, "name", "unknown"), msg.content or "")
+
         SESSION_HISTORIES[session_id] = out_messages
 
-        # Extract the final textual response for the user
         assistant_response = ""
         last_tool_output = ""
+        tool_call_count = 0
         for msg in reversed(out_messages):
             if isinstance(msg, ToolMessage) and msg.content and not last_tool_output:
                 last_tool_output = msg.content
+                tool_call_count += 1
             if isinstance(msg, AIMessage) and msg.content:
                 if msg.content.startswith("Delegating to "):
                     continue
@@ -434,7 +457,13 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
                 break
 
         if assistant_response:
-            return assistant_response
+            refined = await self.refiner.refine(
+                original_request=user_text,
+                current_response=assistant_response,
+                tool_call_count=tool_call_count,
+                session_id=session_id,
+            )
+            return refined.get("response", assistant_response)
         if last_tool_output:
             return f"Encontré resultados de herramienta, pero no pude sintetizarlos automáticamente:\n\n{last_tool_output[:1600]}"
         return "No se pudo generar una respuesta."

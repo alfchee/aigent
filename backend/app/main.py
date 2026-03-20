@@ -298,6 +298,18 @@ async def sandbox_metrics():
     return {"status": "ok", "metrics": default_sandbox.metrics_snapshot()}
 
 
+@app.get("/cost/summary")
+async def cost_summary(session_id: str | None = Query(default=None)):
+    from app.core.cost_monitor import get_cost_monitor
+    monitor = get_cost_monitor()
+    if session_id:
+        summary = monitor.get_session_summary(session_id)
+        if summary:
+            return {"status": "ok", **summary.to_dict()}
+        return {"status": "ok", "session_id": session_id, "not_found": True}
+    return {"status": "ok", "sessions": monitor.get_all_summaries(), "total_cost_usd": monitor.get_total_cost()}
+
+
 @app.get("/memory/{session_id}/summaries")
 async def memory_summaries(
     session_id: str,

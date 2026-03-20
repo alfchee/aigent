@@ -5,8 +5,15 @@ from typing import Any, Dict, List, Optional, Union, AsyncGenerator
 from litellm import completion, acompletion
 from pydantic import BaseModel, Field
 
-# Configure logging
 logger = logging.getLogger("navibot.core.llm")
+
+
+def _get_cost_monitor():
+    try:
+        from app.core.cost_monitor import get_cost_monitor
+        return get_cost_monitor()
+    except Exception:
+        return None
 
 class ModelConfig(BaseModel):
     """Configuration for LLM model selection and parameters."""
@@ -71,6 +78,29 @@ class LLMService:
                 tools=tools,
                 stream=stream
             )
+
+            if not stream:
+                try:
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+                        cost_monitor = _get_cost_monitor()
+                        if cost_monitor and (input_tokens > 0 or output_tokens > 0):
+                            try:
+                                cost_monitor.record_call(
+                                    session_id="default",
+                                    user_id="default",
+                                    provider=cfg.provider,
+                                    model=cfg.model_name,
+                                    input_tokens=input_tokens,
+                                    output_tokens=output_tokens,
+                                )
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
             return response
 
         except Exception as e:
