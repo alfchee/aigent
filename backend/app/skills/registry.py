@@ -63,19 +63,28 @@ class ToolRegistry:
         return openai_tools
 
     async def execute(self, name: str, arguments: Dict[str, Any]) -> Any:
-        """Execute a tool with validated arguments."""
+        """Execute a tool with validated arguments (Harness → Pydantic → Tool)."""
         tool = self._tools.get(name)
         if not tool:
             raise ValueError(f"Tool '{name}' not found.")
-        
-        # Validate arguments using Pydantic
+
+        # Harness pre-validation
+        try:
+            from app.skills.harness import harness as _harness
+            hres = _harness.run(name, arguments)
+            if not hres.ok:
+                codes = ",".join(err.code for err in hres.errors)
+                raise ValueError(f"HarnessValidationFailed[{codes}]")
+        except ImportError:
+            pass
+
+        # Pydantic schema validation
         try:
             validated_args = tool.args_schema(**arguments)
         except Exception as e:
             raise ValueError(f"Invalid arguments for tool '{name}': {e}")
 
-        # Execute the function
-        # Support both sync and async functions
+        # Execute the function (sync/async)
         if isinstance(tool.func, Callable):
             import inspect
             if inspect.iscoroutinefunction(tool.func):

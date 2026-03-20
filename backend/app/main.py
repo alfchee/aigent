@@ -3,6 +3,7 @@ from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.llm import default_llm
 from app.skills.registry import registry
+from app.skills import registry as _  # registers web_browse and smart_search
 from app.api.websockets import manager
 from app.channels.telegram import telegram_bot
 from app.core.scheduler import SchedulerService
