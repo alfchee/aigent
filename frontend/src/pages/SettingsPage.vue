@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import Button from '@/components/ui/Button.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import TextField from '@/components/ui/TextField.vue'
+import CostDashboard from '@/components/analytics/CostDashboard.vue'
+import GlobalStateWidget from '@/components/analytics/GlobalStateWidget.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useUserConfigStore } from '@/stores/userConfig'
 import { useWebSocketStore } from '@/stores/websocket'
@@ -19,6 +21,9 @@ const router = useRouter()
 const prefs = usePreferencesStore()
 const user = useUserConfigStore()
 const ws = useWebSocketStore()
+
+type SettingsTab = 'general' | 'costs' | 'state'
+const activeTab = ref<SettingsTab>('general')
 
 const installable = ref(false)
 const technical = ref<TechnicalPanelData | null>(null)
@@ -107,7 +112,48 @@ onMounted(() => {
       <Button variant="secondary" size="sm" @click="goBack">Volver</Button>
     </div>
 
-    <div class="mt-6 grid gap-4">
+    <div class="mt-4 flex border-b border-border">
+      <button
+        type="button"
+        class="px-4 py-2 text-sm font-medium transition-colors hover:text-brand focus-visible:outline-none"
+        :class="
+          activeTab === 'general' ? 'border-b-2 border-brand text-brand' : 'text-muted'
+        "
+        @click="activeTab = 'general'"
+      >
+        General
+      </button>
+      <button
+        type="button"
+        class="px-4 py-2 text-sm font-medium transition-colors hover:text-brand focus-visible:outline-none flex items-center gap-1.5"
+        :class="
+          activeTab === 'costs' ? 'border-b-2 border-brand text-brand' : 'text-muted'
+        "
+        @click="activeTab = 'costs'"
+      >
+        💰 Costos
+      </button>
+      <button
+        type="button"
+        class="px-4 py-2 text-sm font-medium transition-colors hover:text-brand focus-visible:outline-none flex items-center gap-1.5"
+        :class="
+          activeTab === 'state' ? 'border-b-2 border-brand text-brand' : 'text-muted'
+        "
+        @click="activeTab = 'state'"
+      >
+        📊 Estado
+      </button>
+    </div>
+
+    <div v-if="activeTab === 'costs'" class="mt-6">
+      <CostDashboard :session-id="user.sessionId" />
+    </div>
+
+    <div v-if="activeTab === 'state'" class="mt-6">
+      <GlobalStateWidget :session-id="user.sessionId" />
+    </div>
+
+    <div v-if="activeTab === 'general'" class="mt-6 grid gap-4">
       <div class="rounded-xl border border-border bg-surface p-5">
         <div class="text-sm font-semibold">Preferencias</div>
         <div class="mt-4 grid gap-4">

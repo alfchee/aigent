@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { ChatMessage } from '@/types/chat'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import MessageBubble from './MessageBubble.vue'
@@ -33,13 +33,43 @@ function onScroll() {
   if (el.scrollTop < 80) store.loadMore(props.conversationId).catch(() => {})
 }
 
-function scrollToBottom() {
+function scrollToBottom(smooth = false) {
   if (!wrap.value) return
-  wrap.value.scrollTop = wrap.value.scrollHeight
+  const el = wrap.value
+  if (smooth) {
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  } else {
+    el.scrollTop = el.scrollHeight
+  }
+}
+
+async function scrollToBottomDelayed() {
+  try {
+    await nextTick()
+    await new Promise<void>((resolve) => setTimeout(resolve, 250))
+    if (wrap.value && wrap.value.clientHeight > 0) {
+      scrollToBottom()
+    }
+  } catch {
+    // Container may not be ready; silently skip
+  }
 }
 
 onMounted(() => {
-  scrollToBottom()
+  scrollToBottomDelayed()
+})
+
+watch(
+  () => props.conversationId,
+  () => {
+    scrollToBottomDelayed()
+  },
+)
+
+watch(typing, (isTyping) => {
+  if (isTyping) {
+    nextTick(() => scrollToBottom(true))
+  }
 })
 
 defineExpose({ scrollToBottom })

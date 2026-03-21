@@ -68,6 +68,9 @@ export type InboundWsEnvelope =
       state?: string
       action?: string
       details?: string
+      state_snapshot?: AgentStateSnapshot
+      stage?: string
+      refine_status?: RefineStatusInfo
     }
   | {
       type: 'tool_call'
@@ -88,3 +91,38 @@ export type InboundWsEnvelope =
       type: string
       [k: string]: unknown
     }
+
+export type RefineStatusInfo = {
+  stage: 'idle' | 'refining' | 'approved' | 'revised' | 'incomplete' | 'error'
+  criteria?: string[]
+  result?: string
+}
+
+export type WorkerStatusInfo = {
+  role_id: string
+  name: string
+  current_task?: string
+  completed_at?: string
+  status: 'idle' | 'working' | 'error'
+}
+
+export type AgentStateSnapshot = {
+  session_id: string
+  user_id: string
+  last_activity: string
+  active_worker?: string
+  workers: Record<string, WorkerStatusInfo>
+  last_tool_used?: string
+  last_tool_result?: string
+  total_turns: number
+  total_errors: number
+  pending_tasks: string[]
+  completed_tasks: Array<{
+    task_id: string
+    description: string
+    status: string
+    started_at: string
+    completed_at?: string
+  }>
+  refine_status?: RefineStatusInfo
+}

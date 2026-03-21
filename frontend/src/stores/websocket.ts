@@ -1,5 +1,10 @@
 import { defineStore } from 'pinia'
-import type { ExecutionEvent, InboundWsEnvelope, OutboundWsEnvelope } from '@/types/chat'
+import type {
+  ExecutionEvent,
+  InboundWsEnvelope,
+  OutboundWsEnvelope,
+  AgentStateSnapshot,
+} from '@/types/chat'
 import { WebSocketClient, type WsStatus } from '@/services/websocketClient'
 import { logEvent } from '@/services/logger'
 import { createRateLimiter } from '@/services/rateLimit'
@@ -15,6 +20,7 @@ type WsState = {
   outbox: OutboundWsEnvelope[]
   lastOutboundConversationId: string | null
   executionEventsByConversationId: Record<string, ExecutionEvent[]>
+  agentStateBySession: Record<string, AgentStateSnapshot>
 }
 
 function computeWsUrl(sessionId: string) {
@@ -44,6 +50,7 @@ export const useWebSocketStore = defineStore('websocket', {
     outbox: [],
     lastOutboundConversationId: null,
     executionEventsByConversationId: {},
+    agentStateBySession: {},
   }),
   actions: {
     connect() {
@@ -147,6 +154,10 @@ export const useWebSocketStore = defineStore('websocket', {
           details,
         })
         messages.setAssistantTyping(conversationId, true)
+        if (msg.state_snapshot) {
+          const user = useUserConfigStore()
+          this.updateAgentState(user.sessionId, msg.state_snapshot as AgentStateSnapshot)
+        }
         return
       }
 
@@ -234,6 +245,12 @@ export const useWebSocketStore = defineStore('websocket', {
     },
     clearExecutionEvents(conversationId: string) {
       this.executionEventsByConversationId[conversationId] = []
+    },
+    updateAgentState(sessionId: string, snapshot: AgentStateSnapshot) {
+      this.agentStateBySession[sessionId] = snapshot
+    },
+    getAgentState(sessionId: string): AgentStateSnapshot | null {
+      return this.agentStateBySession[sessionId] ?? null
     },
   },
 })
