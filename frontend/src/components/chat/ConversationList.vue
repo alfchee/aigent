@@ -3,29 +3,39 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { Conversation } from '@/types/chat'
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
-import {
-  Plus,
-  Search,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-  Tag,
-  FolderOpen,
-} from 'lucide-vue-next'
-import { cn } from '@/lib/utils'
+import SessionSidebar from '@/components/chat/SessionSidebar.vue'
+import { Plus, Search, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-vue-next'
 import { usePreferencesStore } from '@/stores/preferences'
-import { AGENT_OPTIONS, findAgentById } from '@/config/agents'
+import { AGENT_OPTIONS } from '@/config/agents'
 
-const props = defineProps<{ conversations: Conversation[]; activeId: string | null }>()
+const props = withDefaults(
+  defineProps<{
+    conversations: Conversation[]
+    activeId: string | null
+    sessions: import('@/services/sessionsApi').SessionSummaryDto[]
+    activeSessionId: string
+    sessionsLoading?: boolean
+    sessionsError?: string | null
+    showItems?: boolean
+  }>(),
+  {
+    showItems: true,
+    sessionsLoading: false,
+    sessionsError: null,
+  },
+)
+
 const emit = defineEmits<{
   (e: 'select', id: string): void
   (e: 'create'): void
-  (e: 'rename', id: string, title: string): void
-  (e: 'remove', id: string): void
-  (e: 'setTags', id: string, tags: string[]): void
-  (e: 'setAgent', id: string, agentId: string): void
-  (e: 'setFolder', id: string, folder: string): void
   (e: 'openSettings'): void
+  (e: 'selectSession', sessionId: string): void
+  (e: 'refreshSessions'): void
+  (e: 'renameSession', sessionId: string, title: string): void
+  (e: 'removeSession', sessionId: string): void
+  (e: 'setSessionTags', sessionId: string, tags: string[]): void
+  (e: 'setSessionAgent', sessionId: string, agentId: string): void
+  (e: 'setSessionFolder', sessionId: string, folder: string): void
 }>()
 
 const prefs = usePreferencesStore()
@@ -54,9 +64,9 @@ function persistFilters() {
   )
 }
 
-const filtered = computed(() => {
+const filteredSessions = computed(() => {
   const s = q.value.trim().toLowerCase()
-  const base = props.conversations.filter((c) => {
+  const base = props.sessions.filter((c) => {
     if (folderFilter.value !== 'all' && (c.folder ?? 'General') !== folderFilter.value) {
       return false
     }
@@ -69,58 +79,20 @@ const filtered = computed(() => {
   return base.filter((c) => {
     if ((c.folder ?? 'General').toLowerCase().includes(s)) return true
     if ((c.agentId ?? 'default').toLowerCase().includes(s)) return true
-    if (c.title.toLowerCase().includes(s)) return true
-    return c.tags.some((t) => t.toLowerCase().includes(s))
+    if ((c.title || c.session_id).toLowerCase().includes(s)) return true
+    return (c.tags ?? []).some((t) => t.toLowerCase().includes(s))
   })
 })
 
 const folderOptions = computed(() => {
   const set = new Set<string>(['General'])
-  for (const c of props.conversations) set.add(c.folder ?? 'General')
+  for (const c of props.sessions) set.add(c.folder ?? 'General')
   return [...set]
 })
 
 watch([folderFilter, agentFilter], persistFilters)
 
 onMounted(readFilters)
-
-function rename(conv: Conversation) {
-  const next = window.prompt('Renombrar conversación', conv.title)
-  if (next == null) return
-  emit('rename', conv.id, next)
-}
-
-function editTags(conv: Conversation) {
-  const current = conv.tags.join(', ')
-  const next = window.prompt('Tags (separados por coma)', current)
-  if (next == null) return
-  const tags = next
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean)
-  emit('setTags', conv.id, tags)
-}
-
-function editFolder(conv: Conversation) {
-  const current = conv.folder ?? 'General'
-  const next = window.prompt('Carpeta', current)
-  if (next == null) return
-  emit('setFolder', conv.id, next.trim())
-}
-
-function remove(conv: Conversation) {
-  const ok = window.confirm('¿Borrar conversación? Esta acción no se puede deshacer.')
-  if (!ok) return
-  emit('remove', conv.id)
-}
-
-function editAgent(conv: Conversation) {
-  const current = conv.agentId ?? 'default'
-  const options = AGENT_OPTIONS.map((a) => `${a.id}: ${a.label}`).join('\n')
-  const next = window.prompt(`Agente para esta conversación\n${options}`, current)
-  if (next == null) return
-  emit('setAgent', conv.id, next.trim())
-}
 </script>
 
 <template>
@@ -191,97 +163,19 @@ function editAgent(conv: Conversation) {
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4">
-      <div class="grid gap-1">
-        <button
-          v-for="c in filtered"
-          :key="c.id"
-          type="button"
-          class="group rounded-xl border px-3 py-3 text-left transition"
-          :class="
-            cn(
-              c.id === activeId
-                ? 'border-brand/40 bg-brand/10'
-                : 'border-transparent hover:border-border hover:bg-surface2/60',
-            )
-          "
-          @click="emit('select', c.id)"
-          @contextmenu.prevent="rename(c)"
-        >
-          <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0">
-              <div class="truncate text-sm font-medium">{{ c.title }}</div>
-              <div class="mt-1 flex flex-wrap gap-1">
-                <span
-                  class="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-muted"
-                >
-                  <FolderOpen class="h-3 w-3" />
-                  {{ c.folder ?? 'General' }}
-                </span>
-                <span
-                  class="inline-flex items-center rounded-full border border-brand/30 bg-brand/10 px-2 py-0.5 text-[11px] text-brand"
-                >
-                  @{{ findAgentById(c.agentId ?? 'default').id }}
-                </span>
-                <span
-                  v-for="t in c.tags"
-                  :key="t"
-                  class="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-muted"
-                >
-                  <Tag class="h-3 w-3" />
-                  {{ t }}
-                </span>
-              </div>
-            </div>
-            <div
-              class="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100"
-            >
-              <IconButton
-                aria-label="Cambiar carpeta"
-                size="sm"
-                variant="ghost"
-                @click.stop="editFolder(c)"
-              >
-                <FolderOpen class="h-4 w-4" />
-              </IconButton>
-              <IconButton
-                aria-label="Cambiar agente"
-                size="sm"
-                variant="ghost"
-                @click.stop="editAgent(c)"
-              >
-                <span class="text-xs text-muted">@</span>
-              </IconButton>
-              <IconButton
-                aria-label="Editar tags"
-                size="sm"
-                variant="ghost"
-                @click.stop="editTags(c)"
-              >
-                <Tag class="h-4 w-4" />
-              </IconButton>
-              <IconButton
-                aria-label="Renombrar"
-                size="sm"
-                variant="ghost"
-                @click.stop="rename(c)"
-              >
-                <span class="text-xs text-muted">Ren</span>
-              </IconButton>
-              <IconButton
-                aria-label="Borrar"
-                size="sm"
-                variant="danger"
-                @click.stop="remove(c)"
-              >
-                <span class="text-xs">Del</span>
-              </IconButton>
-            </div>
-          </div>
-          <div class="mt-2 text-xs text-muted">
-            {{ new Date(c.updatedAt).toLocaleString() }}
-          </div>
-        </button>
-      </div>
+      <SessionSidebar
+        :sessions="filteredSessions"
+        :active-session-id="activeSessionId"
+        :loading="sessionsLoading"
+        :error="sessionsError"
+        @select="(id) => emit('selectSession', id)"
+        @refresh="() => emit('refreshSessions')"
+        @rename="(id, t) => emit('renameSession', id, t)"
+        @remove="(id) => emit('removeSession', id)"
+        @set-tags="(id, t) => emit('setSessionTags', id, t)"
+        @set-folder="(id, f) => emit('setSessionFolder', id, f)"
+        @set-agent="(id, a) => emit('setSessionAgent', id, a)"
+      />
     </div>
   </div>
 </template>

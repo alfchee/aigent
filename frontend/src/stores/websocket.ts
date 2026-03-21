@@ -138,6 +138,13 @@ export const useWebSocketStore = defineStore('websocket', {
       ;(this as any)._client = null
       this.status = 'closed'
     },
+    reconnectForSession() {
+      this.outbox = []
+      this.lastOutboundConversationId = null
+      this.executionEventsByConversationId = {}
+      this.disconnect()
+      this.connect()
+    },
     handleInbound(msg: InboundWsEnvelope) {
       logEvent({ level: 'debug', name: 'ws_in', data: { type: msg.type } })
       const messages = useMessagesStore()

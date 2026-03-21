@@ -17,6 +17,7 @@ import {
   exportConversationAsJson,
   exportConversationAsTxt,
 } from '@/services/exportChat'
+import { fetchSessions, type SessionSummaryDto } from '@/services/sessionsApi'
 import { Share2, Download, Wifi, WifiOff, RotateCcw } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -27,6 +28,9 @@ const user = useUserConfigStore()
 
 const showExport = ref(false)
 const listRef = ref<InstanceType<typeof MessageList> | null>(null)
+const remoteSessions = ref<SessionSummaryDto[]>([])
+const sessionsLoading = ref(false)
+const sessionsError = ref<string | null>(null)
 
 const activeId = computed(() => messages.activeConversationId)
 const activeConv = computed(() => messages.activeConversation)
@@ -137,9 +141,63 @@ async function shareConversation() {
   }
 }
 
-onMounted(async () => {
-  await messages.bootstrap()
+async function loadRemoteSessions() {
+  sessionsLoading.value = true
+  sessionsError.value = null
+  try {
+    remoteSessions.value = await fetchSessions()
+  } catch (e) {
+    sessionsError.value = e instanceof Error ? e.message : 'No se pudo cargar sesiones'
+  } finally {
+    sessionsLoading.value = false
+  }
+}
+
+async function bootstrapSession() {
+  await loadRemoteSessions()
+  const preferred =
+    remoteSessions.value.find((s) => s.session_id === user.sessionId)?.session_id ??
+    remoteSessions.value[0]?.session_id ??
+    user.sessionId
+  if (preferred !== user.sessionId) user.setSessionId(preferred)
+  await messages.bootstrap(preferred)
   ws.connect()
+}
+
+async function onSelectSession(sessionId: string) {
+  if (sessionId === user.sessionId) return
+  user.setSessionId(sessionId)
+  await messages.switchSession(sessionId)
+  ws.reconnectForSession()
+}
+
+async function onRenameSession(sessionId: string, title: string) {
+  await messages.renameConversation(sessionId, title)
+  await loadRemoteSessions()
+}
+
+async function onRemoveSession(sessionId: string) {
+  await messages.removeConversation(sessionId)
+  await loadRemoteSessions()
+}
+
+async function onSetSessionTags(sessionId: string, tags: string[]) {
+  await messages.setTags(sessionId, tags)
+  await loadRemoteSessions()
+}
+
+async function onSetSessionFolder(sessionId: string, folder: string) {
+  await messages.setConversationFolder(sessionId, folder)
+  await loadRemoteSessions()
+}
+
+async function onSetSessionAgent(sessionId: string, agentId: string) {
+  await messages.setConversationAgent(sessionId, agentId)
+  await loadRemoteSessions()
+}
+
+onMounted(async () => {
+  await bootstrapSession()
 })
 
 watch(
@@ -154,22 +212,27 @@ watch(
   <div data-testid="chat-page-root" class="h-[100dvh] max-h-[100dvh] overflow-hidden">
     <div class="grid h-full grid-cols-12 overflow-hidden">
       <aside
-        class="col-span-12 h-full overflow-hidden border-r border-border bg-surface md:col-span-4 lg:col-span-3"
-        :class="
-          prefs.sidebarCollapsed ? 'hidden md:block md:col-span-1 lg:col-span-1' : ''
-        "
+        class="col-span-12 flex h-full flex-col overflow-hidden border-r border-border bg-surface md:col-span-4 lg:col-span-3"
+        :class="prefs.sidebarCollapsed ? 'hidden md:flex md:w-14 lg:w-14' : ''"
       >
         <ConversationList
           :conversations="messages.conversations"
           :active-id="messages.activeConversationId"
+          :sessions="remoteSessions"
+          :active-session-id="user.sessionId"
+          :sessions-loading="sessionsLoading"
+          :sessions-error="sessionsError"
+          :show-items="false"
           @create="messages.createConversation"
           @select="messages.setActiveConversation"
-          @rename="messages.renameConversation"
-          @set-tags="messages.setTags"
-          @set-agent="messages.setConversationAgent"
-          @set-folder="messages.setConversationFolder"
-          @remove="messages.removeConversation"
           @open-settings="openSettings"
+          @select-session="onSelectSession"
+          @refresh-sessions="loadRemoteSessions"
+          @rename-session="onRenameSession"
+          @remove-session="onRemoveSession"
+          @set-session-tags="onSetSessionTags"
+          @set-session-folder="onSetSessionFolder"
+          @set-session-agent="onSetSessionAgent"
         />
       </aside>
 

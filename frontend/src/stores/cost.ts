@@ -47,7 +47,7 @@ export const useCostStore = defineStore('cost', () => {
   }
 
   function upsertSessions(sessions: SessionCostSummaryDto[]) {
-    const next: Record<string, SessionCostSummaryDto> = {}
+    const next = { ...summariesBySession.value }
     for (const session of sessions) {
       next[session.session_id] = normalizeSession(session)
     }
@@ -69,14 +69,29 @@ export const useCostStore = defineStore('cost', () => {
     return sorted[0]?.session_id ?? null
   }
 
+  let currentRequestId = 0
+
   async function loadSummary(sessionId?: string) {
+    const reqId = ++currentRequestId
     loading.value = true
     error.value = null
     try {
       const data = await fetchCostSummary(sessionId)
+      if (reqId !== currentRequestId) return // ignorar respuesta obsoleta
       if (data.status !== 'ok') throw new Error('API returned non-ok status')
 
-      if (data.sessions && Array.isArray(data.sessions)) {
+      if (data.not_found && sessionId) {
+        const fallback = await fetchCostSummary()
+        if (
+          fallback.status === 'ok' &&
+          fallback.sessions &&
+          Array.isArray(fallback.sessions)
+        ) {
+          if (reqId !== currentRequestId) return
+          upsertSessions(fallback.sessions)
+          currentSessionId.value = pickBestSessionId(sessionId)
+        }
+      } else if (data.sessions && Array.isArray(data.sessions)) {
         upsertSessions(data.sessions)
         currentSessionId.value = pickBestSessionId(sessionId)
       } else if (data.session_id) {
@@ -98,23 +113,14 @@ export const useCostStore = defineStore('cost', () => {
         }
         currentSessionId.value = data.session_id
       }
-
-      if (data.not_found && sessionId) {
-        const fallback = await fetchCostSummary()
-        if (
-          fallback.status === 'ok' &&
-          fallback.sessions &&
-          Array.isArray(fallback.sessions)
-        ) {
-          upsertSessions(fallback.sessions)
-          currentSessionId.value = pickBestSessionId(sessionId)
-        }
-      }
       lastRefresh.value = Date.now()
     } catch (e) {
+      if (reqId !== currentRequestId) return
       error.value = e instanceof Error ? e.message : 'Unknown error'
     } finally {
-      loading.value = false
+      if (reqId === currentRequestId) {
+        loading.value = false
+      }
     }
   }
 

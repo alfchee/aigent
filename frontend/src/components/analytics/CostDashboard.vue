@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
+import { onMounted, onUnmounted, computed } from 'vue'
 import { RefreshCw, AlertTriangle } from 'lucide-vue-next'
 import { useCostStore } from '@/stores/cost'
 import { formatTokens, formatCost } from '@/services/costApi'
@@ -41,12 +41,17 @@ function clearError() {
   costStore.clearError()
 }
 
+let intervalId: number | ReturnType<typeof setInterval> | undefined
+
 onMounted(() => {
   load()
   if (props.refreshInterval > 0) {
-    const interval = setInterval(load, props.refreshInterval)
-    return () => clearInterval(interval)
+    intervalId = setInterval(load, props.refreshInterval)
   }
+})
+
+onUnmounted(() => {
+  if (intervalId) clearInterval(intervalId)
 })
 
 defineExpose({ load })

@@ -13,6 +13,7 @@ from app.core.agent_graph import graph_app
 from app.core.roles import role_manager
 from app.core.chat_persistence import ChatPersistence
 from app.api.telegram_webhook import router as telegram_webhook_router
+from app.api.sessions import router as sessions_router
 from app.core.paths import repo_root, workspace_db_dir, workspace_config_dir
 import logging
 import json
@@ -128,6 +129,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(telegram_webhook_router)
+app.include_router(sessions_router)
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):

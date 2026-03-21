@@ -62,5 +62,12 @@ export const useUserConfigStore = defineStore('userConfig', {
       this.activeAgentId = id
       this.persist()
     },
+    setSessionId(sessionId: string) {
+      const next = sessionId.trim()
+      if (!next) return
+      this.sessionId = next
+      localStorage.setItem('navibot:session', next)
+      this.persist()
+    },
   },
 })

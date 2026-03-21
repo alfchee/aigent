@@ -129,14 +129,22 @@ export const useMessagesStore = defineStore('messages', {
         await upsertConversation(conv)
       }
     },
-    async bootstrap() {
+    resetInMemoryState() {
+      this.conversations = []
+      this.activeConversationId = null
+      this.messagesByConversationId = {}
+      this.hasMoreByConversationId = {}
+      this.assistantTypingByConversationId = {}
+    },
+    async bootstrap(sessionIdOverride?: string) {
       const user = useUserConfigStore()
+      const sessionId = sessionIdOverride ?? user.sessionId
       const convs = await listConversations()
       this.conversations = convs
 
       if (!this.conversations.length && shouldSyncBackendHistory()) {
         try {
-          const synced = await this.bootstrapFromBackend(user.sessionId)
+          const synced = await this.bootstrapFromBackend(sessionId)
           if (synced) return
         } catch {}
       }
@@ -154,12 +162,13 @@ export const useMessagesStore = defineStore('messages', {
       await this.ensureMessagesLoaded(this.activeConversationId)
       if (shouldSyncBackendHistory()) {
         try {
-          await this.hydrateConversationFromBackend(
-            user.sessionId,
-            this.activeConversationId,
-          )
+          await this.hydrateConversationFromBackend(sessionId, this.activeConversationId)
         } catch {}
       }
+    },
+    async switchSession(sessionId: string) {
+      this.resetInMemoryState()
+      await this.bootstrap(sessionId)
     },
     async ensureMessagesLoaded(conversationId: string) {
       if (this.messagesByConversationId[conversationId]?.length) return
