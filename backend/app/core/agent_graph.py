@@ -251,7 +251,10 @@ class AgentGraph:
         state_mgr = get_state_manager()
         dashboard = state_mgr.get_dashboard(session_id=state.get("session_id", ""))
 
-        base_prompt = f"""You are NaviBot Supervisor, an intelligent orchestrator.
+        from app.core.identity import get_identity_manager
+        soul_prompt = get_identity_manager().get_soul()
+
+        base_prompt = f"""{soul_prompt}
 
 ## Global State Dashboard
 {dashboard}

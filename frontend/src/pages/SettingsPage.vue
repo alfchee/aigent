@@ -6,6 +6,7 @@ import Toggle from '@/components/ui/Toggle.vue'
 import TextField from '@/components/ui/TextField.vue'
 import CostDashboard from '@/components/analytics/CostDashboard.vue'
 import GlobalStateWidget from '@/components/analytics/GlobalStateWidget.vue'
+import SoulEditor from '@/components/settings/SoulEditor.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useUserConfigStore } from '@/stores/userConfig'
 import { useWebSocketStore } from '@/stores/websocket'
@@ -22,7 +23,7 @@ const prefs = usePreferencesStore()
 const user = useUserConfigStore()
 const ws = useWebSocketStore()
 
-type SettingsTab = 'general' | 'costs' | 'state'
+type SettingsTab = 'general' | 'soul' | 'costs' | 'state'
 const activeTab = ref<SettingsTab>('general')
 
 const installable = ref(false)
@@ -125,6 +126,16 @@ onMounted(() => {
       </button>
       <button
         type="button"
+        class="px-4 py-2 text-sm font-medium transition-colors hover:text-brand focus-visible:outline-none"
+        :class="
+          activeTab === 'soul' ? 'border-b-2 border-brand text-brand' : 'text-muted'
+        "
+        @click="activeTab = 'soul'"
+      >
+        Soul
+      </button>
+      <button
+        type="button"
         class="px-4 py-2 text-sm font-medium transition-colors hover:text-brand focus-visible:outline-none flex items-center gap-1.5"
         :class="
           activeTab === 'costs' ? 'border-b-2 border-brand text-brand' : 'text-muted'
@@ -151,6 +162,10 @@ onMounted(() => {
 
     <div v-if="activeTab === 'state'" class="mt-6">
       <GlobalStateWidget :session-id="user.sessionId" />
+    </div>
+
+    <div v-if="activeTab === 'soul'" class="mt-6">
+      <SoulEditor />
     </div>
 
     <div v-if="activeTab === 'general'" class="mt-6 grid gap-4">
