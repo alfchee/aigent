@@ -49,7 +49,8 @@ class LLMService:
         messages: List[Dict[str, str]],
         config: Optional[ModelConfig] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        stream: bool = False
+        stream: bool = False,
+        response_format: Optional[Any] = None,
     ) -> Union[Dict[str, Any], AsyncGenerator[Any, None]]:
         """
         Generate a response from the LLM.
@@ -68,7 +69,7 @@ class LLMService:
 
         try:
             logger.info(f"Generating with model: {model_id}")
-            response = await acompletion(
+            kwargs: Dict[str, Any] = dict(
                 model=model_id,
                 messages=messages,
                 temperature=cfg.temperature,
@@ -76,8 +77,11 @@ class LLMService:
                 api_key=cfg.api_key,
                 base_url=cfg.base_url,
                 tools=tools,
-                stream=stream
+                stream=stream,
             )
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+            response = await acompletion(**kwargs)
 
             if not stream:
                 try:

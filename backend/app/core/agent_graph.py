@@ -1,10 +1,12 @@
 from typing import Annotated, Dict, List, Optional, TypedDict, Any
 import json
 import logging
+import re
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, ToolMessage
 from app.core.llm import LLMService, ModelConfig, default_llm
+from app.core.models import SupervisorDecision
 from app.core.state_manager import get_state_manager
 from app.core.prompt_composer import get_prompt_composer
 from app.core.refiner import RefinerNode
@@ -19,6 +21,23 @@ logger = logging.getLogger("navibot.agent_graph")
 SESSION_HISTORIES: Dict[str, List[BaseMessage]] = {}
 
 
+def _sanitize_for_logging(text: str, max_len: int = 200) -> str:
+    """Sanitize text for logging by redacting potential PII and truncating."""
+    # Redact email addresses
+    text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[email]', text)
+    # Redact phone numbers (basic pattern)
+    text = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '[phone]', text)
+    # Redact API keys / tokens (common patterns)
+    text = re.sub(r'(api[_-]?key|token|secret)["\']?\s*[:=]\s*["\']?[\w-]+', '[credential]', text)
+    return text[:max_len]
+
+
+# Error messages for supervisor fallbacks (keep consistent across all paths)
+ERROR_INCONCLUSIVE = "No encontré una respuesta concluyente en este intento. Intenta reformular o especificar la fuente."
+ERROR_WORKER_NOT_FOUND = "No se pudo encontrar el especialista solicitado."
+ERROR_TOOL_EXECUTION = "No se pudo ejecutar la herramienta solicitada."
+
+
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     next_step: Optional[str]
@@ -26,6 +45,10 @@ class AgentState(TypedDict):
     user_id: Optional[str]
     session_id: Optional[str]
     current_worker: Optional[str]
+    # supervisor_decision is stored as Dict[str, Any] (not SupervisorDecision directly)
+    # to avoid LangGraph serialization issues with Pydantic models.
+    # Reconstructed on access in should_continue().
+    supervisor_decision: Optional[Dict[str, Any]]
 
 
 def _format_messages_for_llm(messages: List[BaseMessage]) -> List[Dict[str, Any]]:
@@ -265,11 +288,25 @@ class AgentGraph:
 ## Available Workers
 {json.dumps([w.dict() for w in role_manager.get_all_workers()], indent=2)}
 
-Analyze the user's request.
-- If it requires a specialist (e.g. coding, research), delegate using the DELEGATE: <role_id> format.
-- If you need external information, use a tool.
-- If you can answer directly, provide a clear response.
-Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a tool call."""
+Analyze the user's request and respond with a JSON object.
+
+### Valid Examples:
+
+For delegation:
+{{"action": "delegate", "delegate_to": "researcher", "reasoning": "needs web search"}}
+
+For direct response:
+{{"action": "respond", "response": "Here is the answer..."}}
+
+For tool use:
+{{"action": "use_tool", "reasoning": "fetching data"}}
+
+### Rules:
+- action must be exactly one of: "delegate", "respond", or "use_tool"
+- Only include delegate_to if action is "delegate"
+- Only include response if action is "respond"
+- Never use "DELEGATE:" text format
+- Always return valid JSON"""
 
         composer = get_prompt_composer()
         system_prompt = composer.compose(
@@ -292,8 +329,12 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
         last_error = ""
         for attempt in range(3):
             try:
+                # First attempt uses structured output; subsequent retries fall back to plain text
+                # so providers that reject response_format still succeed.
+                fmt = SupervisorDecision if attempt == 0 else None
                 response = await self.llm.generate(
                     messages=litellm_messages,
+                    response_format=fmt,
                     tools=available_tools if available_tools else None,
                 )
                 break
@@ -314,6 +355,7 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
                 "messages": [AIMessage(content=f"I encountered an error processing your request. Please try again. ({last_error[:100]})")],
                 "tool_calls": None,
                 "next_step": "end",
+                "supervisor_decision": {"action": "respond"},
             }
 
         choice = response.choices[0].message
@@ -322,8 +364,11 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
 
         new_messages: List[BaseMessage] = []
         next_step = "end"
+        supervisor_decision: Dict[str, Any] = {"action": "respond"}
 
         if tool_calls:
+            # Native tool calls — already structured, treat as use_tool
+            supervisor_decision = {"action": "use_tool"}
             next_step = "tools"
             tc_msg = AIMessage(content="")
             tc_msg.tool_calls = [
@@ -335,24 +380,58 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
                 for i, tc in enumerate(tool_calls)
             ]
             new_messages.append(tc_msg)
-
-        elif content.startswith("DELEGATE:"):
-            role_id = content.replace("DELEGATE:", "").strip()
-            if role_manager.get_worker(role_id):
-                next_step = f"worker_{role_id}"
-            else:
-                new_messages.append(AIMessage(content=f"Error: Worker {role_id} not found."))
-
-        elif content:
-            new_messages.append(AIMessage(content=content))
         else:
-            new_messages.append(
-                AIMessage(
-                    content="No encontré una respuesta concluyente en este intento. Intenta reformular o especificar la fuente."
-                )
-            )
+            # Parse structured decision; fall back gracefully on any parse error
+            decision: Optional[SupervisorDecision] = None
+            if content:
+                try:
+                    decision = SupervisorDecision.model_validate_json(content)
+                except Exception:
+                    try:
+                        decision = SupervisorDecision.model_validate(json.loads(content))
+                    except Exception:
+                        logger.warning(
+                            "supervisor_node: could not parse SupervisorDecision for session %s, "
+                            "falling back to respond. content=%r",
+                            state.get("session_id", ""),
+                            _sanitize_for_logging(content),
+                        )
+                        decision = SupervisorDecision(action="respond", response=content)
 
-        return {"messages": new_messages, "tool_calls": tool_calls, "next_step": next_step}
+            if decision is None:
+                decision = SupervisorDecision(action="respond", response=ERROR_INCONCLUSIVE)
+
+            supervisor_decision = decision.model_dump()
+
+            if decision.action == "delegate":
+                role_id = decision.delegate_to or ""
+                if role_id and role_manager.get_worker(role_id):
+                    next_step = f"worker_{role_id}"
+                else:
+                    logger.warning(
+                        "supervisor_node: delegate_to=%r not found, falling back to respond", role_id
+                    )
+                    supervisor_decision = {"action": "respond"}
+                    new_messages.append(AIMessage(content=decision.response or ERROR_WORKER_NOT_FOUND))
+            elif decision.action == "respond":
+                new_messages.append(AIMessage(content=decision.response or ERROR_INCONCLUSIVE))
+            else:
+                # action="use_tool" without native tool_calls — edge case that should rarely occur.
+                # Normally when the LLM wants to use a tool, it returns native tool_calls (handled above).
+                # This case means the JSON structured output indicated tool use but the LLM didn't
+                # provide the actual tool call details. Treat as a respond fallback.
+                logger.warning(
+                    "supervisor_node: action=use_tool but no tool_calls in response for session %s",
+                    state.get("session_id", ""),
+                )
+                new_messages.append(AIMessage(content=decision.response or ERROR_TOOL_EXECUTION))
+
+        return {
+            "messages": new_messages,
+            "tool_calls": tool_calls,
+            "next_step": next_step,
+            "supervisor_decision": supervisor_decision,
+        }
 
     async def tools_node(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -400,9 +479,13 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
         return {"messages": results, "tool_calls": None}
 
     def should_continue(self, state: AgentState) -> str:
-        step = state.get("next_step")
-        if step and (step == "tools" or str(step).startswith("worker_")):
-            return step
+        decision = state.get("supervisor_decision") or {}
+        action = decision.get("action", "respond")
+        if action == "delegate":
+            role_id = decision.get("delegate_to", "")
+            return f"worker_{role_id}" if role_id else "end"
+        if action == "use_tool":
+            return "tools"
         return "end"
 
     async def _sleep_async(self, seconds: float):
@@ -431,6 +514,7 @@ Always respond with exactly ONE of: a direct answer, DELEGATE: <role_id>, or a t
                 "user_id": user_id,
                 "session_id": session_id,
                 "current_worker": None,
+                "supervisor_decision": None,
             }
         )
 
