@@ -250,3 +250,52 @@ async def test_supervisor_node_all_llm_attempts_fail_no_crash():
     assert result["next_step"] == "end"
     assert result["supervisor_decision"]["action"] == "respond"
     assert len(result["messages"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_supervisor_node_retry_drops_response_format():
+    """Verify that first attempt uses response_format, but retries drop it for provider fallback."""
+    graph = _make_graph()
+    call_count = 0
+    call_args_list = []
+
+    async def mock_generate(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        # Record the response_format argument from each call
+        call_args_list.append(kwargs.get("response_format"))
+        # Fail on first attempt to trigger retry
+        if call_count == 1:
+            raise RuntimeError("provider doesn't support response_format")
+        # Succeed on second attempt
+        return _mock_llm_response('{"action": "respond", "response": "fallback response"}')
+
+    with patch.object(graph.llm, "generate", new=AsyncMock(side_effect=mock_generate)), \
+         patch.object(graph, "_sleep_async", new=AsyncMock()), \
+         patch("app.core.agent_graph.role_manager") as mock_rm, \
+         patch("app.core.agent_graph.get_state_manager"), \
+         patch("app.core.agent_graph.get_prompt_composer") as mock_pc, \
+         patch("app.core.identity.get_identity_manager") as mock_id:
+
+        mock_id.return_value.get_soul.return_value = "soul"
+        mock_pc.return_value.compose.return_value = "system"
+        mock_rm.get_all_workers.return_value = []
+
+        result = await graph.supervisor_node({
+            "messages": [HumanMessage(content="test fallback")],
+            "next_step": None,
+            "tool_calls": None,
+            "user_id": "u1",
+            "session_id": "s1",
+            "current_worker": None,
+            "supervisor_decision": None,
+        })
+
+    # Verify fallback logic:
+    # First call should have response_format=SupervisorDecision
+    # Second call should have response_format=None (dropped)
+    assert call_count == 2, "Should retry once after first failure"
+    assert call_args_list[0] is not None, "First attempt should have response_format"
+    assert call_args_list[1] is None, "Retry should have response_format=None (dropped for compatibility)"
+    assert result["supervisor_decision"]["action"] == "respond"
+    assert result["next_step"] == "end"

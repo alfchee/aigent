@@ -1,6 +1,7 @@
 from typing import Annotated, Dict, List, Optional, TypedDict, Any
 import json
 import logging
+import re
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, ToolMessage
@@ -20,6 +21,23 @@ logger = logging.getLogger("navibot.agent_graph")
 SESSION_HISTORIES: Dict[str, List[BaseMessage]] = {}
 
 
+def _sanitize_for_logging(text: str, max_len: int = 200) -> str:
+    """Sanitize text for logging by redacting potential PII and truncating."""
+    # Redact email addresses
+    text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[email]', text)
+    # Redact phone numbers (basic pattern)
+    text = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '[phone]', text)
+    # Redact API keys / tokens (common patterns)
+    text = re.sub(r'(api[_-]?key|token|secret)["\']?\s*[:=]\s*["\']?[\w-]+', '[credential]', text)
+    return text[:max_len]
+
+
+# Error messages for supervisor fallbacks (keep consistent across all paths)
+ERROR_INCONCLUSIVE = "No encontré una respuesta concluyente en este intento. Intenta reformular o especificar la fuente."
+ERROR_WORKER_NOT_FOUND = "No se pudo encontrar el especialista solicitado."
+ERROR_TOOL_EXECUTION = "No se pudo ejecutar la herramienta solicitada."
+
+
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     next_step: Optional[str]
@@ -27,6 +45,9 @@ class AgentState(TypedDict):
     user_id: Optional[str]
     session_id: Optional[str]
     current_worker: Optional[str]
+    # supervisor_decision is stored as Dict[str, Any] (not SupervisorDecision directly)
+    # to avoid LangGraph serialization issues with Pydantic models.
+    # Reconstructed on access in should_continue().
     supervisor_decision: Optional[Dict[str, Any]]
 
 
@@ -267,18 +288,25 @@ class AgentGraph:
 ## Available Workers
 {json.dumps([w.dict() for w in role_manager.get_all_workers()], indent=2)}
 
-Analyze the user's request and respond with a JSON object in exactly this format:
-{{
-  "action": "respond" | "delegate" | "use_tool",
-  "delegate_to": "<role_id>",
-  "response": "<text>",
-  "reasoning": "<brief>"
-}}
-Rules:
-- Use "delegate" + delegate_to when a specialist worker should handle the task.
-- Use "use_tool" when you need to call an external tool (also emit the tool call).
-- Use "respond" + response for direct answers.
-- Only one action per turn. Never include "DELEGATE:" text."""
+Analyze the user's request and respond with a JSON object.
+
+### Valid Examples:
+
+For delegation:
+{{"action": "delegate", "delegate_to": "researcher", "reasoning": "needs web search"}}
+
+For direct response:
+{{"action": "respond", "response": "Here is the answer..."}}
+
+For tool use:
+{{"action": "use_tool", "reasoning": "fetching data"}}
+
+### Rules:
+- action must be exactly one of: "delegate", "respond", or "use_tool"
+- Only include delegate_to if action is "delegate"
+- Only include response if action is "respond"
+- Never use "DELEGATE:" text format
+- Always return valid JSON"""
 
         composer = get_prompt_composer()
         system_prompt = composer.compose(
@@ -366,15 +394,12 @@ Rules:
                             "supervisor_node: could not parse SupervisorDecision for session %s, "
                             "falling back to respond. content=%r",
                             state.get("session_id", ""),
-                            content[:200],
+                            _sanitize_for_logging(content),
                         )
                         decision = SupervisorDecision(action="respond", response=content)
 
             if decision is None:
-                decision = SupervisorDecision(
-                    action="respond",
-                    response="No encontré una respuesta concluyente en este intento. Intenta reformular o especificar la fuente.",
-                )
+                decision = SupervisorDecision(action="respond", response=ERROR_INCONCLUSIVE)
 
             supervisor_decision = decision.model_dump()
 
@@ -387,22 +412,19 @@ Rules:
                         "supervisor_node: delegate_to=%r not found, falling back to respond", role_id
                     )
                     supervisor_decision = {"action": "respond"}
-                    new_messages.append(
-                        AIMessage(content=decision.response or "No se pudo encontrar el especialista solicitado.")
-                    )
+                    new_messages.append(AIMessage(content=decision.response or ERROR_WORKER_NOT_FOUND))
             elif decision.action == "respond":
-                new_messages.append(
-                    AIMessage(content=decision.response or "No encontré una respuesta concluyente en este intento.")
-                )
+                new_messages.append(AIMessage(content=decision.response or ERROR_INCONCLUSIVE))
             else:
-                # use_tool without native tool_calls — nothing to execute
+                # action="use_tool" without native tool_calls — edge case that should rarely occur.
+                # Normally when the LLM wants to use a tool, it returns native tool_calls (handled above).
+                # This case means the JSON structured output indicated tool use but the LLM didn't
+                # provide the actual tool call details. Treat as a respond fallback.
                 logger.warning(
                     "supervisor_node: action=use_tool but no tool_calls in response for session %s",
                     state.get("session_id", ""),
                 )
-                new_messages.append(
-                    AIMessage(content=decision.response or "No se pudo ejecutar la herramienta solicitada.")
-                )
+                new_messages.append(AIMessage(content=decision.response or ERROR_TOOL_EXECUTION))
 
         return {
             "messages": new_messages,
