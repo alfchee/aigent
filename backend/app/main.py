@@ -15,6 +15,8 @@ from app.api.telegram_webhook import router as telegram_webhook_router
 from app.api.sessions import router as sessions_router
 from app.api.config import router as config_router
 from app.api.roles import router as roles_router
+from app.api.mcp import router as mcp_router
+from app.core.mcp_client import mcp_manager
 from app.core.paths import repo_root, workspace_db_dir, workspace_config_dir
 import logging
 import json
@@ -103,6 +105,15 @@ async def lifespan(app: FastAPI):
     
     # Start Scheduler
     scheduler.start()
+
+    # Initialize MCP servers and inject their tools into the registry
+    try:
+        await mcp_manager.sync_servers()
+        for tool in await mcp_manager.get_all_tools():
+            registry.register_dynamic(tool)
+        logger.info("MCP tools registered: %d", len([t for t in registry.list_tools() if t.name.startswith('mcp__')]))
+    except Exception as exc:
+        logger.error("MCP initialization failed (non-fatal): %s", exc)
     
     # Initialize Telegram (Webhook or Polling if configured)
     if telegram_bot.token:
@@ -113,6 +124,7 @@ async def lifespan(app: FastAPI):
     # Shutdown logic
     logger.info("NaviBot 2.0 (Phoenix) is shutting down...")
     scheduler.shutdown()
+    await mcp_manager.shutdown()
     if telegram_bot.token:
         await telegram_bot.shutdown()
 
@@ -133,6 +145,7 @@ app.include_router(telegram_webhook_router)
 app.include_router(sessions_router)
 app.include_router(config_router)
 app.include_router(roles_router)
+app.include_router(mcp_router)
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):

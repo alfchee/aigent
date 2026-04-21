@@ -2,6 +2,7 @@ from typing import Any, Callable, Dict, List, Optional, Type
 from pydantic import BaseModel, Field, create_model
 from inspect import signature, Parameter
 
+
 class ToolDefinition(BaseModel):
     name: str
     description: str
@@ -42,24 +43,50 @@ class ToolRegistry:
             return func
         return decorator
 
+    def register_dynamic(self, tool: ToolDefinition) -> None:
+        """Register a pre-built ToolDefinition (e.g. from MCP) directly."""
+        self._tools[tool.name] = tool
+
     def get_tool(self, name: str) -> Optional[ToolDefinition]:
         return self._tools.get(name)
 
     def list_tools(self) -> List[ToolDefinition]:
         return list(self._tools.values())
 
-    def to_openai_tools(self) -> List[Dict[str, Any]]:
-        """Convert registered tools to OpenAI function format."""
+    def _tool_to_openai(self, tool: ToolDefinition) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.args_schema.model_json_schema(),
+            },
+        }
+
+    def to_openai_tools(
+        self, mcp_servers: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert registered tools to OpenAI function format.
+
+        Args:
+            mcp_servers: When ``None`` (default) all tools are returned.
+                When a list is provided, non-MCP tools are always included
+                and MCP tools are filtered to only the listed server IDs.
+                An empty list means no MCP tools are included.
+        """
         openai_tools = []
         for tool in self._tools.values():
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.args_schema.model_json_schema()
-                }
-            })
+            if tool.name.startswith("mcp__"):
+                if mcp_servers is None:
+                    openai_tools.append(self._tool_to_openai(tool))
+                else:
+                    # tool name format: mcp__{server_id}__{original_name}
+                    parts = tool.name.split("__", 2)
+                    if len(parts) >= 2 and parts[1] in mcp_servers:
+                        openai_tools.append(self._tool_to_openai(tool))
+            else:
+                openai_tools.append(self._tool_to_openai(tool))
         return openai_tools
 
     async def execute(self, name: str, arguments: Dict[str, Any]) -> Any:
