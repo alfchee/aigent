@@ -1,7 +1,11 @@
 from typing import Annotated, Dict, List, Optional, TypedDict, Any
+import asyncio
 import json
 import logging
+import os
 import re
+import threading
+import time
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, ToolMessage
@@ -13,12 +17,51 @@ from app.core.refiner import RefinerNode
 from app.skills.registry import ToolRegistry, registry
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
+from app.core.chat_persistence import ChatPersistence
 from app.core.roles import role_manager
 
 logger = logging.getLogger("navibot.agent_graph")
 
 # Store full LangChain message history per session
 SESSION_HISTORIES: Dict[str, List[BaseMessage]] = {}
+
+# Persistence backend for session histories
+_chat_persistence = ChatPersistence()
+
+# Last-access timestamps (monotonic) used for in-memory TTL eviction
+# NOTE: This TTL tracking is per-process only. In multi-process deployments (gunicorn, etc.),
+# each worker maintains its own access time tracking, leading to inconsistent memory usage
+# across workers. Consider implementing a shared cache layer or distributed session storage
+# for production deployments with multiple workers.
+_SESSION_LAST_ACCESS: Dict[str, float] = {}
+_SESSION_TTL_DAYS: int = int(os.getenv("SESSION_TTL_DAYS", "7"))
+
+# Per-session locks to prevent concurrent modifications within a single process
+_SESSION_LOCKS: Dict[str, threading.RLock] = {}
+_SESSION_LOCKS_MANAGER = threading.Lock()
+
+
+def _get_session_lock(session_id: str) -> threading.RLock:
+    """Get or create a lock for the given session."""
+    with _SESSION_LOCKS_MANAGER:
+        if session_id not in _SESSION_LOCKS:
+            _SESSION_LOCKS[session_id] = threading.RLock()
+        return _SESSION_LOCKS[session_id]
+
+
+def _evict_stale_sessions() -> None:
+    """Remove in-memory entries for sessions inactive longer than SESSION_TTL_DAYS."""
+    ttl_seconds = _SESSION_TTL_DAYS * 86_400
+    now = time.monotonic()
+    stale = [
+        sid
+        for sid, last_access in list(_SESSION_LAST_ACCESS.items())
+        if (now - last_access) > ttl_seconds
+    ]
+    for sid in stale:
+        SESSION_HISTORIES.pop(sid, None)
+        _SESSION_LAST_ACCESS.pop(sid, None)
+        logger.debug("Evicted stale in-memory session: %s", sid)
 
 
 def _sanitize_for_logging(text: str, max_len: int = 200) -> str:
@@ -493,16 +536,29 @@ For tool use:
         await asyncio.sleep(seconds)
 
     async def run_turn(self, user_text: str, user_id: str, session_id: str) -> str:
-        global SESSION_HISTORIES
+        global SESSION_HISTORIES, _SESSION_LAST_ACCESS
 
-        if session_id not in SESSION_HISTORIES:
-            SESSION_HISTORIES[session_id] = []
+        # Get per-session lock to prevent concurrent load/modify/save race conditions
+        session_lock = _get_session_lock(session_id)
 
-        history = SESSION_HISTORIES[session_id]
-        
+        # Acquire lock before loading and modifying history
+        def _load_history_locked():
+            with session_lock:
+                # Load history from SQLite on first access within this process lifetime
+                if session_id not in SESSION_HISTORIES:
+                    loaded = _chat_persistence.load_history(session_id)
+                    SESSION_HISTORIES[session_id] = loaded
+                return SESSION_HISTORIES[session_id]
+
+        history = await asyncio.to_thread(_load_history_locked)
+
+        # Track access time; evict sessions that have been idle beyond the TTL
+        _SESSION_LAST_ACCESS[session_id] = time.monotonic()
+        _evict_stale_sessions()
+
         # We need to create a new message for the user input
         new_human_msg = HumanMessage(content=user_text)
-        
+
         # Start state with previous history + the new user message
         initial_messages = history + [new_human_msg]
 
@@ -528,7 +584,13 @@ For tool use:
             if isinstance(msg, ToolMessage):
                 state_mgr.record_tool_use(session_id_for_state, getattr(msg, "name", "unknown"), msg.content or "")
 
-        SESSION_HISTORIES[session_id] = out_messages
+        # Persist updated history under lock to ensure atomic save
+        def _save_history_locked():
+            with session_lock:
+                SESSION_HISTORIES[session_id] = out_messages
+                _chat_persistence.save_history(session_id, out_messages)
+
+        await asyncio.to_thread(_save_history_locked)
 
         assistant_response = ""
         last_tool_output = ""

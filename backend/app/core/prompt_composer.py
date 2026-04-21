@@ -105,7 +105,15 @@ class PromptComposer:
         applicable = []
         for injection in self._injections:
             for keyword in injection.trigger_keywords:
-                if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', text_to_check):
+                kw = keyword.lower()
+                # Use word-boundary matching only for purely alphanumeric tokens;
+                # fall back to plain substring match for keywords that contain
+                # spaces, dots, or other non-word characters (e.g. "x.com", "run ").
+                if re.fullmatch(r'\w+', kw):
+                    matched = bool(re.search(r'\b' + re.escape(kw) + r'\b', text_to_check))
+                else:
+                    matched = kw in text_to_check
+                if matched:
                     applicable.append(injection)
                     break
 

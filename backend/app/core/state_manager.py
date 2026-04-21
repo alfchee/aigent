@@ -129,17 +129,20 @@ class GlobalStateManager:
     def complete_worker_task(self, session_id: str, worker_id: str, result_summary: str) -> None:
         state = self.get_session_state(session_id)
         with self._get_session_lock(session_id):
-            if worker_id in state.workers:
-                w = state.workers[worker_id]
+            # Normalise key the same way set_active_worker() does
+            role_id = worker_id.replace("worker_", "", 1) if worker_id.startswith("worker_") else worker_id
+            w: Optional[WorkerStatus] = state.workers.get(role_id)
+            now = datetime.now().isoformat()
+            if w is not None:
                 w.status = "idle"
                 w.current_task = None
-                w.completed_at = datetime.now().isoformat()
+                w.completed_at = now
             state.completed_tasks.append(TaskRecord(
                 task_id=f"task_{len(state.completed_tasks) + 1}",
-                description=w.name if hasattr(w, 'name') else worker_id,
+                description=w.name if w is not None else role_id,
                 status="completed",
-                started_at=w.completed_at or datetime.now().isoformat(),
-                completed_at=datetime.now().isoformat(),
+                started_at=(w.completed_at if w is not None else None) or now,
+                completed_at=now,
                 result_summary=result_summary[:200] if result_summary else None,
             ))
             state.active_worker = None

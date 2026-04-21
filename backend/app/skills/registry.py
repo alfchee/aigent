@@ -85,13 +85,11 @@ class ToolRegistry:
             raise ValueError(f"Invalid arguments for tool '{name}': {e}")
 
         # Execute the function (sync/async)
-        if isinstance(tool.func, Callable):
-            import inspect
-            if inspect.iscoroutinefunction(tool.func):
-                return await tool.func(**validated_args.model_dump())
-            else:
-                return tool.func(**validated_args.model_dump())
-        return None
+        import inspect
+        if inspect.iscoroutinefunction(tool.func):
+            return await tool.func(**validated_args.model_dump())
+        else:
+            return tool.func(**validated_args.model_dump())
 
 # Global registry instance
 registry = ToolRegistry()
