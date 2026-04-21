@@ -9,12 +9,13 @@ from app.channels.telegram import telegram_bot
 from app.core.scheduler import SchedulerService
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
-from app.core.agent_graph import graph_app
+from app.core.agent_graph import get_graph
 from app.core.roles import role_manager
 from app.core.chat_persistence import ChatPersistence
 from app.api.telegram_webhook import router as telegram_webhook_router
 from app.api.sessions import router as sessions_router
 from app.api.config import router as config_router
+from app.api.roles import router as roles_router
 from app.core.paths import repo_root, workspace_db_dir, workspace_config_dir
 import logging
 import json
@@ -132,6 +133,7 @@ app.add_middleware(
 app.include_router(telegram_webhook_router)
 app.include_router(sessions_router)
 app.include_router(config_router)
+app.include_router(roles_router)
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -237,7 +239,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     prompt_text = f"{semantic_context}\n\nUser input:\n{text}"
 
                 try:
-                    assistant_text = await graph_app.run_turn(
+                    assistant_text = await get_graph().run_turn(
                         user_text=prompt_text,
                         user_id=session_id,
                         session_id=session_id,
@@ -344,24 +346,4 @@ async def chat_messages(
     return {"status": "ok", "session_id": session_id, "count": len(items), "items": items}
 
 
-@app.get("/roles")
-async def get_roles():
-    snapshot = role_manager.snapshot()
-    return {
-        "status": "ok",
-        "config_path": snapshot.config_path,
-        "updated_at": snapshot.updated_at,
-        "supervisor": snapshot.supervisor.model_dump(),
-        "workers": [worker.model_dump() for worker in snapshot.workers],
-    }
-
-
-@app.post("/roles/reload")
-async def reload_roles():
-    snapshot = role_manager.reload()
-    return {
-        "status": "ok",
-        "config_path": snapshot.config_path,
-        "updated_at": snapshot.updated_at,
-        "workers_count": len(snapshot.workers),
-    }
+# /roles endpoints are handled by app.api.roles (roles_router)

@@ -40,6 +40,16 @@ _SESSION_TTL_DAYS: int = int(os.getenv("SESSION_TTL_DAYS", "7"))
 _SESSION_LOCKS: Dict[str, threading.RLock] = {}
 _SESSION_LOCKS_MANAGER = threading.Lock()
 
+# Tracks the most-recently delegated role_id per session (used for DELETE guard)
+_session_active_roles: Dict[str, str] = {}
+_session_active_roles_lock = threading.Lock()
+
+
+def get_sessions_using_role(role_id: str) -> List[str]:
+    """Return session IDs whose last delegated role matches *role_id*."""
+    with _session_active_roles_lock:
+        return [sid for sid, rid in _session_active_roles.items() if rid == role_id]
+
 
 def _get_session_lock(session_id: str) -> threading.RLock:
     """Get or create a lock for the given session."""
@@ -450,6 +460,8 @@ For tool use:
                 role_id = decision.delegate_to or ""
                 if role_id and role_manager.get_worker(role_id):
                     next_step = f"worker_{role_id}"
+                    with _session_active_roles_lock:
+                        _session_active_roles[state.get("session_id", "")] = role_id
                 else:
                     logger.warning(
                         "supervisor_node: delegate_to=%r not found, falling back to respond", role_id
@@ -619,3 +631,29 @@ For tool use:
 
 
 graph_app = AgentGraph(default_llm, registry)
+
+# --- Graph lifecycle helpers ---
+
+_graph_instance: Optional[AgentGraph] = None
+_graph_instance_lock = threading.Lock()
+
+
+def get_graph() -> AgentGraph:
+    """Return the current AgentGraph singleton, creating it on first call."""
+    global _graph_instance
+    with _graph_instance_lock:
+        if _graph_instance is None:
+            _graph_instance = AgentGraph(default_llm, registry)
+    return _graph_instance
+
+
+def rebuild_graph() -> AgentGraph:
+    """Re-instantiate the AgentGraph singleton (call after roles change)."""
+    global _graph_instance
+    with _graph_instance_lock:
+        _graph_instance = AgentGraph(default_llm, registry)
+        logger.info(
+            "AgentGraph rebuilt: %d workers loaded.",
+            len(role_manager.get_all_workers()),
+        )
+    return _graph_instance
