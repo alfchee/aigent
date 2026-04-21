@@ -11,16 +11,33 @@
       "name": "Code Specialist",
       "description": "Expert in writing, debugging, and executing Python code.",
       "model": "gemini-2.0-flash",
+      "provider_override": null,
       "system_prompt": "You are a senior software engineer. Write clean, efficient Python code. Use the sandbox for execution. Always handle errors gracefully.",
-      "skills": ["python_repl", "file_read", "file_write"]
+      "skills": [
+        "file_read",
+        "file_write",
+        "python_repl"
+      ],
+      "mcp_servers": [],
+      "enabled": true,
+      "created_at": null,
+      "updated_at": null
     },
     {
       "role_id": "researcher",
       "name": "Web Researcher",
       "description": "Expert in finding information on the internet.",
-      "model": "gemini-2.0-flash", 
+      "model": "gemini-2.0-flash",
+      "provider_override": null,
       "system_prompt": "You are a web researcher. Use search tools to find accurate information. Cite your sources.",
-      "skills": ["web_search", "web_browse"]
+      "skills": [
+        "web_browse",
+        "web_search"
+      ],
+      "mcp_servers": [],
+      "enabled": true,
+      "created_at": null,
+      "updated_at": null
     }
   ]
 }

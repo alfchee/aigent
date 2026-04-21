@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import tempfile
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -13,8 +15,13 @@ class AgentRole(BaseModel):
     name: str
     description: str
     model: str = "gpt-4o"
+    provider_override: Optional[str] = None
     system_prompt: str
     skills: List[str] = Field(default_factory=list)
+    mcp_servers: List[str] = Field(default_factory=list)
+    enabled: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 class SupervisorConfig(BaseModel):
     name: str
@@ -39,7 +46,8 @@ class RoleManager:
 
     def _normalize_worker(self, worker: AgentRole) -> AgentRole:
         normalized_skills = sorted({skill.strip() for skill in worker.skills if skill and skill.strip()})
-        return worker.model_copy(update={"skills": normalized_skills})
+        normalized_mcp = sorted({s.strip() for s in worker.mcp_servers if s and s.strip()})
+        return worker.model_copy(update={"skills": normalized_skills, "mcp_servers": normalized_mcp})
 
     def _load_config(self) -> None:
         try:
@@ -65,6 +73,28 @@ class RoleManager:
     def reload(self) -> RolesSnapshot:
         self._load_config()
         return self.snapshot()
+
+    def _serialize_config(self) -> None:
+        """Write current in-memory state back to roles.json atomically via temp+replace."""
+        with self._lock:
+            sup_data = self.supervisor.model_dump(mode="json") if self.supervisor else {}
+            workers_data = [w.model_dump(mode="json") for w in self.workers]
+        data = {"supervisor": sup_data, "workers": workers_data}
+        config_dir = os.path.dirname(self.config_path)
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        logger.info("Serialized %d workers to %s", len(workers_data), self.config_path)
 
     def snapshot(self) -> RolesSnapshot:
         with self._lock:
@@ -98,6 +128,57 @@ class RoleManager:
     def get_all_workers(self) -> List[AgentRole]:
         with self._lock:
             return [worker.model_copy() for worker in self.workers]
+
+    # --- Write-back methods ---
+
+    def get_role(self, role_id: str) -> AgentRole:
+        """Returns a single role by ID. Raises KeyError if not found."""
+        role = self.get_worker(role_id)
+        if role is None:
+            raise KeyError(f"Role '{role_id}' not found.")
+        return role
+
+    def create_role(self, role: AgentRole) -> AgentRole:
+        """Adds role to in-memory list, serializes roles.json, triggers reload."""
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            for w in self.workers:
+                if w.role_id == role.role_id:
+                    raise ValueError(f"Role '{role.role_id}' already exists.")
+            normalized = self._normalize_worker(
+                role.model_copy(update={"created_at": now, "updated_at": now})
+            )
+            self.workers.append(normalized)
+        self._serialize_config()
+        self.reload()
+        return self.get_role(role.role_id)
+
+    def update_role(self, role_id: str, updates: dict) -> AgentRole:
+        """Merges updates into matching role, serializes, triggers reload."""
+        safe_updates = {k: v for k, v in updates.items() if k not in ("role_id", "created_at")}
+        safe_updates["updated_at"] = datetime.now(timezone.utc)
+        with self._lock:
+            for i, w in enumerate(self.workers):
+                if w.role_id == role_id:
+                    self.workers[i] = self._normalize_worker(w.model_copy(update=safe_updates))
+                    break
+            else:
+                raise KeyError(f"Role '{role_id}' not found.")
+        self._serialize_config()
+        self.reload()
+        return self.get_role(role_id)
+
+    def delete_role(self, role_id: str) -> None:
+        """Removes role, serializes, triggers reload. Raises KeyError if not found."""
+        with self._lock:
+            for i, w in enumerate(self.workers):
+                if w.role_id == role_id:
+                    del self.workers[i]
+                    break
+            else:
+                raise KeyError(f"Role '{role_id}' not found.")
+        self._serialize_config()
+        self.reload()
 
 # Singleton
 role_manager = RoleManager()
