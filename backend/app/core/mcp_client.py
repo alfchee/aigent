@@ -26,6 +26,7 @@ from app.skills.registry import ToolDefinition
 logger = logging.getLogger("navibot.core.mcp_client")
 
 _MCP_CONFIG_FILE = "mcp_config.json"
+_MCP_CONNECT_TIMEOUT = 10.0  # seconds
 
 
 # ---------------------------------------------------------------------------
@@ -170,21 +171,30 @@ class McpManager:
         args: List[str],
         env: Dict[str, str],
     ) -> ConnectedServer:
-        """Connect to a local STDIO MCP server."""
-        merged_env = {**os.environ, **env}
-        params = StdioServerParameters(command=command, args=args, env=merged_env)
-        stack = AsyncExitStack()
-        read, write = await stack.enter_async_context(stdio_client(params))
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        tools_result = await session.list_tools()
-        tools = tools_result.tools
-        logger.info(
-            "MCP STDIO connected: server=%s tools=%d", server_id, len(tools)
-        )
-        return ConnectedServer(
-            server_id=server_id, session=session, tools=tools, exit_stack=stack
-        )
+        """Connect to a local STDIO MCP server with timeout."""
+        async def _connect():
+            merged_env = {**os.environ, **env}
+            params = StdioServerParameters(command=command, args=args, env=merged_env)
+            stack = AsyncExitStack()
+            read, write = await stack.enter_async_context(stdio_client(params))
+            session = await stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+            tools_result = await session.list_tools()
+            tools = tools_result.tools
+            return ConnectedServer(
+                server_id=server_id, session=session, tools=tools, exit_stack=stack
+            )
+
+        try:
+            connected = await asyncio.wait_for(_connect(), timeout=_MCP_CONNECT_TIMEOUT)
+            logger.info(
+                "MCP STDIO connected: server=%s tools=%d", server_id, len(connected.tools)
+            )
+            return connected
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"Failed to connect to STDIO server '{server_id}' within {_MCP_CONNECT_TIMEOUT}s"
+            )
 
     async def connect_http(
         self,
@@ -192,21 +202,30 @@ class McpManager:
         base_url: str,
         headers: Dict[str, str],
     ) -> ConnectedServer:
-        """Connect to a remote MCP server via HTTP/SSE transport."""
-        stack = AsyncExitStack()
-        read, write = await stack.enter_async_context(
-            sse_client(url=base_url, headers=headers)
-        )
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        tools_result = await session.list_tools()
-        tools = tools_result.tools
-        logger.info(
-            "MCP HTTP/SSE connected: server=%s tools=%d", server_id, len(tools)
-        )
-        return ConnectedServer(
-            server_id=server_id, session=session, tools=tools, exit_stack=stack
-        )
+        """Connect to a remote MCP server via HTTP/SSE transport with timeout."""
+        async def _connect():
+            stack = AsyncExitStack()
+            read, write = await stack.enter_async_context(
+                sse_client(url=base_url, headers=headers)
+            )
+            session = await stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+            tools_result = await session.list_tools()
+            tools = tools_result.tools
+            return ConnectedServer(
+                server_id=server_id, session=session, tools=tools, exit_stack=stack
+            )
+
+        try:
+            connected = await asyncio.wait_for(_connect(), timeout=_MCP_CONNECT_TIMEOUT)
+            logger.info(
+                "MCP HTTP/SSE connected: server=%s tools=%d", server_id, len(connected.tools)
+            )
+            return connected
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"Failed to connect to HTTP/SSE server '{server_id}' within {_MCP_CONNECT_TIMEOUT}s"
+            )
 
     async def _connect_server(
         self, cfg: McpServerConfig
@@ -374,6 +393,18 @@ class McpManager:
             raise KeyError(f"Server '{server_id}' not found.")
         self._configs.pop(server_id)
         self._save_config()
+
+    # ------------------------------------------------------------------
+    # Public lifecycle operations
+    # ------------------------------------------------------------------
+
+    async def disconnect_and_remove_server(self, server_id: str) -> None:
+        """Disconnect a server and remove it from config (atomic operation)."""
+        async with self._lock:
+            await self._disconnect_server(server_id)
+            if server_id in self._configs:
+                self._configs.pop(server_id)
+                self._save_config()
 
     # ------------------------------------------------------------------
     # Lifecycle

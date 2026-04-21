@@ -6,13 +6,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import create_model
 
-from app.core.mcp_client import McpManager, McpServerConfig, _make_tool_func
+from app.core.mcp_client import (
+    ConnectedServer,
+    McpManager,
+    McpServerConfig,
+    _make_tool_func,
+)
 from app.skills.registry import ToolDefinition, ToolRegistry
 
 
@@ -217,9 +224,6 @@ class TestMcpManagerConnections:
             description="Search the web",
             schema={"properties": {"query": {"type": "string"}}, "required": ["query"]},
         )
-        from app.core.mcp_client import ConnectedServer
-        from contextlib import AsyncExitStack
-
         mock_session = _mock_session([mcp_tool])
         mock_stack = AsyncExitStack()
 
@@ -244,9 +248,6 @@ class TestMcpManagerConnections:
 
     @pytest.mark.asyncio
     async def test_disconnect_server_removes_entry(self, tmp_path):
-        from app.core.mcp_client import ConnectedServer
-        from contextlib import AsyncExitStack
-
         mock_session = _mock_session([])
         stack = MagicMock()
         stack.aclose = AsyncMock()
@@ -270,9 +271,6 @@ class TestMcpManagerConnections:
 
     @pytest.mark.asyncio
     async def test_call_tool_dispatches_to_session(self, tmp_path):
-        from app.core.mcp_client import ConnectedServer
-        from contextlib import AsyncExitStack
-
         content = MagicMock()
         content.text = "result"
         call_result = MagicMock()
@@ -303,8 +301,6 @@ class TestMcpManagerConnections:
 
     @pytest.mark.asyncio
     async def test_shutdown_disconnects_all(self, tmp_path):
-        from app.core.mcp_client import ConnectedServer
-
         s1 = MagicMock()
         s1.aclose = AsyncMock()
         s2 = MagicMock()
@@ -327,9 +323,6 @@ class TestMcpManagerConnections:
 
 class TestMcpManagerStatus:
     def test_status_reflects_connection_state(self, tmp_path):
-        from app.core.mcp_client import ConnectedServer, McpServerConfig
-        from contextlib import AsyncExitStack
-
         mcp_tool = _mock_mcp_tool("t1")
         mock_session = MagicMock()
 
@@ -354,9 +347,6 @@ class TestMcpManagerStatus:
 
 class TestToolRegistryMcpFiltering:
     def _make_registry_with_tools(self) -> ToolRegistry:
-        from pydantic import create_model
-        from app.skills.registry import ToolDefinition
-
         reg = ToolRegistry()
         # A plain (non-MCP) skill
         SkillArgs = create_model("SkillArgs", query=(str, ...))
@@ -409,10 +399,87 @@ class TestToolRegistryMcpFiltering:
         assert "mcp__s2__tool_b" not in names
 
     def test_register_dynamic_stores_tool(self):
-        from pydantic import create_model
-
         reg = ToolRegistry()
         DynArgs = create_model("DynArgs")
         td = ToolDefinition(name="dyn", description="d", args_schema=DynArgs, func=AsyncMock())
         reg.register_dynamic(td)
         assert reg.get_tool("dyn") is td
+
+    @pytest.mark.asyncio
+    async def test_remove_tools_by_prefix(self):
+        reg = ToolRegistry()
+        # Add some tools
+        DynArgs = create_model("DynArgs")
+        reg.register_dynamic(ToolDefinition(name="mcp__s1__tool1", description="t1", args_schema=DynArgs, func=AsyncMock()))
+        reg.register_dynamic(ToolDefinition(name="mcp__s1__tool2", description="t2", args_schema=DynArgs, func=AsyncMock()))
+        reg.register_dynamic(ToolDefinition(name="mcp__s2__tool3", description="t3", args_schema=DynArgs, func=AsyncMock()))
+        # Remove by prefix
+        removed = reg.remove_tools_by_prefix("mcp__s1__")
+        assert set(removed) == {"mcp__s1__tool1", "mcp__s1__tool2"}
+        assert reg.get_tool("mcp__s2__tool3") is not None
+        assert reg.get_tool("mcp__s1__tool1") is None
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_mcp_tool_execution(self):
+        """Test executing an MCP tool through the registry.execute() path."""
+        # Create a mock MCP tool
+        async def mock_tool_impl(query: str) -> str:
+            return f"Result for {query}"
+
+        args_schema = create_model("SearchArgs", query=(str, ...))
+        tool_def = ToolDefinition(
+            name="mcp__test_srv__search",
+            description="Search tool",
+            args_schema=args_schema,
+            func=mock_tool_impl,
+        )
+
+        # Register it
+        reg = ToolRegistry()
+        reg.register_dynamic(tool_def)
+
+        # Execute through the registry
+        result = await reg.execute("mcp__test_srv__search", {"query": "hello"})
+        assert result == "Result for hello"
+
+    @pytest.mark.asyncio
+    async def test_mcp_tools_filter_by_server(self):
+        """Test that mcp_servers parameter correctly filters tools."""
+        reg = ToolRegistry()
+
+        # Add a non-MCP tool
+        PlainArgs = create_model("PlainArgs")
+        reg.register_dynamic(ToolDefinition(
+            name="plain_tool",
+            description="Plain tool",
+            args_schema=PlainArgs,
+            func=AsyncMock(),
+        ))
+
+        # Add MCP tools from different servers
+        MCP1Args = create_model("MCP1Args")
+        reg.register_dynamic(ToolDefinition(
+            name="mcp__server1__tool_a",
+            description="Tool A",
+            args_schema=MCP1Args,
+            func=AsyncMock(),
+        ))
+
+        MCP2Args = create_model("MCP2Args")
+        reg.register_dynamic(ToolDefinition(
+            name="mcp__server2__tool_b",
+            description="Tool B",
+            args_schema=MCP2Args,
+            func=AsyncMock(),
+        ))
+
+        # Get all tools
+        all_tools = reg.to_openai_tools()
+        assert len(all_tools) == 3
+
+        # Filter to only server1
+        filtered = reg.to_openai_tools(mcp_servers=["server1"])
+        names = [t["function"]["name"] for t in filtered]
+        assert "plain_tool" in names
+        assert "mcp__server1__tool_a" in names
+        assert "mcp__server2__tool_b" not in names

@@ -47,6 +47,13 @@ class ToolRegistry:
         """Register a pre-built ToolDefinition (e.g. from MCP) directly."""
         self._tools[tool.name] = tool
 
+    def remove_tools_by_prefix(self, prefix: str) -> List[str]:
+        """Remove all tools with a given name prefix. Returns list of removed tool names."""
+        removed = [name for name in self._tools if name.startswith(prefix)]
+        for name in removed:
+            del self._tools[name]
+        return removed
+
     def get_tool(self, name: str) -> Optional[ToolDefinition]:
         return self._tools.get(name)
 
