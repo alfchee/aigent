@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 from threading import Lock
 from typing import Dict, List, Optional
@@ -74,13 +75,25 @@ class RoleManager:
         return self.snapshot()
 
     def _serialize_config(self) -> None:
-        """Write current in-memory state back to roles.json."""
+        """Write current in-memory state back to roles.json atomically via temp+replace."""
         with self._lock:
-            sup_data = self.supervisor.model_dump() if self.supervisor else {}
+            sup_data = self.supervisor.model_dump(mode="json") if self.supervisor else {}
             workers_data = [w.model_dump(mode="json") for w in self.workers]
         data = {"supervisor": sup_data, "workers": workers_data}
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        config_dir = os.path.dirname(self.config_path)
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         logger.info("Serialized %d workers to %s", len(workers_data), self.config_path)
 
     def snapshot(self) -> RolesSnapshot:

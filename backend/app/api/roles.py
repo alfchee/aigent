@@ -4,7 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.roles import AgentRole, role_manager
 from app.core.agent_graph import get_sessions_using_role, rebuild_graph
@@ -26,8 +26,8 @@ class CreateRoleRequest(BaseModel):
     model: str = "gpt-4o"
     provider_override: Optional[str] = None
     system_prompt: str
-    skills: List[str] = []
-    mcp_servers: List[str] = []
+    skills: List[str] = Field(default_factory=list)
+    mcp_servers: List[str] = Field(default_factory=list)
     enabled: bool = True
 
 
@@ -99,11 +99,14 @@ async def update_role(role_id: str, body: UpdateRoleRequest) -> Dict[str, Any]:
 async def delete_role(role_id: str) -> Dict[str, Any]:
     active = get_sessions_using_role(role_id)
     if active:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Role '{role_id}' is referenced by active sessions: {active}. "
-                   "Wait for those sessions to finish or start new sessions.",
+        sample = active[:5]
+        detail = (
+            f"Role '{role_id}' is referenced by {len(active)} active session(s). "
+            f"Sample: {sample}{'...' if len(active) > 5 else ''}. "
+            "Wait for those sessions to finish or start new sessions."
         )
+        logger.info("delete_role blocked: role=%s active_count=%d", role_id, len(active))
+        raise HTTPException(status_code=409, detail=detail)
     try:
         role_manager.delete_role(role_id)
     except KeyError:
@@ -137,7 +140,7 @@ async def test_role(role_id: str, body: TestRoleRequest) -> Dict[str, Any]:
         reply = response.choices[0].message.content or ""
     except Exception as exc:
         logger.exception("test_role: LLM call failed for role '%s'", role_id)
-        raise HTTPException(status_code=502, detail=f"LLM error: {exc}")
+        raise HTTPException(status_code=502, detail="The LLM service returned an error. Check server logs for details.")
 
     return {"status": "ok", "role_id": role_id, "message": body.message, "response": reply}
 

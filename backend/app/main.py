@@ -10,7 +10,6 @@ from app.core.scheduler import SchedulerService
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
 from app.core.agent_graph import get_graph
-from app.core.roles import role_manager
 from app.core.chat_persistence import ChatPersistence
 from app.api.telegram_webhook import router as telegram_webhook_router
 from app.api.sessions import router as sessions_router
