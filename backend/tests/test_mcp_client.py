@@ -4,12 +4,11 @@ All external MCP connections are mocked — no real servers are required.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import create_model
@@ -73,6 +72,29 @@ class TestMcpServerConfig:
         data = {"transport": "stdio", "command": "node", "args": ["server.js"], "env_vars": {}, "enabled": True}
         cfg = McpServerConfig("s", data)
         assert cfg.to_dict()["command"] == "node"
+
+    def test_to_safe_dict_masks_non_empty_values(self):
+        cfg = McpServerConfig("gh", {
+            "transport": "stdio",
+            "command": "npx",
+            "args": [],
+            "env_vars": {"GITHUB_TOKEN": "secret123", "EMPTY_VAR": ""},
+        })
+        safe = cfg.to_safe_dict()
+        assert safe["env_vars"]["GITHUB_TOKEN"] == "***"
+        assert safe["env_vars"]["EMPTY_VAR"] == ""
+
+    def test_to_safe_dict_masks_http_headers(self):
+        cfg = McpServerConfig("remote", {
+            "transport": "http",
+            "base_url": "https://example.com",
+            "headers": {"Authorization": "Bearer tok", "X-Empty": ""},
+        })
+        safe = cfg.to_safe_dict()
+        assert safe["headers"]["Authorization"] == "***"
+        assert safe["headers"]["X-Empty"] == ""
+        # base_url is not masked
+        assert safe["base_url"] == "https://example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +338,43 @@ class TestMcpManagerConnections:
         s1.aclose.assert_awaited_once()
         s2.aclose.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_reconnect_server_disconnects_then_reconnects(self, tmp_path):
+        old_stack = MagicMock()
+        old_stack.aclose = AsyncMock()
+        new_connected = ConnectedServer("srv", MagicMock(), [_mock_mcp_tool("t")], AsyncExitStack())
+
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        mgr._configs = {"srv": McpServerConfig("srv", {"transport": "stdio", "command": "npx", "enabled": True})}
+        mgr._servers = {"srv": ConnectedServer("srv", MagicMock(), [], old_stack)}
+
+        # Patch _connect_server to return a new connection
+        async def _fake_connect(cfg):
+            return new_connected
+
+        mgr._connect_server = _fake_connect
+        result = await mgr.reconnect_server("srv")
+
+        old_stack.aclose.assert_awaited_once()
+        assert mgr._servers["srv"] is new_connected
+        assert result is new_connected
+
+    @pytest.mark.asyncio
+    async def test_reconnect_server_unknown_raises(self, tmp_path):
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        mgr._configs = {}
+        with pytest.raises(KeyError, match="not found"):
+            await mgr.reconnect_server("ghost")
+
+    @pytest.mark.asyncio
+    async def test_reconnect_server_disabled_does_not_reconnect(self, tmp_path):
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        mgr._configs = {"off": McpServerConfig("off", {"transport": "stdio", "command": "x", "enabled": False})}
+        mgr._servers = {}
+        result = await mgr.reconnect_server("off")
+        assert result is None
+        assert "off" not in mgr._servers
+
 
 # ---------------------------------------------------------------------------
 # McpManager — get_server_status
@@ -397,6 +456,34 @@ class TestToolRegistryMcpFiltering:
         assert "smart_search" in names
         assert "mcp__s1__tool_a" in names
         assert "mcp__s2__tool_b" not in names
+
+    def test_malformed_mcp_name_excluded_when_filter_active(self):
+        """A tool named mcp__s1 (only 2 parts) must not be included for server 's1'."""
+        reg = ToolRegistry()
+        MalArgs = create_model("MalArgs")
+        reg.register_dynamic(ToolDefinition(
+            name="mcp__s1",  # missing the third segment
+            description="malformed",
+            args_schema=MalArgs,
+            func=AsyncMock(),
+        ))
+        tools = reg.to_openai_tools(mcp_servers=["s1"])
+        names = [t["function"]["name"] for t in tools]
+        assert "mcp__s1" not in names
+
+    def test_malformed_mcp_name_included_when_no_filter(self):
+        """Without a filter, all tools (even malformed names) pass through."""
+        reg = ToolRegistry()
+        MalArgs = create_model("MalArgs2")
+        reg.register_dynamic(ToolDefinition(
+            name="mcp__s1",
+            description="malformed",
+            args_schema=MalArgs,
+            func=AsyncMock(),
+        ))
+        tools = reg.to_openai_tools()
+        names = [t["function"]["name"] for t in tools]
+        assert "mcp__s1" in names
 
     def test_register_dynamic_stores_tool(self):
         reg = ToolRegistry()

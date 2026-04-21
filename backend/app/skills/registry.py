@@ -49,7 +49,8 @@ class ToolRegistry:
 
     def remove_tools_by_prefix(self, prefix: str) -> List[str]:
         """Remove all tools with a given name prefix. Returns list of removed tool names."""
-        removed = [name for name in self._tools if name.startswith(prefix)]
+        # Snapshot keys first to avoid mutating dict during iteration
+        removed = [name for name in list(self._tools) if name.startswith(prefix)]
         for name in removed:
             del self._tools[name]
         return removed
@@ -58,6 +59,7 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def list_tools(self) -> List[ToolDefinition]:
+        # Snapshot to avoid iteration issues if registry is mutated concurrently
         return list(self._tools.values())
 
     def _tool_to_openai(self, tool: ToolDefinition) -> Dict[str, Any]:
@@ -83,14 +85,15 @@ class ToolRegistry:
                 An empty list means no MCP tools are included.
         """
         openai_tools = []
-        for tool in self._tools.values():
+        # Snapshot to avoid RuntimeError if the registry is mutated concurrently
+        for tool in list(self._tools.values()):
             if tool.name.startswith("mcp__"):
                 if mcp_servers is None:
                     openai_tools.append(self._tool_to_openai(tool))
                 else:
-                    # tool name format: mcp__{server_id}__{original_name}
+                    # Require full mcp__{server_id}__{original_name} format
                     parts = tool.name.split("__", 2)
-                    if len(parts) >= 2 and parts[1] in mcp_servers:
+                    if len(parts) == 3 and parts[0] == "mcp" and parts[1] in mcp_servers:
                         openai_tools.append(self._tool_to_openai(tool))
             else:
                 openai_tools.append(self._tool_to_openai(tool))

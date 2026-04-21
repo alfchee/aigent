@@ -112,8 +112,8 @@ async def lifespan(app: FastAPI):
         for tool in await mcp_manager.get_all_tools():
             registry.register_dynamic(tool)
         logger.info("MCP tools registered: %d", len([t for t in registry.list_tools() if t.name.startswith('mcp__')]))
-    except Exception as exc:
-        logger.error("MCP initialization failed (non-fatal): %s", exc)
+    except Exception:
+        logger.exception("MCP initialization failed (non-fatal):")
     
     # Initialize Telegram (Webhook or Polling if configured)
     if telegram_bot.token:

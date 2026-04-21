@@ -62,6 +62,15 @@ class McpServerConfig:
             d["headers"] = self.headers
         return d
 
+    def to_safe_dict(self) -> Dict[str, Any]:
+        """Like to_dict() but masks non-empty secret values (env_vars, headers)."""
+        d = self.to_dict()
+        if "env_vars" in d:
+            d["env_vars"] = {k: ("***" if v else "") for k, v in d["env_vars"].items()}
+        if "headers" in d:
+            d["headers"] = {k: ("***" if v else "") for k, v in d["headers"].items()}
+        return d
+
 
 # ---------------------------------------------------------------------------
 # Connected server wrapper
@@ -288,9 +297,16 @@ class McpManager:
         """Return all MCP tools wrapped as ToolDefinition objects."""
         from pydantic import create_model
 
+        # Snapshot the live servers under the lock; build ToolDefinitions outside it
+        async with self._lock:
+            snapshot = [
+                (server_id, list(connected.tools), connected.session)
+                for server_id, connected in self._servers.items()
+            ]
+
         result: List[ToolDefinition] = []
-        for server_id, connected in self._servers.items():
-            for mcp_tool in connected.tools:
+        for server_id, tools, session in snapshot:
+            for mcp_tool in tools:
                 tool_name = f"mcp__{server_id}__{mcp_tool.name}"
                 description = mcp_tool.description or mcp_tool.name
 
@@ -313,7 +329,7 @@ class McpManager:
                         name=tool_name,
                         description=description,
                         args_schema=DynamicArgs,
-                        func=_make_tool_func(connected.session, mcp_tool.name),
+                        func=_make_tool_func(session, mcp_tool.name),
                     )
                 )
         return result
@@ -324,7 +340,9 @@ class McpManager:
         if len(parts) != 3 or parts[0] != "mcp":
             raise ValueError(f"Invalid MCP tool name format: {tool_name!r}")
         server_id, original_name = parts[1], parts[2]
-        connected = self._servers.get(server_id)
+        # Snapshot the connection reference under the lock before awaiting
+        async with self._lock:
+            connected = self._servers.get(server_id)
         if not connected:
             raise ValueError(f"MCP server '{server_id}' is not connected.")
         result = await connected.session.call_tool(original_name, arguments=arguments)
@@ -349,9 +367,12 @@ class McpManager:
 
     def get_server_status(self) -> Dict[str, Any]:
         """Return connection status for every configured server."""
+        # Take atomic snapshots so concurrent mutations don't affect iteration
+        configs = dict(self._configs)
+        servers = dict(self._servers)
         statuses: Dict[str, Any] = {}
-        for sid, cfg in self._configs.items():
-            connected = self._servers.get(sid)
+        for sid, cfg in configs.items():
+            connected = servers.get(sid)
             statuses[sid] = {
                 "enabled": cfg.enabled,
                 "transport": cfg.transport,
@@ -401,10 +422,25 @@ class McpManager:
     async def disconnect_and_remove_server(self, server_id: str) -> None:
         """Disconnect a server and remove it from config (atomic operation)."""
         async with self._lock:
+            if server_id not in self._configs:
+                raise KeyError(f"Server '{server_id}' not found.")
             await self._disconnect_server(server_id)
-            if server_id in self._configs:
-                self._configs.pop(server_id)
-                self._save_config()
+            self._configs.pop(server_id)
+            self._save_config()
+
+    async def reconnect_server(self, server_id: str) -> Optional[ConnectedServer]:
+        """Disconnect then reconnect a single server under the lock."""
+        async with self._lock:
+            cfg = self._configs.get(server_id)
+            if not cfg:
+                raise KeyError(f"Server '{server_id}' not found.")
+            await self._disconnect_server(server_id)
+            if not cfg.enabled:
+                return None
+            connected = await self._connect_server(cfg)
+            if connected:
+                self._servers[server_id] = connected
+            return connected
 
     # ------------------------------------------------------------------
     # Lifecycle
