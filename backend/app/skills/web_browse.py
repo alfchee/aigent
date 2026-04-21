@@ -13,7 +13,7 @@ PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false
 
 
 class WebBrowseArgs(BaseModel):
-    url: str = Field(..., description="Full URL to browse (must include https:// or http://)")
+    url: str = Field(..., description="Full URL to browse (must start with https:// or http://)")
     session_id: str = Field(default="default", description="Session ID for isolating browser context")
 
 
@@ -34,8 +34,8 @@ def web_browse(url: str, session_id: str = "default") -> str:
     """
     result = WebBrowseResult(url=url, title="", text_content="", links=[], error=None)
 
-    if not url.startswith(("http://", "https://", "file://")):
-        result.error = f"Unsupported URL scheme: {url}"
+    if not url.startswith(("http://", "https://")):
+        result.error = f"Unsupported URL scheme: {url}. Only http:// and https:// are allowed."
         return _serialize_result(result)
 
     try:
