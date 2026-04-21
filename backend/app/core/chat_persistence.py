@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from app.core.paths import workspace_db_dir
 
@@ -20,6 +21,7 @@ class ChatPersistence:
         self.db_file = Path(self.config.db_path)
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
+        self._ensure_history_schema()
 
     def _ensure_schema(self) -> None:
         with sqlite3.connect(self.db_file) as conn:
@@ -123,3 +125,154 @@ class ChatPersistence:
                 }
             )
         return out
+
+    # ------------------------------------------------------------------
+    # Agent session history — stores full LangGraph BaseMessage lists
+    # ------------------------------------------------------------------
+
+    def _ensure_history_schema(self) -> None:
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_session_history (
+                    session_id TEXT NOT NULL,
+                    position   INTEGER NOT NULL,
+                    msg_type   TEXT NOT NULL,
+                    content    TEXT NOT NULL DEFAULT '',
+                    extra_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                    PRIMARY KEY (session_id, position)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_agent_history_session
+                ON agent_session_history(session_id)
+                """
+            )
+            conn.commit()
+
+    def load_history(self, session_id: str) -> List[Any]:
+        """Return the persisted BaseMessage list for *session_id*, or [] if none."""
+        from langchain_core.messages import (
+            AIMessage,
+            FunctionMessage,
+            HumanMessage,
+            ToolMessage,
+        )
+
+        with sqlite3.connect(self.db_file) as conn:
+            rows = conn.execute(
+                """
+                SELECT msg_type, content, extra_json
+                FROM agent_session_history
+                WHERE session_id = ?
+                ORDER BY position ASC
+                """,
+                (session_id,),
+            ).fetchall()
+
+        messages: List[Any] = []
+        for msg_type, content, extra_json in rows:
+            try:
+                extra: dict = json.loads(extra_json or "{}")
+            except Exception:
+                extra = {}
+
+            if msg_type == "human":
+                messages.append(HumanMessage(content=content))
+            elif msg_type == "ai":
+                msg = AIMessage(content=content)
+                if extra.get("tool_calls"):
+                    msg.tool_calls = extra["tool_calls"]
+                messages.append(msg)
+            elif msg_type == "tool":
+                messages.append(
+                    ToolMessage(
+                        content=content,
+                        tool_call_id=extra.get("tool_call_id", ""),
+                        name=extra.get("name", ""),
+                    )
+                )
+            elif msg_type == "function":
+                messages.append(
+                    FunctionMessage(
+                        content=content,
+                        name=extra.get("name", ""),
+                    )
+                )
+        return messages
+
+    def save_history(self, session_id: str, messages: List[Any]) -> None:
+        """Replace the persisted history for *session_id* with *messages*."""
+        from langchain_core.messages import (
+            AIMessage,
+            FunctionMessage,
+            HumanMessage,
+            ToolMessage,
+        )
+
+        now = int(time.time())
+        rows = []
+        for position, msg in enumerate(messages):
+            if isinstance(msg, HumanMessage):
+                rows.append((session_id, position, "human", msg.content or "{}", "{}", now))
+            elif isinstance(msg, AIMessage):
+                extra: dict = {}
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                if tool_calls:
+                    extra["tool_calls"] = tool_calls
+                rows.append(
+                    (
+                        session_id,
+                        position,
+                        "ai",
+                        msg.content or "",
+                        json.dumps(extra, ensure_ascii=False),
+                        now,
+                    )
+                )
+            elif isinstance(msg, ToolMessage):
+                extra = {
+                    "tool_call_id": getattr(msg, "tool_call_id", "") or "",
+                    "name": getattr(msg, "name", "") or "",
+                }
+                rows.append(
+                    (
+                        session_id,
+                        position,
+                        "tool",
+                        msg.content or "",
+                        json.dumps(extra, ensure_ascii=False),
+                        now,
+                    )
+                )
+            elif isinstance(msg, FunctionMessage):
+                extra = {"name": getattr(msg, "name", "") or ""}
+                rows.append(
+                    (
+                        session_id,
+                        position,
+                        "function",
+                        msg.content or "",
+                        json.dumps(extra, ensure_ascii=False),
+                        now,
+                    )
+                )
+
+        with sqlite3.connect(self.db_file) as conn:
+            conn.execute(
+                "DELETE FROM agent_session_history WHERE session_id = ?",
+                (session_id,),
+            )
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT INTO agent_session_history
+                        (session_id, position, msg_type, content, extra_json, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            conn.commit()

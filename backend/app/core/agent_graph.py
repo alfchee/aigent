@@ -1,7 +1,10 @@
 from typing import Annotated, Dict, List, Optional, TypedDict, Any
+import asyncio
 import json
 import logging
+import os
 import re
+import time
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, ToolMessage
@@ -13,12 +16,35 @@ from app.core.refiner import RefinerNode
 from app.skills.registry import ToolRegistry, registry
 from app.memory.controller import MemoryController
 from app.sandbox.e2b_sandbox import default_sandbox
+from app.core.chat_persistence import ChatPersistence
 from app.core.roles import role_manager
 
 logger = logging.getLogger("navibot.agent_graph")
 
 # Store full LangChain message history per session
 SESSION_HISTORIES: Dict[str, List[BaseMessage]] = {}
+
+# Persistence backend for session histories
+_chat_persistence = ChatPersistence()
+
+# Last-access timestamps (monotonic) used for in-memory TTL eviction
+_SESSION_LAST_ACCESS: Dict[str, float] = {}
+_SESSION_TTL_DAYS: int = int(os.getenv("SESSION_TTL_DAYS", "7"))
+
+
+def _evict_stale_sessions() -> None:
+    """Remove in-memory entries for sessions inactive longer than SESSION_TTL_DAYS."""
+    ttl_seconds = _SESSION_TTL_DAYS * 86_400
+    now = time.monotonic()
+    stale = [
+        sid
+        for sid, last_access in list(_SESSION_LAST_ACCESS.items())
+        if (now - last_access) > ttl_seconds
+    ]
+    for sid in stale:
+        SESSION_HISTORIES.pop(sid, None)
+        _SESSION_LAST_ACCESS.pop(sid, None)
+        logger.debug("Evicted stale in-memory session: %s", sid)
 
 
 def _sanitize_for_logging(text: str, max_len: int = 200) -> str:
@@ -493,10 +519,16 @@ For tool use:
         await asyncio.sleep(seconds)
 
     async def run_turn(self, user_text: str, user_id: str, session_id: str) -> str:
-        global SESSION_HISTORIES
+        global SESSION_HISTORIES, _SESSION_LAST_ACCESS
 
+        # Load history from SQLite on first access within this process lifetime
         if session_id not in SESSION_HISTORIES:
-            SESSION_HISTORIES[session_id] = []
+            loaded = await asyncio.to_thread(_chat_persistence.load_history, session_id)
+            SESSION_HISTORIES[session_id] = loaded
+
+        # Track access time; evict sessions that have been idle beyond the TTL
+        _SESSION_LAST_ACCESS[session_id] = time.monotonic()
+        _evict_stale_sessions()
 
         history = SESSION_HISTORIES[session_id]
         
@@ -529,6 +561,8 @@ For tool use:
                 state_mgr.record_tool_use(session_id_for_state, getattr(msg, "name", "unknown"), msg.content or "")
 
         SESSION_HISTORIES[session_id] = out_messages
+        # Persist updated history to SQLite so it survives server restarts
+        await asyncio.to_thread(_chat_persistence.save_history, session_id, out_messages)
 
         assistant_response = ""
         last_tool_output = ""
