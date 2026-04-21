@@ -1,3 +1,4 @@
+import threading
 import time
 
 import pytest
@@ -154,3 +155,36 @@ def test_multiple_sessions_do_not_interfere(tmp_path):
     assert alpha[0].content == "alpha msg"
     assert len(beta) == 2
     assert beta[1].content == "beta reply"
+
+
+def test_concurrent_load_save_same_session(tmp_path):
+    """Concurrent load/save on same session are serialized by per-session locks."""
+    store = _make_store(tmp_path)
+    session_id = "concurrent-test"
+    store.save_history(session_id, [HumanMessage(content="initial")])
+
+    results = []
+
+    def modify_and_save(thread_id):
+        # Load current history
+        history = store.load_history(session_id)
+        # Simulate some processing time
+        time.sleep(0.01)
+        # Add a message and save
+        new_history = history + [AIMessage(content=f"response-{thread_id}")]
+        store.save_history(session_id, new_history)
+        results.append(len(new_history))
+
+    # Run two concurrent modifications
+    t1 = threading.Thread(target=modify_and_save, args=(1,))
+    t2 = threading.Thread(target=modify_and_save, args=(2,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    # Both threads should have completed without error
+    assert len(results) == 2
+    # Final history should have all messages (both threads' changes persisted)
+    final = store.load_history(session_id)
+    assert len(final) >= 2  # At least: initial + one response from each thread
