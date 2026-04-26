@@ -375,6 +375,147 @@ class TestMcpManagerConnections:
         assert result is None
         assert "off" not in mgr._servers
 
+    @pytest.mark.asyncio
+    async def test_sync_servers_connects_new_enabled(self, tmp_path):
+        new_connected = ConnectedServer("srv", MagicMock(), [_mock_mcp_tool("t")], AsyncExitStack())
+        cfg_path = _write_config(tmp_path, {
+            "srv": {"transport": "stdio", "command": "npx", "enabled": True}
+        })
+        mgr = McpManager(config_path=cfg_path)
+
+        async def _fake_connect(cfg):
+            return new_connected
+
+        mgr._connect_server = _fake_connect
+        await mgr.sync_servers()
+        assert "srv" in mgr._servers
+        assert mgr._servers["srv"] is new_connected
+
+    @pytest.mark.asyncio
+    async def test_sync_servers_disconnects_removed_server(self, tmp_path):
+        old_stack = MagicMock()
+        old_stack.aclose = AsyncMock()
+        cfg_path = _write_config(tmp_path, {})  # empty config
+        mgr = McpManager(config_path=cfg_path)
+        # Server was connected but no longer in config
+        mgr._servers = {"old_srv": ConnectedServer("old_srv", MagicMock(), [], old_stack)}
+        await mgr.sync_servers()
+        assert "old_srv" not in mgr._servers
+        old_stack.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_sync_servers_disconnects_disabled_server(self, tmp_path):
+        old_stack = MagicMock()
+        old_stack.aclose = AsyncMock()
+        cfg_path = _write_config(tmp_path, {
+            "srv": {"transport": "stdio", "command": "x", "enabled": False}
+        })
+        mgr = McpManager(config_path=cfg_path)
+        # Server is connected but config now has it disabled
+        mgr._servers = {"srv": ConnectedServer("srv", MagicMock(), [], old_stack)}
+        await mgr.sync_servers()
+        assert "srv" not in mgr._servers
+        old_stack.aclose.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# McpManager — test_connection
+# ---------------------------------------------------------------------------
+
+class TestMcpManagerTestConnection:
+    @pytest.mark.asyncio
+    async def test_test_connection_success(self, tmp_path):
+        tool = _mock_mcp_tool("my_tool")
+        mock_exit = MagicMock()
+        mock_exit.aclose = AsyncMock()
+        new_connected = ConnectedServer("srv", MagicMock(), [tool], mock_exit)
+
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        mgr._configs = {"srv": McpServerConfig("srv", {"transport": "stdio", "command": "x"})}
+
+        async def _fake_connect(cfg):
+            return new_connected
+
+        mgr._connect_server = _fake_connect
+        result = await mgr.test_connection("srv")
+
+        assert result["ok"] is True
+        assert result["tool_count"] == 1
+        assert "my_tool" in result["tools"]
+        # The temporary connection is closed after the test
+        mock_exit.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_test_connection_server_not_in_config(self, tmp_path):
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        mgr._configs = {}
+        result = await mgr.test_connection("ghost")
+        assert result["ok"] is False
+        assert "not found" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_test_connection_connect_fails(self, tmp_path):
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        mgr._configs = {"srv": McpServerConfig("srv", {"transport": "stdio", "command": "x"})}
+
+        async def _fake_connect(cfg):
+            return None  # Connection failed
+
+        mgr._connect_server = _fake_connect
+        result = await mgr.test_connection("srv")
+        assert result["ok"] is False
+        assert "Connection attempt failed" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# McpManager — disconnect_and_remove_server
+# ---------------------------------------------------------------------------
+
+class TestMcpManagerDisconnectAndRemove:
+    @pytest.mark.asyncio
+    async def test_disconnect_and_remove_success(self, tmp_path):
+        stack = MagicMock()
+        stack.aclose = AsyncMock()
+        cfg_path = _write_config(tmp_path, {"srv": {"transport": "stdio", "command": "x"}})
+        mgr = McpManager(config_path=cfg_path)
+        mgr._configs = {"srv": McpServerConfig("srv", {"transport": "stdio", "command": "x"})}
+        mgr._servers = {"srv": ConnectedServer("srv", MagicMock(), [], stack)}
+
+        await mgr.disconnect_and_remove_server("srv")
+
+        assert "srv" not in mgr._servers
+        assert "srv" not in mgr._configs
+        stack.aclose.assert_awaited_once()
+        # Verify persisted
+        reloaded = mgr._load_config()
+        assert "srv" not in reloaded
+
+    @pytest.mark.asyncio
+    async def test_disconnect_and_remove_not_found_raises(self, tmp_path):
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        mgr._configs = {}
+        with pytest.raises(KeyError, match="not found"):
+            await mgr.disconnect_and_remove_server("ghost")
+
+    @pytest.mark.asyncio
+    async def test_disconnect_and_remove_leaves_other_servers_untouched(self, tmp_path):
+        cfg_path = _write_config(tmp_path, {
+            "a": {"transport": "stdio", "command": "x"},
+            "b": {"transport": "stdio", "command": "y"},
+        })
+        stack_a = MagicMock()
+        stack_a.aclose = AsyncMock()
+        mgr = McpManager(config_path=cfg_path)
+        mgr._configs = {
+            "a": McpServerConfig("a", {"transport": "stdio", "command": "x"}),
+            "b": McpServerConfig("b", {"transport": "stdio", "command": "y"}),
+        }
+        mgr._servers = {
+            "a": ConnectedServer("a", MagicMock(), [], stack_a),
+        }
+        await mgr.disconnect_and_remove_server("a")
+        assert "b" in mgr._configs
+
 
 # ---------------------------------------------------------------------------
 # McpManager — get_server_status

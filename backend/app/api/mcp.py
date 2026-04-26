@@ -4,7 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.mcp_client import mcp_manager
 from app.skills.registry import registry
@@ -36,19 +36,13 @@ class AddServerRequest(BaseModel):
             raise ValueError("transport must be 'stdio', 'http', or 'sse'")
         return v
 
-    @field_validator("base_url")
-    @classmethod
-    def validate_http_required_fields(cls, v: Optional[str], info) -> Optional[str]:
-        if info.data.get("transport") in ("http", "sse") and not v:
-            raise ValueError("base_url is required for HTTP/SSE transport")
-        return v
-
-    @field_validator("command")
-    @classmethod
-    def validate_stdio_required_fields(cls, v: Optional[str], info) -> Optional[str]:
-        if info.data.get("transport") == "stdio" and not v:
+    @model_validator(mode="after")
+    def validate_transport_fields(self) -> "AddServerRequest":
+        if self.transport == "stdio" and not self.command:
             raise ValueError("command is required for STDIO transport")
-        return v
+        if self.transport in ("http", "sse") and not self.base_url:
+            raise ValueError("base_url is required for HTTP/SSE transport")
+        return self
 
 
 class UpdateServerRequest(BaseModel):
@@ -67,6 +61,15 @@ class UpdateServerRequest(BaseModel):
             raise ValueError("transport must be 'stdio', 'http', or 'sse'")
         return v
 
+    @model_validator(mode="after")
+    def validate_transport_field_requirements(self) -> "UpdateServerRequest":
+        """Ensure required fields are present when transport is changed."""
+        if self.transport == "stdio" and not self.command:
+            raise ValueError("command is required when transport is set to 'stdio'")
+        if self.transport in ("http", "sse") and not self.base_url:
+            raise ValueError("base_url is required when transport is set to 'http' or 'sse'")
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -81,7 +84,7 @@ async def list_servers() -> Dict[str, Any]:
 @router.post("/servers/{server_id}", status_code=201, summary="Add a new MCP server")
 async def add_server(server_id: str, body: AddServerRequest) -> Dict[str, Any]:
     try:
-        cfg = mcp_manager.add_server(server_id, body.model_dump(exclude_none=True))
+        cfg = await mcp_manager.add_server_async(server_id, body.model_dump(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     # If enabled, connect immediately and register its tools
@@ -102,7 +105,7 @@ async def add_server(server_id: str, body: AddServerRequest) -> Dict[str, Any]:
 async def update_server(server_id: str, body: UpdateServerRequest) -> Dict[str, Any]:
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
-        cfg = mcp_manager.update_server(server_id, updates)
+        cfg = await mcp_manager.update_server_async(server_id, updates)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Server '{server_id}' not found.")
     except ValueError as exc:

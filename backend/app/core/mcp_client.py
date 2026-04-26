@@ -104,6 +104,10 @@ def _make_tool_func(session: ClientSession, mcp_name: str) -> Callable:
             if hasattr(content, "text"):
                 parts.append(content.text)
             else:
+                logger.warning(
+                    "MCP tool %r returned content without .text attribute: %s",
+                    mcp_name, type(content).__name__
+                )
                 parts.append(str(content))
         return "\n".join(parts)
 
@@ -314,9 +318,14 @@ class McpManager:
                 schema = mcp_tool.inputSchema or {}
                 fields: Dict[str, Any] = {}
                 required_fields = set(schema.get("required", []))
-                for prop_name, _ in schema.get("properties", {}).items():
+                properties = schema.get("properties", {})
+
+                for prop_name, prop_schema in properties.items():
+                    # Map JSON Schema types to Python types
+                    json_type = prop_schema.get("type", "string")
+                    python_type = self._json_schema_type_to_python(json_type)
                     default = ... if prop_name in required_fields else None
-                    fields[prop_name] = (Any, default)
+                    fields[prop_name] = (python_type, default)
 
                 DynamicArgs = (
                     create_model(f"{tool_name}Args", **fields)
@@ -333,6 +342,20 @@ class McpManager:
                     )
                 )
         return result
+
+    @staticmethod
+    def _json_schema_type_to_python(json_type: str) -> type:
+        """Convert JSON Schema type to Python type for Pydantic models."""
+        type_map = {
+            "string": str,
+            "integer": int,
+            "number": float,
+            "boolean": bool,
+            "array": list,
+            "object": dict,
+            "null": type(None),
+        }
+        return type_map.get(json_type, Any)
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Call an MCP tool by its namespaced name (``mcp__{server_id}__{name}``)."""
@@ -385,8 +408,18 @@ class McpManager:
     # CRUD operations (persist to mcp_config.json)
     # ------------------------------------------------------------------
 
+    async def add_server_async(self, server_id: str, data: Dict[str, Any]) -> McpServerConfig:
+        """Add a new server to the config and persist it (thread-safe)."""
+        async with self._lock:
+            if server_id in self._configs:
+                raise ValueError(f"Server '{server_id}' already exists.")
+            cfg = McpServerConfig(server_id, data)
+            self._configs[server_id] = cfg
+            self._save_config()
+            return cfg
+
     def add_server(self, server_id: str, data: Dict[str, Any]) -> McpServerConfig:
-        """Add a new server to the config and persist it."""
+        """Add a new server to the config and persist it. Sync version for backward compat."""
         if server_id in self._configs:
             raise ValueError(f"Server '{server_id}' already exists.")
         cfg = McpServerConfig(server_id, data)
@@ -394,10 +427,25 @@ class McpManager:
         self._save_config()
         return cfg
 
+    async def update_server_async(
+        self, server_id: str, updates: Dict[str, Any]
+    ) -> McpServerConfig:
+        """Update an existing server config and persist it (thread-safe)."""
+        async with self._lock:
+            if server_id not in self._configs:
+                raise KeyError(f"Server '{server_id}' not found.")
+            old = self._configs[server_id]
+            merged = old.to_dict()
+            merged.update(updates)
+            cfg = McpServerConfig(server_id, merged)
+            self._configs[server_id] = cfg
+            self._save_config()
+            return cfg
+
     def update_server(
         self, server_id: str, updates: Dict[str, Any]
     ) -> McpServerConfig:
-        """Update an existing server config and persist it."""
+        """Update an existing server config and persist it. Sync version for backward compat."""
         if server_id not in self._configs:
             raise KeyError(f"Server '{server_id}' not found.")
         old = self._configs[server_id]
@@ -408,8 +456,16 @@ class McpManager:
         self._save_config()
         return cfg
 
+    async def remove_server_async(self, server_id: str) -> None:
+        """Remove a server from the config and persist it (thread-safe)."""
+        async with self._lock:
+            if server_id not in self._configs:
+                raise KeyError(f"Server '{server_id}' not found.")
+            self._configs.pop(server_id)
+            self._save_config()
+
     def remove_server(self, server_id: str) -> None:
-        """Remove a server from the config and persist it."""
+        """Remove a server from the config and persist it. Sync version for backward compat."""
         if server_id not in self._configs:
             raise KeyError(f"Server '{server_id}' not found.")
         self._configs.pop(server_id)
