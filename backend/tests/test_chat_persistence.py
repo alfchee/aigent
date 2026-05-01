@@ -188,3 +188,98 @@ def test_concurrent_load_save_same_session(tmp_path):
     # Final history should have all messages (both threads' changes persisted)
     final = store.load_history(session_id)
     assert len(final) >= 2  # At least: initial + one response from each thread
+
+
+# ---------------------------------------------------------------------------
+# Schema migration — pre-existing table without schema_version / updated_at
+# ---------------------------------------------------------------------------
+
+import sqlite3 as _sqlite3
+
+
+def _create_legacy_db(db_path: str) -> None:
+    """Create agent_session_history in the old schema (no schema_version/updated_at)."""
+    with _sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_session_history (
+                session_id TEXT NOT NULL,
+                position   INTEGER NOT NULL,
+                msg_type   TEXT NOT NULL,
+                content    TEXT NOT NULL DEFAULT '',
+                extra_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (session_id, position)
+            )
+            """
+        )
+        # Pre-populate one row so we can verify data is preserved
+        conn.execute(
+            "INSERT INTO agent_session_history (session_id, position, msg_type, content, extra_json) VALUES (?, ?, ?, ?, ?)",
+            ("legacy-sess", 0, "human", "legacy message", "{}"),
+        )
+        conn.commit()
+
+
+def test_migration_adds_missing_columns(tmp_path):
+    """ChatPersistence opens a legacy DB and adds schema_version/updated_at columns."""
+    db_file = tmp_path / "legacy.db"
+    _create_legacy_db(str(db_file))
+
+    # Opening ChatPersistence should trigger the migration automatically
+    config = ChatPersistenceConfig(db_path=str(db_file))
+    store = ChatPersistence(config)
+
+    # Verify both columns now exist
+    with _sqlite3.connect(db_file) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(agent_session_history)").fetchall()}
+    assert "schema_version" in cols
+    assert "updated_at" in cols
+
+
+def test_migration_preserves_existing_data(tmp_path):
+    """Pre-existing rows survive the migration with correct default column values."""
+    db_file = tmp_path / "legacy_data.db"
+    _create_legacy_db(str(db_file))
+
+    config = ChatPersistenceConfig(db_path=str(db_file))
+    ChatPersistence(config)  # triggers migration
+
+    with _sqlite3.connect(db_file) as conn:
+        row = conn.execute(
+            "SELECT content, schema_version FROM agent_session_history WHERE session_id = ?",
+            ("legacy-sess",),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "legacy message"
+    assert row[1] == 1  # default value applied
+
+
+def test_migration_allows_save_and_load_after_upgrade(tmp_path):
+    """After migration, save_history and load_history work correctly."""
+    db_file = tmp_path / "legacy_roundtrip.db"
+    _create_legacy_db(str(db_file))
+
+    config = ChatPersistenceConfig(db_path=str(db_file))
+    store = ChatPersistence(config)
+
+    messages = [HumanMessage(content="post-migration hello"), AIMessage(content="post-migration reply")]
+    store.save_history("new-sess", messages)
+    loaded = store.load_history("new-sess")
+
+    assert len(loaded) == 2
+    assert loaded[0].content == "post-migration hello"
+    assert loaded[1].content == "post-migration reply"
+
+
+def test_migration_idempotent(tmp_path):
+    """Calling _ensure_history_schema on an already-migrated DB raises no errors."""
+    db_file = tmp_path / "idempotent.db"
+    config = ChatPersistenceConfig(db_path=str(db_file))
+    # First open creates the up-to-date schema
+    store1 = ChatPersistence(config)
+    # Second open should be a no-op (no errors, no duplicate columns)
+    store2 = ChatPersistence(config)
+
+    store2.save_history("s", [HumanMessage(content="ok")])
+    assert store2.load_history("s")[0].content == "ok"

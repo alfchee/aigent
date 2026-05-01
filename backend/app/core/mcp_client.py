@@ -243,6 +243,20 @@ class McpManager:
     async def _connect_server(
         self, cfg: McpServerConfig
     ) -> Optional[ConnectedServer]:
+        # Validate required fields before attempting any OS/network call
+        if cfg.transport == "stdio" and not cfg.command.strip():
+            logger.warning(
+                "Skipping MCP server '%s': stdio transport requires a non-empty 'command'",
+                cfg.server_id,
+            )
+            return None
+        if cfg.transport in ("http", "sse") and not cfg.base_url.strip():
+            logger.warning(
+                "Skipping MCP server '%s': http/sse transport requires a non-empty 'base_url'",
+                cfg.server_id,
+            )
+            return None
+
         try:
             if cfg.transport == "stdio":
                 return await self.connect_stdio(

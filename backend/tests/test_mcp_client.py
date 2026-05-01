@@ -291,6 +291,52 @@ class TestMcpManagerConnections:
         await mgr.sync_servers()
         assert "off" not in mgr._servers
 
+    # ------------------------------------------------------------------
+    # Validation: empty command / base_url
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_connect_server_skips_stdio_with_empty_command(self, tmp_path):
+        """A stdio server with an empty command is skipped (no exception, no connection)."""
+        cfg = McpServerConfig("stub", {"transport": "stdio", "command": "", "enabled": True})
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        result = await mgr._connect_server(cfg)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_connect_server_skips_stdio_with_whitespace_command(self, tmp_path):
+        """A stdio server with a whitespace-only command is also skipped."""
+        cfg = McpServerConfig("stub", {"transport": "stdio", "command": "   ", "enabled": True})
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        result = await mgr._connect_server(cfg)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_connect_server_skips_http_with_empty_base_url(self, tmp_path):
+        """An http server with an empty base_url is skipped."""
+        cfg = McpServerConfig("stub", {"transport": "http", "base_url": "", "enabled": True})
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        result = await mgr._connect_server(cfg)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_connect_server_skips_sse_with_empty_base_url(self, tmp_path):
+        """An sse server with an empty base_url is skipped."""
+        cfg = McpServerConfig("stub", {"transport": "sse", "base_url": "  ", "enabled": True})
+        mgr = McpManager(config_path=tmp_path / "x.json")
+        result = await mgr._connect_server(cfg)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_sync_servers_skips_enabled_stdio_with_empty_command(self, tmp_path):
+        """sync_servers does not connect an enabled stdio server that has no command."""
+        cfg_path = _write_config(tmp_path, {
+            "stub": {"transport": "stdio", "command": "", "enabled": True}
+        })
+        mgr = McpManager(config_path=cfg_path)
+        await mgr.sync_servers()
+        assert "stub" not in mgr._servers
+
     @pytest.mark.asyncio
     async def test_call_tool_dispatches_to_session(self, tmp_path):
         content = MagicMock()

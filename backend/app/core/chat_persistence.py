@@ -153,7 +153,11 @@ class ChatPersistence:
     # ------------------------------------------------------------------
 
     def _ensure_history_schema(self) -> None:
-        """Create agent_session_history table with version tracking for migrations."""
+        """Create agent_session_history table with version tracking for migrations.
+
+        Also runs ALTER TABLE migrations to add columns that were introduced after
+        the initial schema, so existing databases are upgraded transparently.
+        """
         with sqlite3.connect(self.db_file) as conn:
             conn.execute(
                 """
@@ -175,6 +179,31 @@ class ChatPersistence:
                 ON agent_session_history(session_id)
                 """
             )
+
+            # --- Migrations: add columns introduced after the initial schema ---
+            existing_cols = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_session_history)"
+                ).fetchall()
+            }
+            if "schema_version" not in existing_cols:
+                logger.info(
+                    "Migrating agent_session_history: adding schema_version column"
+                )
+                conn.execute(
+                    "ALTER TABLE agent_session_history ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
+                )
+            if "updated_at" not in existing_cols:
+                logger.info(
+                    "Migrating agent_session_history: adding updated_at column"
+                )
+                # SQLite ALTER TABLE does not allow non-constant defaults, so use 0;
+                # new rows written by save_history() will have a real timestamp.
+                conn.execute(
+                    "ALTER TABLE agent_session_history ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0"
+                )
+
             conn.commit()
 
     def load_history(self, session_id: str) -> List[BaseMessage]:
