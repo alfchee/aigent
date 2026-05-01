@@ -12,7 +12,8 @@ def test_identity_manager_initialization(tmp_path, monkeypatch):
     # Should create default soul file
     soul_file = tmp_path / "soul_prompt.txt"
     assert soul_file.exists()
-    assert manager.get_soul() == DEFAULT_SOUL
+    # update_soul strips whitespace, so compare against the stripped default
+    assert manager.get_soul() == DEFAULT_SOUL.strip()
 
 def test_identity_manager_update(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.identity.workspace_config_dir", lambda: tmp_path)

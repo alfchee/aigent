@@ -265,7 +265,10 @@ class AgentGraph:
                 api_key=self.llm.default_config.api_key,
                 base_url=self.llm.default_config.base_url,
             )
-            available_tools = self.tools.to_openai_tools()
+            # Filter MCP tools to only those assigned to this role
+            available_tools = self.tools.to_openai_tools(
+                mcp_servers=worker_role.mcp_servers
+            )
             response = await self.llm.generate(
                 messages=worker_messages,
                 config=worker_config,
