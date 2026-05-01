@@ -79,8 +79,7 @@ describe('messages store', () => {
     ]
     store.hasMoreByConversationId[c.id] = true
 
-    const prevFlag = (import.meta as any).env.VITE_BACKEND_HISTORY_SYNC
-    ;(import.meta as any).env.VITE_BACKEND_HISTORY_SYNC = 'true'
+    vi.stubEnv('VITE_BACKEND_HISTORY_SYNC', 'true')
     const spy = vi.spyOn(chatApi, 'fetchChatMessages').mockResolvedValue([
       {
         id: 'm-old',
@@ -99,6 +98,6 @@ describe('messages store', () => {
     expect(store.messagesByConversationId[c.id][1].id).toBe('m-new')
 
     spy.mockRestore()
-    ;(import.meta as any).env.VITE_BACKEND_HISTORY_SYNC = prevFlag
+    vi.unstubAllEnvs()
   })
 })
