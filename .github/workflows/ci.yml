@@ -4,6 +4,7 @@ on:
     branches:
       - dev
       - qa
+      - reboot
 jobs:
   build-test:
     runs-on: ubuntu-latest
