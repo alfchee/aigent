@@ -33,6 +33,7 @@ def _make_mgr(**overrides) -> MagicMock:
     mgr.update_server_async = AsyncMock()
     mgr.disconnect_and_remove_server = AsyncMock()
     mgr.test_connection = AsyncMock(return_value={"ok": True, "tool_count": 0, "tools": []})
+    mgr.test_connection_with_config = AsyncMock(return_value={"ok": True, "tool_count": 0, "tools": []})
     mgr.reconnect_server = AsyncMock(return_value=None)
     mgr.sync_servers = AsyncMock()
     mgr._configs = {}  # used by sync_server existence check via get_server_status

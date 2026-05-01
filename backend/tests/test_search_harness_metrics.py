@@ -184,6 +184,7 @@ class TestReadArtifactValidator:
 # ---------------------------------------------------------------------------
 
 class TestDuckDuckGoIntegration:
+    @pytest.mark.network
     def test_ddg_returns_structured_results(self):
         result_str = smart_search("golang programming language", num_results=5)
         result = SmartSearchResult.model_validate_json(result_str)
@@ -193,6 +194,7 @@ class TestDuckDuckGoIntegration:
         assert all("title" in r for r in result.results)
         METRICS.record(True)
 
+    @pytest.mark.network
     def test_ddg_respects_num_results_limit(self):
         result_str = smart_search("python", num_results=3)
         result = SmartSearchResult.model_validate_json(result_str)
@@ -200,6 +202,7 @@ class TestDuckDuckGoIntegration:
         assert len(result.results) <= 3
         METRICS.record(True)
 
+    @pytest.mark.network
     def test_ddg_news_type(self):
         result_str = smart_search("openai gpt-5", num_results=3, search_type="news")
         result = SmartSearchResult.model_validate_json(result_str)
@@ -221,31 +224,29 @@ class TestBraveFallback:
             METRICS.record(True)
 
     def test_uses_brave_when_api_key_present(self):
-        import os as _os
-        _os.environ["BRAVE_SEARCH_API_KEY"] = "test_key_brave_123"
-        try:
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {
-                "web": {
-                    "results": [
-                        {
-                            "title": "Rust Language",
-                            "url": "https://rust-lang.org",
-                            "description": "A language empowering everyone",
-                        }
-                    ]
-                }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "web": {
+                "results": [
+                    {
+                        "title": "Rust Language",
+                        "url": "https://rust-lang.org",
+                        "description": "A language empowering everyone",
+                    }
+                ]
             }
-            with patch("requests.get", return_value=mock_resp) as m:
-                result_str = smart_search("rust", num_results=2)
-                result = SmartSearchResult.model_validate_json(result_str)
-                assert result.error is None
-                assert result.results[0]["source"] == "brave"
-                assert result.results[0]["title"] == "Rust Language"
-                METRICS.record(True)
-        finally:
-            _os.environ.pop("BRAVE_SEARCH_API_KEY", None)
+        }
+        # Patch the module-level constant directly — os.environ changes arrive too
+        # late because BRAVE_API_KEY is evaluated once at module import time.
+        with patch("app.skills.smart_search.BRAVE_API_KEY", "test_key_brave_123"), \
+             patch("requests.get", return_value=mock_resp):
+            result_str = smart_search("rust", num_results=2)
+            result = SmartSearchResult.model_validate_json(result_str)
+            assert result.error is None
+            assert result.results[0]["source"] == "brave"
+            assert result.results[0]["title"] == "Rust Language"
+            METRICS.record(True)
 
 
 # ---------------------------------------------------------------------------

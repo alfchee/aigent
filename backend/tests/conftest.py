@@ -9,8 +9,16 @@ Optional modules:
 - openviking: memory backend (not in CI)
 - monty: JSON utilities (not in CI)
 """
+import pytest
 import sys
 from unittest.mock import MagicMock
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "network: marks tests that require external network access (deselect with -m 'not network')",
+    )
 
 
 def _create_stub_module(name: str) -> MagicMock:

@@ -29,7 +29,7 @@ jobs:
         run: pip install -r requirements.txt
         working-directory: backend
       - name: Backend tests
-        run: PYTHONPATH=. python -m pytest tests -v
+        run: PYTHONPATH=. python -m pytest tests -v -m "not network"
         working-directory: backend
       - name: Backend build
         run: python -m compileall app
