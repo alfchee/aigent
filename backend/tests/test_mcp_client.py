@@ -644,33 +644,30 @@ class TestToolRegistryMcpFiltering:
         assert "mcp__s1__tool_a" in names
         assert "mcp__s2__tool_b" not in names
 
-    def test_malformed_mcp_name_excluded_when_filter_active(self):
-        """A tool named mcp__s1 (only 2 parts) must not be included for server 's1'."""
+    def test_malformed_mcp_name_rejected_at_registration(self):
+        """Malformed MCP tool names (only 2 parts) are rejected at registration time."""
         reg = ToolRegistry()
         MalArgs = create_model("MalArgs")
-        reg.register_dynamic(ToolDefinition(
-            name="mcp__s1",  # missing the third segment
-            description="malformed",
-            args_schema=MalArgs,
-            func=AsyncMock(),
-        ))
-        tools = reg.to_openai_tools(mcp_servers=["s1"])
-        names = [t["function"]["name"] for t in tools]
-        assert "mcp__s1" not in names
+        with pytest.raises(ValueError, match="Malformed MCP tool name"):
+            reg.register_dynamic(ToolDefinition(
+                name="mcp__s1",  # missing the third segment
+                description="malformed",
+                args_schema=MalArgs,
+                func=AsyncMock(),
+            ))
 
-    def test_malformed_mcp_name_included_when_no_filter(self):
-        """Without a filter, all tools (even malformed names) pass through."""
+    def test_non_mcp_tool_can_have_any_name(self):
+        """Non-MCP tools (not starting with 'mcp__') can have any name."""
         reg = ToolRegistry()
-        MalArgs = create_model("MalArgs2")
+        AnyArgs = create_model("AnyArgs")
+        # This should NOT raise, even though it starts with "mcp" but doesn't follow mcp__ pattern
         reg.register_dynamic(ToolDefinition(
-            name="mcp__s1",
-            description="malformed",
-            args_schema=MalArgs,
+            name="mcp_utils_helper",  # doesn't start with "mcp__" so no validation
+            description="helper",
+            args_schema=AnyArgs,
             func=AsyncMock(),
         ))
-        tools = reg.to_openai_tools()
-        names = [t["function"]["name"] for t in tools]
-        assert "mcp__s1" in names
+        assert reg.get_tool("mcp_utils_helper") is not None
 
     def test_register_dynamic_stores_tool(self):
         reg = ToolRegistry()

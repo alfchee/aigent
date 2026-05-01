@@ -47,6 +47,8 @@ class McpServerConfig:
         # HTTP / SSE fields
         self.base_url: str = data.get("base_url", "")
         self.headers: Dict[str, str] = data.get("headers", {})
+        # Validate secret fields
+        self._validate_secrets()
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -61,6 +63,24 @@ class McpServerConfig:
             d["base_url"] = self.base_url
             d["headers"] = self.headers
         return d
+
+    def _validate_secrets(self) -> None:
+        """Validate that env_vars and headers contain only string keys and values."""
+        if not isinstance(self.env_vars, dict):
+            raise ValueError(f"env_vars must be a dict, got {type(self.env_vars).__name__}")
+        for key, value in self.env_vars.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ValueError(
+                    f"env_vars keys and values must be strings; got {type(key).__name__}={type(value).__name__}"
+                )
+
+        if not isinstance(self.headers, dict):
+            raise ValueError(f"headers must be a dict, got {type(self.headers).__name__}")
+        for key, value in self.headers.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ValueError(
+                    f"headers keys and values must be strings; got {type(key).__name__}={type(value).__name__}"
+                )
 
     def to_safe_dict(self) -> Dict[str, Any]:
         """Like to_dict() but masks non-empty secret values (env_vars, headers)."""
@@ -147,7 +167,12 @@ class McpManager:
         try:
             raw = json.loads(self._config_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            logger.error("Failed to parse mcp_config.json: %s", exc)
+            logger.error(
+                "Failed to parse mcp_config.json (corrupted file, skipping): %s", exc
+            )
+            return {}
+        except Exception as exc:
+            logger.error("Unexpected error reading mcp_config.json: %s", exc)
             return {}
         return {
             sid: McpServerConfig(sid, sdata)
@@ -389,12 +414,25 @@ class McpManager:
 
     async def test_connection(self, server_id: str) -> Dict[str, Any]:
         """Open a fresh connection to verify a server and count its tools."""
-        cfg = self._configs.get(server_id)
+        async with self._lock:
+            cfg = self._configs.get(server_id)
         if not cfg:
             return {
                 "ok": False,
                 "error": f"Server '{server_id}' not found in config.",
             }
+        connected = await self._connect_server(cfg)
+        if not connected:
+            return {"ok": False, "error": "Connection attempt failed."}
+        tool_names = [t.name for t in connected.tools]
+        await connected._exit_stack.aclose()
+        return {"ok": True, "tool_count": len(tool_names), "tools": tool_names}
+
+    async def test_connection_with_config(self, cfg: McpServerConfig) -> Dict[str, Any]:
+        """Test connection with a McpServerConfig object (for pre-persistence validation).
+
+        Used during add_server to verify connectivity before persisting to mcp_config.json.
+        """
         connected = await self._connect_server(cfg)
         if not connected:
             return {"ok": False, "error": "Connection attempt failed."}
@@ -433,7 +471,9 @@ class McpManager:
             return cfg
 
     def add_server(self, server_id: str, data: Dict[str, Any]) -> McpServerConfig:
-        """Add a new server to the config and persist it. Sync version for backward compat."""
+        """Add a new server to the config and persist it. WARNING: Not thread-safe, use add_server_async."""
+        # Note: Sync version kept for backward compat with tests, but NOT thread-safe.
+        # New code should use add_server_async.
         if server_id in self._configs:
             raise ValueError(f"Server '{server_id}' already exists.")
         cfg = McpServerConfig(server_id, data)
@@ -459,7 +499,9 @@ class McpManager:
     def update_server(
         self, server_id: str, updates: Dict[str, Any]
     ) -> McpServerConfig:
-        """Update an existing server config and persist it. Sync version for backward compat."""
+        """Update an existing server config and persist it. WARNING: Not thread-safe, use update_server_async."""
+        # Note: Sync version kept for backward compat with tests, but NOT thread-safe.
+        # New code should use update_server_async.
         if server_id not in self._configs:
             raise KeyError(f"Server '{server_id}' not found.")
         old = self._configs[server_id]
@@ -479,7 +521,9 @@ class McpManager:
             self._save_config()
 
     def remove_server(self, server_id: str) -> None:
-        """Remove a server from the config and persist it. Sync version for backward compat."""
+        """Remove a server from the config and persist it. WARNING: Not thread-safe, use remove_server_async."""
+        # Note: Sync version kept for backward compat with tests, but NOT thread-safe.
+        # New code should use remove_server_async.
         if server_id not in self._configs:
             raise KeyError(f"Server '{server_id}' not found.")
         self._configs.pop(server_id)

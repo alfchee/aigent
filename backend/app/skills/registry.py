@@ -44,7 +44,17 @@ class ToolRegistry:
         return decorator
 
     def register_dynamic(self, tool: ToolDefinition) -> None:
-        """Register a pre-built ToolDefinition (e.g. from MCP) directly."""
+        """Register a pre-built ToolDefinition (e.g. from MCP) directly.
+
+        For MCP tools, validates the naming convention: mcp__{server_id}__{tool_name}
+        """
+        if tool.name.startswith("mcp__"):
+            parts = tool.name.split("__", 2)
+            if len(parts) != 3:
+                raise ValueError(
+                    f"Malformed MCP tool name '{tool.name}': must follow pattern "
+                    f"'mcp__{{server_id}}__{{tool_name}}' with exactly 3 segments separated by '__'"
+                )
         self._tools[tool.name] = tool
 
     def remove_tools_by_prefix(self, prefix: str) -> List[str]:

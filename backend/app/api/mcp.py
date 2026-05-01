@@ -83,21 +83,37 @@ async def list_servers() -> Dict[str, Any]:
 
 @router.post("/servers/{server_id}", status_code=201, summary="Add a new MCP server")
 async def add_server(server_id: str, body: AddServerRequest) -> Dict[str, Any]:
+    data = body.model_dump(exclude_none=True)
+
+    # If enabled, test connection before persisting config (transactional safety)
+    if data.get("enabled", True):
+        from app.core.mcp_client import McpServerConfig
+        test_cfg = McpServerConfig(server_id, data)
+        result = await mcp_manager.test_connection_with_config(test_cfg)
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Connection test failed: {result.get('error', 'Unknown error')}"
+            )
+
+    # Now persist the config
     try:
-        cfg = await mcp_manager.add_server_async(server_id, body.model_dump(exclude_none=True))
+        cfg = await mcp_manager.add_server_async(server_id, data)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    # If enabled, connect immediately and register its tools
+
+    # If enabled, register its tools in the global registry
     if cfg.enabled:
         try:
             await _reconnect_and_register(server_id)
         except Exception as exc:
-            logger.error(f"Failed to connect new server '{server_id}': {exc}")
-            raise HTTPException(
-                status_code=502,
-                detail=f"Server added but connection failed: {str(exc)}"
+            logger.error(f"Failed to register tools for new server '{server_id}': {exc}")
+            # Don't fail the request—tools will be re-registered on next sync
+            logger.warning(
+                "Server '%s' was added but tool registration failed; "
+                "tools will be registered on next app startup or sync", server_id
             )
-    # Mask secrets before returning config to the caller
+
     return {"status": "ok", "server_id": server_id, "config": cfg.to_safe_dict()}
 
 
