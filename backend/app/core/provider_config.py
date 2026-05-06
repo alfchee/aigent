@@ -100,6 +100,23 @@ KNOWN_PROVIDERS: Dict[str, Dict[str, Any]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Model parsing helpers
+# ---------------------------------------------------------------------------
+
+def parse_test_model(test_model: str) -> tuple[str, str]:
+    """
+    Parse a test_model string into (provider, model_name).
+
+    Format: "provider/model" (e.g., "groq/llama3-8b-8192")
+    Special case: OpenAI uses plain model name without prefix (e.g., "gpt-4o-mini")
+    """
+    provider_part, _, model_part = test_model.partition("/")
+    if not model_part:
+        return "openai", provider_part
+    return provider_part, model_part
+
+
+# ---------------------------------------------------------------------------
 # Fernet helper
 # ---------------------------------------------------------------------------
 
@@ -121,6 +138,33 @@ def _get_fernet():
     except ImportError:
         logger.warning("cryptography package not installed; keys stored unencrypted")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Unified API key lookup
+# ---------------------------------------------------------------------------
+
+def get_api_key_fallback(provider_name: str, encrypted_value: Optional[str] = None) -> Optional[str]:
+    """
+    Return the plaintext API key for a provider.
+    First tries decryption of stored/encrypted value, then falls back to environment.
+    This single function is used by both ProviderConfigService and LLMService.
+    """
+    if encrypted_value:
+        fernet = _get_fernet()
+        if fernet is not None:
+            try:
+                return fernet.decrypt(encrypted_value.encode()).decode()
+            except Exception as exc:
+                logger.debug(f"Failed to decrypt key for {provider_name}: {exc}")
+        else:
+            return encrypted_value
+
+    env_var = KNOWN_PROVIDERS.get(provider_name, {}).get("env_key")
+    if env_var:
+        return os.environ.get(env_var) or None
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +203,12 @@ class ProviderConfigService:
             return value
         try:
             return fernet.decrypt(value.encode()).decode()
-        except Exception:
-            logger.warning("Failed to decrypt a stored value; it may be plaintext or corrupted.")
+        except Exception as exc:
+            logger.error(
+                f"Decryption failed for stored value: {exc}. "
+                "This may indicate: (1) corrupted data, (2) AIGENT_SECRET changed, or (3) data was stored unencrypted. "
+                "Falling back to plaintext retrieval; verify if this is expected."
+            )
             return value
 
     def _load(self) -> None:
@@ -285,15 +333,7 @@ class ProviderConfigService:
         """
         stored = self._store.get(name, {})
         encrypted = stored.get("api_key")
-        if encrypted:
-            return self._decrypt(encrypted)
-
-        # Fallback to environment variable
-        env_var = KNOWN_PROVIDERS.get(name, {}).get("env_key")
-        if env_var:
-            return os.environ.get(env_var) or None
-
-        return None
+        return get_api_key_fallback(name, encrypted)
 
     def get_base_url(self, name: str) -> Optional[str]:
         """Return the configured base_url for a provider (e.g., Ollama)."""

@@ -82,10 +82,20 @@ export async function updateSoulPrompt(soul: string): Promise<string> {
 // Provider API functions
 // ---------------------------------------------------------------------------
 
+async function extractErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = await response.json()
+    return body.detail || body.message || `HTTP ${response.status}`
+  } catch {
+    return `HTTP ${response.status}`
+  }
+}
+
 export async function fetchProviders(): Promise<ProviderStatus[]> {
   const response = await fetch(buildUrl('/config/providers'), { method: 'GET' })
   if (!response.ok) {
-    throw new Error(`Failed to fetch providers: ${response.status}`)
+    const detail = await extractErrorMessage(response)
+    throw new Error(`Failed to fetch providers: ${detail}`)
   }
   const data = (await response.json()) as ProvidersResponse
   return data.providers
@@ -100,7 +110,8 @@ export async function updateProviders(
     body: JSON.stringify({ providers: updates }),
   })
   if (!response.ok) {
-    throw new Error(`Failed to update providers: ${response.status}`)
+    const detail = await extractErrorMessage(response)
+    throw new Error(`Failed to update providers: ${detail}`)
   }
   const data = (await response.json()) as ProvidersResponse
   return data.providers
@@ -114,7 +125,8 @@ export async function testProvider(name: string): Promise<TestProviderResult> {
     },
   )
   if (!response.ok) {
-    throw new Error(`Failed to test provider: ${response.status}`)
+    const detail = await extractErrorMessage(response)
+    throw new Error(`Failed to test provider: ${detail}`)
   }
   return (await response.json()) as TestProviderResult
 }
@@ -125,7 +137,8 @@ export async function fetchProviderModels(name: string): Promise<string[]> {
     { method: 'GET' },
   )
   if (!response.ok) {
-    throw new Error(`Failed to fetch models for ${name}: ${response.status}`)
+    const detail = await extractErrorMessage(response)
+    throw new Error(`Failed to fetch models for ${name}: ${detail}`)
   }
   const data = (await response.json()) as ProviderModels
   return data.models

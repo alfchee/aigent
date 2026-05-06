@@ -6,7 +6,7 @@ import logging
 import time
 
 from app.core.identity import get_identity_manager
-from app.core.provider_config import get_provider_config, KNOWN_PROVIDERS
+from app.core.provider_config import get_provider_config, KNOWN_PROVIDERS, parse_test_model
 
 logger = logging.getLogger("navibot.api.config")
 
@@ -96,9 +96,16 @@ async def update_providers(request: UpdateProvidersRequest):
     """
     Update API keys and settings for one or many providers.
     Keys are stored encrypted; they are never returned in plain text.
+    Validation: empty strings for api_key are ignored to prevent accidental clears.
     """
     svc = get_provider_config()
-    updates = [u.model_dump(exclude_none=False) for u in request.providers]
+    updates = []
+    for u in request.providers:
+        data = u.model_dump(exclude_none=True)
+        api_key = data.get("api_key")
+        if api_key is not None and api_key == "":
+            del data["api_key"]
+        updates.append(data)
     svc.update_providers(updates)
     raw = svc.get_providers()
     providers = [ProviderStatus(**p) for p in raw]
@@ -129,27 +136,16 @@ async def test_provider(name: str):
         )
 
     test_model = meta["test_model"]
-    # model_id is already prefixed for LiteLLM (e.g. "groq/llama3-8b-8192")
-    # except for openai which uses plain model name
-    provider_part, _, model_part = test_model.partition("/")
-    if not model_part:
-        # openai-style: no prefix
-        config = ModelConfig(
-            provider="openai",
-            model_name=test_model,
-            temperature=0.0,
-            max_tokens=5,
-            api_key=api_key,
-        )
-    else:
-        config = ModelConfig(
-            provider=provider_part,
-            model_name=model_part,
-            temperature=0.0,
-            max_tokens=5,
-            api_key=api_key,
-            base_url=base_url,
-        )
+    provider_part, model_part = parse_test_model(test_model)
+
+    config = ModelConfig(
+        provider=provider_part,
+        model_name=model_part,
+        temperature=0.0,
+        max_tokens=5,
+        api_key=api_key,
+        base_url=base_url,
+    )
 
     try:
         start = time.monotonic()

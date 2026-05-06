@@ -81,23 +81,18 @@ class LLMService:
         """
         Return the API key for the named provider.
         Checks in-memory cache first (populated by update_provider / startup load),
-        then falls back to the environment variable.
+        then falls back to the unified key lookup (env vars, etc.).
         """
         cached = self._provider_keys.get(name)
         if cached and cached.get("api_key"):
             return cached["api_key"]
 
-        # Delayed import to avoid circular dependency at module load time
         try:
-            from app.core.provider_config import KNOWN_PROVIDERS
-            import os
-            env_var = KNOWN_PROVIDERS.get(name, {}).get("env_key")
-            if env_var:
-                return os.environ.get(env_var) or None
-        except Exception:
-            pass
-
-        return None
+            from app.core.provider_config import get_api_key_fallback
+            return get_api_key_fallback(name)
+        except Exception as exc:
+            logger.debug(f"Could not retrieve API key for {name}: {exc}")
+            return None
 
     def get_base_url(self, name: str) -> Optional[str]:
         """Return the configured base URL for a provider (e.g., Ollama)."""

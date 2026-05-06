@@ -213,11 +213,13 @@ async function handleSave() {
       }
     }
     saveSuccess.value = true
+    error.value = null
     setTimeout(() => {
       saveSuccess.value = false
     }, 3000)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to save providers'
+    // Keep draft state on error for user to retry
   } finally {
     saving.value = false
   }
@@ -387,7 +389,7 @@ onMounted(load)
             @change="onModelChange(provider.name, $event)"
           >
             <option value="">— use provider default —</option>
-            <!-- Detected Ollama models take precedence -->
+            <!-- Show detected Ollama models if available, otherwise show provider models -->
             <template
               v-if="
                 provider.name === 'ollama' && uiState['ollama']?.detectedModels.length > 0
@@ -397,10 +399,14 @@ onMounted(load)
                 {{ m }}
               </option>
             </template>
-            <template v-else>
+            <!-- Fallback to provider models or empty list for Ollama without detection -->
+            <template v-else-if="provider.available_models.length > 0">
               <option v-for="m in provider.available_models" :key="m" :value="m">
                 {{ m }}
               </option>
+            </template>
+            <template v-else>
+              <option disabled>No models available</option>
             </template>
           </select>
         </label>
