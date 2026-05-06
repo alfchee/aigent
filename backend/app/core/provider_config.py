@@ -130,6 +130,10 @@ def _get_fernet():
     """Return a Fernet instance if cryptography is available and secret is set."""
     secret = os.environ.get("AIGENT_SECRET", "").strip()
     if not secret:
+        logger.warning(
+            "AIGENT_SECRET is not set — API keys will be stored in PLAINTEXT. "
+            "Set AIGENT_SECRET in your .env file to enable encrypted key storage."
+        )
         return None
     try:
         from cryptography.fernet import Fernet
@@ -299,9 +303,9 @@ class ProviderConfigService:
                 continue
             entry = self._store.setdefault(name, {})
 
-            api_key = update.get("api_key")
-            if api_key is not None:
-                # Empty string means "clear key"
+            # "api_key" key present in update dict → apply it (None = clear, str = set)
+            if "api_key" in update:
+                api_key = update["api_key"]
                 entry["api_key"] = self._encrypt(api_key) if api_key else None
 
             if "base_url" in update:

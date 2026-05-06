@@ -25,12 +25,14 @@ const saveSuccess = ref(false)
 // Per-provider UI state
 type ProviderUIState = {
   keyVisible: boolean
-  draftKey: string // what the user has typed; empty = unchanged
+  draftKey: string // current text in key input
+  keyTouched: boolean // true once user has edited the key field
   draftBaseUrl: string
   draftDefaultModel: string
   testing: boolean
   testResult: TestProviderResult | null
   detectingModels: boolean
+  modelsChecked: boolean // true once detectOllamaModels completes
   detectedModels: string[]
 }
 
@@ -45,11 +47,13 @@ function initUiState(ps: ProviderStatus[]) {
     uiState.value[p.name] = {
       keyVisible: false,
       draftKey: '',
+      keyTouched: false,
       draftBaseUrl: p.base_url ?? '',
       draftDefaultModel: p.default_model ?? '',
       testing: false,
       testResult: null,
       detectingModels: false,
+      modelsChecked: false,
       detectedModels: [],
     }
   }
@@ -78,7 +82,9 @@ function statusLabel(status: ProviderStatus['status']) {
 // ---------------------------------------------------------------------------
 
 function onKeyInput(name: string, event: Event) {
-  uiState.value[name].draftKey = (event.target as HTMLInputElement).value
+  const ui = uiState.value[name]
+  ui.draftKey = (event.target as HTMLInputElement).value
+  ui.keyTouched = true
 }
 
 function onBaseUrlInput(event: Event) {
@@ -141,6 +147,7 @@ async function detectOllamaModels() {
   if (!ui) return
   ui.detectingModels = true
   ui.detectedModels = []
+  ui.modelsChecked = false
   try {
     ui.detectedModels = await fetchProviderModels('ollama')
     if (ui.detectedModels.length > 0 && !ui.draftDefaultModel) {
@@ -150,6 +157,7 @@ async function detectOllamaModels() {
     ui.detectedModels = []
   } finally {
     ui.detectingModels = false
+    ui.modelsChecked = true
   }
 }
 
@@ -171,8 +179,10 @@ async function handleSave() {
     const update: ProviderUpdate = { name: p.name }
     let dirty = false
 
-    if (ui.draftKey !== '') {
-      update.api_key = ui.draftKey
+    // Send api_key only when the user explicitly touched the field.
+    // Empty string with keyTouched=true means "clear the key".
+    if (ui.keyTouched) {
+      update.api_key = ui.draftKey || null
       dirty = true
     }
 
@@ -207,6 +217,7 @@ async function handleSave() {
       const ui = uiState.value[p.name]
       if (ui) {
         ui.draftKey = ''
+        ui.keyTouched = false
         ui.draftBaseUrl = p.base_url ?? ''
         ui.draftDefaultModel = p.default_model ?? ''
         ui.testResult = null
@@ -234,8 +245,9 @@ onMounted(load)
     <div>
       <h3 class="text-sm font-semibold text-text">Provider Settings</h3>
       <p class="text-xs text-muted mt-1">
-        Manage API keys for LLM providers. Keys are stored encrypted on the server and
-        never returned in plain text. Changes take effect immediately without a restart.
+        Manage API keys for LLM providers. Keys are stored on the server (encrypted when
+        <code class="font-mono">AIGENT_SECRET</code> is configured) and never returned in
+        plain text. Changes take effect immediately without a restart.
       </p>
     </div>
 
@@ -369,9 +381,7 @@ onMounted(load)
             </span>
             <span
               v-else-if="
-                !uiState['ollama']?.detectingModels &&
-                uiState['ollama']?.detectedModels.length === 0 &&
-                uiState['ollama']?.testResult
+                uiState['ollama']?.modelsChecked && !uiState['ollama']?.detectingModels
               "
               class="text-xs text-muted"
             >

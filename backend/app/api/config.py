@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Literal, Optional
 import asyncio
 import logging
@@ -53,7 +53,7 @@ class ProviderStatus(BaseModel):
     has_key: bool
     base_url: Optional[str] = None
     default_model: Optional[str] = None
-    available_models: List[str] = []
+    available_models: List[str] = Field(default_factory=list)
     needs_key: bool = True
 
 class ProvidersResponse(BaseModel):
@@ -99,13 +99,7 @@ async def update_providers(request: UpdateProvidersRequest):
     Validation: empty strings for api_key are ignored to prevent accidental clears.
     """
     svc = get_provider_config()
-    updates = []
-    for u in request.providers:
-        data = u.model_dump(exclude_none=True)
-        api_key = data.get("api_key")
-        if api_key is not None and api_key == "":
-            del data["api_key"]
-        updates.append(data)
+    updates = [u.model_dump(exclude_unset=True) for u in request.providers]
     svc.update_providers(updates)
     raw = svc.get_providers()
     providers = [ProviderStatus(**p) for p in raw]
@@ -127,7 +121,7 @@ async def test_provider(name: str):
     from app.core.llm import ModelConfig, default_llm
 
     api_key = svc.get_api_key(name)
-    base_url = svc.get_base_url(name) if name == "ollama" else None
+    base_url = (svc.get_base_url(name) or "http://localhost:11434") if name == "ollama" else None
 
     if meta["needs_key"] and not api_key:
         return TestProviderResponse(

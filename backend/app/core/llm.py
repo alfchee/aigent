@@ -72,8 +72,8 @@ class LLMService:
                 model_name=self.default_config.model_name,
                 temperature=self.default_config.temperature,
                 max_tokens=self.default_config.max_tokens,
-                api_key=api_key or self.default_config.api_key,
-                base_url=base_url or self.default_config.base_url,
+                api_key=api_key if api_key is not None else self.default_config.api_key,
+                base_url=base_url if base_url is not None else self.default_config.base_url,
             )
         logger.info(f"Provider '{name}' reloaded (has_key={bool(api_key)})")
 
