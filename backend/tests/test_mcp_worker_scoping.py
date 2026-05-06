@@ -48,6 +48,7 @@ def _make_worker_role(role_id: str, mcp_servers: List[str]) -> MagicMock:
     role.system_prompt = f"You are {role_id}"
     role.model = "gpt-4o"
     role.mcp_servers = mcp_servers
+    role.provider_override = None
     return role
 
 
