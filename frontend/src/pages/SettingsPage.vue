@@ -7,6 +7,7 @@ import TextField from '@/components/ui/TextField.vue'
 import CostDashboard from '@/components/analytics/CostDashboard.vue'
 import GlobalStateWidget from '@/components/analytics/GlobalStateWidget.vue'
 import SoulEditor from '@/components/settings/SoulEditor.vue'
+import ProviderSettings from '@/components/settings/ProviderSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useUserConfigStore } from '@/stores/userConfig'
 import { useWebSocketStore } from '@/stores/websocket'
@@ -23,7 +24,7 @@ const prefs = usePreferencesStore()
 const user = useUserConfigStore()
 const ws = useWebSocketStore()
 
-type SettingsTab = 'general' | 'soul' | 'costs' | 'state'
+type SettingsTab = 'general' | 'soul' | 'costs' | 'state' | 'providers'
 const activeTab = ref<SettingsTab>('general')
 
 const installable = ref(false)
@@ -154,6 +155,20 @@ onMounted(() => {
       >
         📊 Estado
       </button>
+      <button
+        type="button"
+        class="px-4 py-2 text-sm font-medium transition-colors hover:text-brand focus-visible:outline-none flex items-center gap-1.5"
+        :class="
+          activeTab === 'providers' ? 'border-b-2 border-brand text-brand' : 'text-muted'
+        "
+        @click="activeTab = 'providers'"
+      >
+        🔑 Providers
+      </button>
+    </div>
+
+    <div v-if="activeTab === 'providers'" class="mt-6">
+      <ProviderSettings />
     </div>
 
     <div v-if="activeTab === 'costs'" class="mt-6">
