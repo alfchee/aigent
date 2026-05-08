@@ -28,7 +28,7 @@ client = TestClient(app)
 # Helpers
 # ---------------------------------------------------------------------------
 
-KNOWN_PROVIDER_NAMES = {"gemini", "openai", "anthropic", "groq", "mistral", "ollama"}
+KNOWN_PROVIDER_NAMES = {"gemini", "openai", "anthropic", "groq", "mistral", "openrouter", "ollama"}
 
 
 # ---------------------------------------------------------------------------
