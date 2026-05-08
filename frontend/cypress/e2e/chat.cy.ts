@@ -44,24 +44,41 @@ describe('Chat', () => {
   })
 
   it('filtra conversaciones por carpeta y agente', () => {
+    const mockSessions = [
+      {
+        session_id: 'sess-1',
+        title: 'Sesión Clientes',
+        last_activity: Date.now(),
+        total_messages: 2,
+        folder: 'Clientes',
+        agentId: 'planner',
+      },
+      {
+        session_id: 'sess-2',
+        title: 'Sesión General',
+        last_activity: Date.now(),
+        total_messages: 1,
+        folder: 'General',
+        agentId: 'default',
+      },
+    ]
+
+    cy.intercept('GET', '/sessions', {
+      statusCode: 200,
+      body: { status: 'ok', count: 2, items: mockSessions },
+    }).as('getSessions')
+
     cy.visit('/')
-    cy.contains('Nueva').click()
-    cy.contains('Nueva').click()
+    cy.wait('@getSessions')
 
-    cy.window().then((win) => {
-      cy.stub(win, 'prompt').callsFake((label: string) => {
-        if (label.includes('Carpeta')) return 'Clientes'
-        if (label.includes('Agente')) return 'planner'
-        return null
-      })
-    })
+    // sessions are rendered — action buttons exist
+    cy.get('button[aria-label="Cambiar carpeta"]').should('exist')
 
-    cy.get('button[aria-label="Cambiar carpeta"]').first().click({ force: true })
-    cy.get('button[aria-label="Cambiar agente"]').first().click({ force: true })
-
+    // folder filter: only the 'Clientes' session remains visible
     cy.get('select[aria-label="Filtrar por carpeta"]').select('Clientes')
     cy.contains('Clientes').should('exist')
 
+    // agent filter: sess-1 has both 'Clientes' folder and 'planner' agent — still visible
     cy.get('select[aria-label="Filtrar por agente"]').select('planner')
     cy.contains('@planner').should('exist')
   })

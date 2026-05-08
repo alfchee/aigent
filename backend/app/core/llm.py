@@ -36,13 +36,70 @@ class LLMService:
             model_name="gemini-flash-lite-latest",
             temperature=0.7
         )
+        # In-memory per-provider key/url overrides loaded from provider_config
+        self._provider_keys: Dict[str, Dict[str, Optional[str]]] = {}
         self._setup_litellm()
+        self._load_from_provider_config()
 
     def _setup_litellm(self):
         """Configure global LiteLM settings."""
         # Enable caching if Redis is available (future optimization)
         # litellm.cache = ...
         pass
+
+    def _load_from_provider_config(self) -> None:
+        """Populate _provider_keys from persisted provider_config (if available)."""
+        try:
+            from app.core.provider_config import get_provider_config
+            svc = get_provider_config()
+            for provider_name in ("gemini", "openai", "anthropic", "groq", "mistral", "ollama"):
+                key = svc.get_api_key(provider_name)
+                base_url = svc.get_base_url(provider_name)
+                if key or base_url:
+                    self._provider_keys[provider_name] = {"api_key": key, "base_url": base_url}
+        except Exception as exc:
+            logger.debug(f"Could not load provider config at startup: {exc}")
+
+    def update_provider(self, name: str, api_key: Optional[str], base_url: Optional[str] = None) -> None:
+        """
+        Hot-reload API key and/or base URL for a provider without restarting.
+        If the updated provider is the current default, also patches default_config.
+        """
+        self._provider_keys[name] = {"api_key": api_key, "base_url": base_url}
+        if self.default_config.provider == name:
+            self.default_config = ModelConfig(
+                provider=self.default_config.provider,
+                model_name=self.default_config.model_name,
+                temperature=self.default_config.temperature,
+                max_tokens=self.default_config.max_tokens,
+                api_key=api_key if api_key is not None else self.default_config.api_key,
+                base_url=base_url if base_url is not None else self.default_config.base_url,
+            )
+        logger.info(f"Provider '{name}' reloaded (has_key={bool(api_key)})")
+
+    def get_api_key(self, name: str) -> Optional[str]:
+        """
+        Return the API key for the named provider.
+        Checks in-memory cache first (populated by update_provider / startup load),
+        then falls back to the unified key lookup (env vars, etc.).
+        """
+        cached = self._provider_keys.get(name)
+        if cached and cached.get("api_key"):
+            return cached["api_key"]
+
+        try:
+            from app.core.provider_config import get_api_key_fallback
+            return get_api_key_fallback(name)
+        except Exception as exc:
+            logger.debug(f"Could not retrieve API key for {name}: {exc}")
+            return None
+
+    def get_base_url(self, name: str) -> Optional[str]:
+        """Return the configured base URL for a provider (e.g., Ollama)."""
+        cached = self._provider_keys.get(name)
+        if cached:
+            return cached.get("base_url")
+        return None
 
     async def generate(
         self,

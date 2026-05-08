@@ -258,12 +258,12 @@ class AgentGraph:
                     })
 
             worker_config = ModelConfig(
-                provider=self.llm.default_config.provider,
+                provider=worker_role.provider_override or self.llm.default_config.provider,
                 model_name=worker_role.model,
                 temperature=self.llm.default_config.temperature,
                 max_tokens=self.llm.default_config.max_tokens,
-                api_key=self.llm.default_config.api_key,
-                base_url=self.llm.default_config.base_url,
+                api_key=self.llm.get_api_key(worker_role.provider_override) if worker_role.provider_override else self.llm.default_config.api_key,
+                base_url=self.llm.get_base_url(worker_role.provider_override) if worker_role.provider_override else self.llm.default_config.base_url,
             )
             # Filter MCP tools to only those assigned to this role
             available_tools = self.tools.to_openai_tools(

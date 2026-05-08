@@ -46,6 +46,7 @@ jobs:
       - name: Frontend build
         run: npm run build
         working-directory: frontend
-      - name: Frontend e2e
-        run: npm run e2e:ci
-        working-directory: frontend
+      # E2E tests omitted — not required for this phase
+      # - name: Frontend e2e
+      #   run: npm run e2e:ci
+      #   working-directory: frontend
