@@ -18,6 +18,7 @@ from app.api.roles import router as roles_router
 from app.api.mcp import router as mcp_router
 from app.core.mcp_client import mcp_manager
 from app.core.paths import repo_root, workspace_db_dir, workspace_config_dir
+from app.middleware.auth import BearerTokenMiddleware, STATIC_API_KEY
 import logging
 import json
 import asyncio
@@ -134,6 +135,7 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
+app.add_middleware(BearerTokenMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=resolve_cors_origins(),
@@ -148,7 +150,10 @@ app.include_router(roles_router)
 app.include_router(mcp_router)
 
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+async def websocket_endpoint(websocket: WebSocket, session_id: str, token: str = Query("")):
+    if STATIC_API_KEY and token != STATIC_API_KEY:
+        await websocket.close(code=1008)
+        return
     await manager.connect(websocket, session_id)
     try:
         while True:

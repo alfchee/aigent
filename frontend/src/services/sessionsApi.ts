@@ -28,8 +28,10 @@ function buildUrl(path: string) {
   return new URL(path, `${getApiBaseUrl()}/`).toString()
 }
 
+import { authFetch } from '@/services/apiClient'
+
 export async function fetchSessions(): Promise<SessionSummaryDto[]> {
-  const response = await fetch(buildUrl('/sessions'), { method: 'GET' })
+  const response = await authFetch(buildUrl('/sessions'), { method: 'GET' })
   if (!response.ok) {
     throw new Error(`Failed to fetch sessions: ${response.status}`)
   }

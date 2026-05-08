@@ -49,6 +49,8 @@ function buildUrl(path: string): string {
   return new URL(path, `${getApiBaseUrl()}/`).toString()
 }
 
+import { authFetch } from '@/services/apiClient'
+
 export async function fetchCostSummary(
   sessionId?: string,
 ): Promise<CostSummaryResponseDto> {
@@ -56,7 +58,7 @@ export async function fetchCostSummary(
     ? buildUrl(`/cost/summary?session_id=${encodeURIComponent(sessionId)}`)
     : buildUrl('/cost/summary')
 
-  const response = await fetch(url, {
+  const response = await authFetch(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
   })

@@ -3,6 +3,7 @@ import {
   type BackendChatMessageDto,
 } from '@/services/chatMapper'
 import type { ChatMessage } from '@/types/chat'
+import { authFetch } from '@/services/apiClient'
 
 type ListChatMessagesResponse = {
   status: string
@@ -39,7 +40,7 @@ export async function fetchChatMessages(params: {
     beforeCreatedAt: params.beforeCreatedAt,
     limit: params.limit ?? 50,
   })
-  const response = await fetch(url, { method: 'GET' })
+  const response = await authFetch(url, { method: 'GET' })
   if (!response.ok) {
     throw new Error(`chat_messages_http_${response.status}`)
   }

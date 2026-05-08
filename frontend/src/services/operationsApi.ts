@@ -58,8 +58,10 @@ function buildUrl(path: string) {
   return new URL(path, `${getApiBaseUrl()}/`).toString()
 }
 
+import { authFetch } from '@/services/apiClient'
+
 async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(buildUrl(path), { method: 'GET' })
+  const response = await authFetch(buildUrl(path), { method: 'GET' })
   if (!response.ok) {
     throw new Error(`operations_http_${response.status}`)
   }

@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd backend && PYTHONPATH=. python -m pytest tests*)",
+      "Bash(cd backend && python -m compileall app)",
+      "Bash(cd frontend && npm run lint)",
+      "Bash(cd frontend && npm test)",
+      "Bash(cd frontend && npm run build)",
+      "Bash(./scripts/run-backend-dev.sh)",
+      "Bash(cd backend && uvicorn app.main:app*)",
+      "Bash(pip install -r backend/requirements.txt)",
+      "Bash(cd frontend && npm install)",
+      "Bash(grep*)",
+      "Bash(find backend/app -name '*.py'*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git status)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf*)",
+      "Bash(DROP TABLE*)"
+    ]
+  }
+}
