@@ -16,23 +16,16 @@ export function hasApiKey(): boolean {
   return getStoredApiKey().length > 0
 }
 
-function authHeaders(): HeadersInit {
-  const token = getStoredApiKey()
-  if (!token) return {}
-  return { Authorization: `Bearer ${token}` }
-}
-
 export async function authFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
 ): Promise<Response> {
-  return fetch(input, {
-    ...init,
-    headers: {
-      ...authHeaders(),
-      ...(init.headers ?? {}),
-    },
-  })
+  const token = getStoredApiKey()
+  const base = new Headers(init.headers)
+  if (token) {
+    base.set('Authorization', `Bearer ${token}`)
+  }
+  return fetch(input, { ...init, headers: base })
 }
 
 /**
