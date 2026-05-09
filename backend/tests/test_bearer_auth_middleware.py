@@ -6,20 +6,10 @@ from fastapi.testclient import TestClient
 from app.middleware.auth import BearerTokenMiddleware
 
 
-def _make_app(api_key: str) -> FastAPI:
+def _make_app() -> FastAPI:
     """Build a minimal FastAPI app with BearerTokenMiddleware wired in."""
-    import os
-
-    os.environ["AIGENT_API_KEY"] = api_key
-
-    # Re-import so the module picks up the patched env var
-    import importlib
-    import app.middleware.auth as auth_mod
-
-    importlib.reload(auth_mod)
-
     app = FastAPI()
-    app.add_middleware(auth_mod.BearerTokenMiddleware)
+    app.add_middleware(BearerTokenMiddleware)
 
     @app.get("/health")
     async def health():
@@ -54,58 +44,52 @@ def _make_app(api_key: str) -> FastAPI:
 
 
 class TestAuthDisabled:
-    def setup_method(self):
-        self.client = TestClient(_make_app(""), raise_server_exceptions=True)
+    def test_protected_allowed_without_token(self, monkeypatch):
+        monkeypatch.delenv("AIGENT_API_KEY", raising=False)
+        client = TestClient(_make_app())
+        assert client.get("/protected").status_code == 200
 
-    def test_protected_allowed_without_token(self):
-        resp = self.client.get("/protected")
-        assert resp.status_code == 200
-
-    def test_health_allowed(self):
-        resp = self.client.get("/health")
-        assert resp.status_code == 200
+    def test_health_allowed(self, monkeypatch):
+        monkeypatch.delenv("AIGENT_API_KEY", raising=False)
+        client = TestClient(_make_app())
+        assert client.get("/health").status_code == 200
 
 
 # ---------------------------------------------------------------------------
 # Auth enabled
 # ---------------------------------------------------------------------------
 
-
 KEY = "test-secret-key-12345"
 
 
 class TestAuthEnabled:
-    def setup_method(self):
-        self.client = TestClient(_make_app(KEY), raise_server_exceptions=True)
+    @pytest.fixture(autouse=True)
+    def _set_key(self, monkeypatch):
+        monkeypatch.setenv("AIGENT_API_KEY", KEY)
+        self.client = TestClient(_make_app())
 
     # Unprotected paths must be publicly accessible
 
     def test_health_no_token(self):
-        resp = self.client.get("/health")
-        assert resp.status_code == 200
+        assert self.client.get("/health").status_code == 200
 
     def test_openapi_no_token(self):
-        resp = self.client.get("/openapi.json")
-        assert resp.status_code == 200
+        assert self.client.get("/openapi.json").status_code == 200
 
     def test_docs_exact_no_token(self):
-        resp = self.client.get("/docs")
-        assert resp.status_code == 200
+        assert self.client.get("/docs").status_code == 200
 
     def test_docs_subpath_no_token(self):
         """Swagger oauth2-redirect must not require auth."""
-        resp = self.client.get("/docs/oauth2-redirect")
-        assert resp.status_code == 200
+        assert self.client.get("/docs/oauth2-redirect").status_code == 200
 
     def test_redoc_no_token(self):
-        resp = self.client.get("/redoc")
-        assert resp.status_code == 200
+        assert self.client.get("/redoc").status_code == 200
 
     # Protected paths
 
     def test_protected_no_token_returns_401(self):
-        resp = self.client.get("/protected")
-        assert resp.status_code == 401
+        assert self.client.get("/protected").status_code == 401
 
     def test_protected_wrong_token_returns_401(self):
         resp = self.client.get("/protected", headers={"Authorization": "Bearer wrong"})
@@ -130,5 +114,5 @@ class TestAuthEnabled:
                 "Access-Control-Request-Method": "GET",
             },
         )
-        # Should not be 401 regardless of missing auth header
         assert resp.status_code != 401
+

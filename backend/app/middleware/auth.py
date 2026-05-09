@@ -10,7 +10,14 @@ _UNPROTECTED_EXACT = {"/health", "/openapi.json"}
 # Path prefixes that are always public (Swagger UI and its sub-routes)
 _UNPROTECTED_PREFIXES = ("/docs", "/redoc")
 
-STATIC_API_KEY = os.getenv("AIGENT_API_KEY", "")
+
+def _get_api_key() -> str:
+    """Read the API key from the environment on every call.
+
+    Reading per-request (rather than at module load time) prevents module-level
+    state from leaking between tests and supports dynamic reconfiguration.
+    """
+    return os.getenv("AIGENT_API_KEY", "")
 
 
 class BearerTokenMiddleware(BaseHTTPMiddleware):
@@ -23,7 +30,8 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         if path in _UNPROTECTED_EXACT or path.startswith(_UNPROTECTED_PREFIXES):
             return await call_next(request)
 
-        if not STATIC_API_KEY:
+        api_key = _get_api_key()
+        if not api_key:
             # No key configured → auth disabled (development mode)
             return await call_next(request)
 
@@ -33,7 +41,7 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
         token = auth_header[len(prefix):]
-        if not secrets.compare_digest(token, STATIC_API_KEY):
+        if not secrets.compare_digest(token, api_key):
             return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
         return await call_next(request)
