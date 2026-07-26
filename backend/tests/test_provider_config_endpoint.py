@@ -232,6 +232,133 @@ async def test_test_provider_mocked_llm_call():
         pc_module._instance = None
 
 
+@pytest.mark.asyncio
+async def test_test_provider_uses_configured_default_model():
+    """
+    When a default_model is saved for a provider, the test call uses it instead
+    of the hardcoded test_model. For prefixed providers (e.g. openrouter) the
+    LiteLLM prefix is prepended to the saved model id.
+    """
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Hi"
+    mock_response.choices[0].message.tool_calls = None
+    completion_mock = AsyncMock(return_value=mock_response)
+
+    providers_file = Path(tempfile.mkdtemp()) / "providers.json"
+    providers_file.write_text(
+        json.dumps(
+            [{"name": "openrouter", "default_model": "mistralai/mistral-7b-instruct:free"}]
+        )
+    )
+
+    with (
+        patch(
+            "app.core.provider_config.workspace_config_dir",
+            return_value=providers_file.parent,
+        ),
+        patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-test-key"}),
+        patch("app.core.llm.acompletion", new=completion_mock),
+    ):
+        import app.core.provider_config as pc_module
+        import app.core.llm as llm_module
+
+        pc_module._instance = None
+        llm_module.default_llm._provider_keys = {}
+
+        response = client.post("/config/providers/openrouter/test")
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        # The model passed to LiteLMM must be the prefixed configured model,
+        # not the hardcoded test_model — and not a doubled prefix.
+        call_kwargs = completion_mock.await_args.kwargs
+        assert call_kwargs["model"] == "openrouter/mistralai/mistral-7b-instruct:free"
+
+        pc_module._instance = None
+
+
+@pytest.mark.asyncio
+async def test_test_provider_no_double_prefix_when_configured_model_prefixed():
+    """
+    If the user saved a default_model that already includes the LiteLLM prefix,
+    the test endpoint must not prepend it again.
+    """
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Hi"
+    mock_response.choices[0].message.tool_calls = None
+    completion_mock = AsyncMock(return_value=mock_response)
+
+    providers_file = Path(tempfile.mkdtemp()) / "providers.json"
+    providers_file.write_text(
+        json.dumps([{"name": "openrouter", "default_model": "openrouter/gpt-4o-mini"}])
+    )
+
+    with (
+        patch(
+            "app.core.provider_config.workspace_config_dir",
+            return_value=providers_file.parent,
+        ),
+        patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-test-key"}),
+        patch("app.core.llm.acompletion", new=completion_mock),
+    ):
+        import app.core.provider_config as pc_module
+        import app.core.llm as llm_module
+
+        pc_module._instance = None
+        llm_module.default_llm._provider_keys = {}
+
+        response = client.post("/config/providers/openrouter/test")
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        call_kwargs = completion_mock.await_args.kwargs
+        assert call_kwargs["model"] == "openrouter/gpt-4o-mini"
+        assert call_kwargs["model"].count("openrouter/") == 1, "LiteLLM prefix was doubled"
+
+        pc_module._instance = None
+
+
+@pytest.mark.asyncio
+async def test_test_provider_openai_uses_configured_model_without_prefix():
+    """OpenAI-style providers need no LiteLLM prefix; configured model is used as-is."""
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = "Hi"
+    mock_response.choices[0].message.tool_calls = None
+    completion_mock = AsyncMock(return_value=mock_response)
+
+    providers_file = Path(tempfile.mkdtemp()) / "providers.json"
+    providers_file.write_text(
+        json.dumps([{"name": "openai", "default_model": "gpt-4o"}])
+    )
+
+    with (
+        patch(
+            "app.core.provider_config.workspace_config_dir",
+            return_value=providers_file.parent,
+        ),
+        patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}),
+        patch("app.core.llm.acompletion", new=completion_mock),
+    ):
+        import app.core.provider_config as pc_module
+        import app.core.llm as llm_module
+
+        pc_module._instance = None
+        llm_module.default_llm._provider_keys = {}
+
+        response = client.post("/config/providers/openai/test")
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        call_kwargs = completion_mock.await_args.kwargs
+        # OpenAI has no LiteLLM prefix — just the model name.
+        assert call_kwargs["model"] == "gpt-4o"
+
+        pc_module._instance = None
+
+
 # ---------------------------------------------------------------------------
 # GET /config/providers/{name}/models
 # ---------------------------------------------------------------------------

@@ -129,7 +129,26 @@ async def test_provider(name: str):
             message=f"No API key configured for {name!r}",
         )
 
-    test_model = meta["test_model"]
+    # Prefer the user's configured default_model for the test — it is the
+    # model they selected and want to verify. Fall back to the hardcoded
+    # test_model only when no preference has been saved.
+    configured_model = svc.get_default_model(name)
+    if configured_model:
+        hardcoded = meta["test_model"]
+        if "/" in hardcoded:
+            # Extract the LiteLLM provider prefix (e.g. "openrouter", "groq")
+            litellm_prefix = hardcoded.split("/")[0]
+            # Guard against a doubled prefix if the user already saved the
+            # LiteLLM-prefixed model id (e.g. "openrouter/mistralai/...").
+            if configured_model.startswith(f"{litellm_prefix}/"):
+                test_model = configured_model
+            else:
+                test_model = f"{litellm_prefix}/{configured_model}"
+        else:
+            # OpenAI-style: no prefix needed
+            test_model = configured_model
+    else:
+        test_model = meta["test_model"]
     provider_part, model_part = parse_test_model(test_model)
 
     config = ModelConfig(

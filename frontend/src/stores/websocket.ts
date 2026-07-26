@@ -7,6 +7,7 @@ import type {
 } from '@/types/chat'
 import { WebSocketClient, type WsStatus } from '@/services/websocketClient'
 import { logEvent } from '@/services/logger'
+import { buildWsUrl } from '@/services/apiClient'
 import { createRateLimiter } from '@/services/rateLimit'
 import { useUserConfigStore } from '@/stores/userConfig'
 import { useMessagesStore } from '@/stores/messages'
@@ -60,7 +61,7 @@ export const useWebSocketStore = defineStore('websocket', {
 
       const client = new WebSocketClient(
         {
-          url,
+          url: buildWsUrl(url),
           sessionId: user.sessionId,
           heartbeatIntervalMs: 15_000,
           reconnect: {

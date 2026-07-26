@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 export type SessionSummaryDto = {
   session_id: string
   title: string
@@ -29,7 +31,7 @@ function buildUrl(path: string) {
 }
 
 export async function fetchSessions(): Promise<SessionSummaryDto[]> {
-  const response = await fetch(buildUrl('/sessions'), { method: 'GET' })
+  const response = await authFetch(buildUrl('/sessions'), { method: 'GET' })
   if (!response.ok) {
     throw new Error(`Failed to fetch sessions: ${response.status}`)
   }

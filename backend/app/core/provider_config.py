@@ -89,14 +89,15 @@ KNOWN_PROVIDERS: Dict[str, Dict[str, Any]] = {
             "mistral-small",
         ],
     },
+    # OpenRouter: the llama-3.1-8b-instruct:free tier was retired/rate-limited;
+    # mistral-7b-instruct:free is the current stable free default.
     "openrouter": {
         "label": "OpenRouter",
         "env_key": "OPENROUTER_API_KEY",
-        "test_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free",
+        "test_model": "openrouter/mistralai/mistral-7b-instruct:free",
         "needs_key": True,
-        "default_model": "meta-llama/llama-3.1-8b-instruct:free",
+        "default_model": "mistralai/mistral-7b-instruct:free",
         "available_models": [
-            "meta-llama/llama-3.1-8b-instruct:free",
             "mistralai/mistral-7b-instruct:free",
             "openai/gpt-4o-mini",
             "openai/gpt-4o",
@@ -357,6 +358,10 @@ class ProviderConfigService:
         stored = self._store.get(name, {})
         encrypted = stored.get("api_key")
         return get_api_key_fallback(name, encrypted)
+
+    def get_default_model(self, name: str) -> Optional[str]:
+        """Return the user-configured default model for a provider, or None if not set."""
+        return self._store.get(name, {}).get("default_model")
 
     def get_base_url(self, name: str) -> Optional[str]:
         """Return the configured base_url for a provider (e.g., Ollama)."""

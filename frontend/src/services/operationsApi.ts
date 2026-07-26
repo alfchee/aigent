@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 type SandboxMetricsBucket = {
   total_runs: number
   success_runs: number
@@ -59,7 +61,7 @@ function buildUrl(path: string) {
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(buildUrl(path), { method: 'GET' })
+  const response = await authFetch(buildUrl(path), { method: 'GET' })
   if (!response.ok) {
     throw new Error(`operations_http_${response.status}`)
   }

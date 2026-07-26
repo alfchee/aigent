@@ -18,9 +18,10 @@ describe('configApi', () => {
 
     const res = await fetchSoulPrompt()
     expect(res).toBe('I am NaviBot')
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/config/soul'), {
-      method: 'GET',
-    })
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/config/soul'),
+      expect.objectContaining({ method: 'GET' }),
+    )
   })
 
   it('fetchSoulPrompt throws error on failure', async () => {

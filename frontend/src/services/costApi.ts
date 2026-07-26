@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 export type LLMCallRecordDto = {
   timestamp: string
   provider: string
@@ -56,7 +58,7 @@ export async function fetchCostSummary(
     ? buildUrl(`/cost/summary?session_id=${encodeURIComponent(sessionId)}`)
     : buildUrl('/cost/summary')
 
-  const response = await fetch(url, {
+  const response = await authFetch(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
   })

@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 export type SoulResponse = {
   status: string
   soul: string
@@ -57,7 +59,7 @@ function buildUrl(path: string) {
 }
 
 export async function fetchSoulPrompt(): Promise<string> {
-  const response = await fetch(buildUrl('/config/soul'), { method: 'GET' })
+  const response = await authFetch(buildUrl('/config/soul'), { method: 'GET' })
   if (!response.ok) {
     throw new Error(`Failed to fetch soul prompt: ${response.status}`)
   }
@@ -66,7 +68,7 @@ export async function fetchSoulPrompt(): Promise<string> {
 }
 
 export async function updateSoulPrompt(soul: string): Promise<string> {
-  const response = await fetch(buildUrl('/config/soul'), {
+  const response = await authFetch(buildUrl('/config/soul'), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ soul }),
@@ -92,7 +94,7 @@ async function extractErrorMessage(response: Response): Promise<string> {
 }
 
 export async function fetchProviders(): Promise<ProviderStatus[]> {
-  const response = await fetch(buildUrl('/config/providers'), { method: 'GET' })
+  const response = await authFetch(buildUrl('/config/providers'), { method: 'GET' })
   if (!response.ok) {
     const detail = await extractErrorMessage(response)
     throw new Error(`Failed to fetch providers: ${detail}`)
@@ -104,7 +106,7 @@ export async function fetchProviders(): Promise<ProviderStatus[]> {
 export async function updateProviders(
   updates: ProviderUpdate[],
 ): Promise<ProviderStatus[]> {
-  const response = await fetch(buildUrl('/config/providers'), {
+  const response = await authFetch(buildUrl('/config/providers'), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ providers: updates }),
@@ -118,7 +120,7 @@ export async function updateProviders(
 }
 
 export async function testProvider(name: string): Promise<TestProviderResult> {
-  const response = await fetch(
+  const response = await authFetch(
     buildUrl(`/config/providers/${encodeURIComponent(name)}/test`),
     {
       method: 'POST',
@@ -132,7 +134,7 @@ export async function testProvider(name: string): Promise<TestProviderResult> {
 }
 
 export async function fetchProviderModels(name: string): Promise<string[]> {
-  const response = await fetch(
+  const response = await authFetch(
     buildUrl(`/config/providers/${encodeURIComponent(name)}/models`),
     { method: 'GET' },
   )
