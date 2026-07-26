@@ -89,6 +89,8 @@ KNOWN_PROVIDERS: Dict[str, Dict[str, Any]] = {
             "mistral-small",
         ],
     },
+    # OpenRouter: the llama-3.1-8b-instruct:free tier was retired/rate-limited;
+    # mistral-7b-instruct:free is the current stable free default.
     "openrouter": {
         "label": "OpenRouter",
         "env_key": "OPENROUTER_API_KEY",

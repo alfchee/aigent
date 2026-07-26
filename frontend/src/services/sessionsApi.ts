@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 export type SessionSummaryDto = {
   session_id: string
   title: string
@@ -27,8 +29,6 @@ function getApiBaseUrl() {
 function buildUrl(path: string) {
   return new URL(path, `${getApiBaseUrl()}/`).toString()
 }
-
-import { authFetch } from '@/services/apiClient'
 
 export async function fetchSessions(): Promise<SessionSummaryDto[]> {
   const response = await authFetch(buildUrl('/sessions'), { method: 'GET' })

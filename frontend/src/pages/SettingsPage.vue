@@ -8,6 +8,7 @@ import CostDashboard from '@/components/analytics/CostDashboard.vue'
 import GlobalStateWidget from '@/components/analytics/GlobalStateWidget.vue'
 import SoulEditor from '@/components/settings/SoulEditor.vue'
 import ProviderSettings from '@/components/settings/ProviderSettings.vue'
+import { clearStoredApiKey, hasApiKey } from '@/services/apiClient'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useUserConfigStore } from '@/stores/userConfig'
 import { useWebSocketStore } from '@/stores/websocket'
@@ -57,6 +58,13 @@ function clearPrefs() {
   const ok = window.confirm('¿Borrar preferencias locales?')
   if (!ok) return
   localStorage.clear()
+  location.reload()
+}
+
+function changeApiKey() {
+  // Clear the stored key and reload: App.vue's auth gate will detect no key
+  // (or the backend will 401) and re-prompt for a new one.
+  clearStoredApiKey()
   location.reload()
 }
 
@@ -279,6 +287,9 @@ onMounted(() => {
         </div>
         <div class="mt-4 flex flex-col gap-2 sm:flex-row">
           <Button variant="secondary" @click="exportAll">Exportar (JSON)</Button>
+          <Button v-if="hasApiKey()" variant="secondary" @click="changeApiKey"
+            >Cambiar API Key</Button
+          >
           <Button variant="danger" @click="clearPrefs">Borrar prefs</Button>
         </div>
       </div>

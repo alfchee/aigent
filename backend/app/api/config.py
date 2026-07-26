@@ -138,7 +138,12 @@ async def test_provider(name: str):
         if "/" in hardcoded:
             # Extract the LiteLLM provider prefix (e.g. "openrouter", "groq")
             litellm_prefix = hardcoded.split("/")[0]
-            test_model = f"{litellm_prefix}/{configured_model}"
+            # Guard against a doubled prefix if the user already saved the
+            # LiteLLM-prefixed model id (e.g. "openrouter/mistralai/...").
+            if configured_model.startswith(f"{litellm_prefix}/"):
+                test_model = configured_model
+            else:
+                test_model = f"{litellm_prefix}/{configured_model}"
         else:
             # OpenAI-style: no prefix needed
             test_model = configured_model

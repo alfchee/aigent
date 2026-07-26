@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 export type LLMCallRecordDto = {
   timestamp: string
   provider: string
@@ -48,8 +50,6 @@ function getApiBaseUrl(): string {
 function buildUrl(path: string): string {
   return new URL(path, `${getApiBaseUrl()}/`).toString()
 }
-
-import { authFetch } from '@/services/apiClient'
 
 export async function fetchCostSummary(
   sessionId?: string,

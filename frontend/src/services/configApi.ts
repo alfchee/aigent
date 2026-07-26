@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 export type SoulResponse = {
   status: string
   soul: string
@@ -55,8 +57,6 @@ function getApiBaseUrl() {
 function buildUrl(path: string) {
   return new URL(path, `${getApiBaseUrl()}/`).toString()
 }
-
-import { authFetch } from '@/services/apiClient'
 
 export async function fetchSoulPrompt(): Promise<string> {
   const response = await authFetch(buildUrl('/config/soul'), { method: 'GET' })

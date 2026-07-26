@@ -18,7 +18,7 @@ from app.api.roles import router as roles_router
 from app.api.mcp import router as mcp_router
 from app.core.mcp_client import mcp_manager
 from app.core.paths import repo_root, workspace_db_dir, workspace_config_dir
-from app.middleware.auth import BearerTokenMiddleware, _get_api_key
+from app.middleware.auth import BearerTokenMiddleware, verify_token
 import logging
 import json
 import asyncio
@@ -151,7 +151,7 @@ app.include_router(mcp_router)
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str, token: str = Query("")):
-    if _get_api_key() and token != _get_api_key():
+    if not verify_token(token):
         await websocket.close(code=1008)
         return
     await manager.connect(websocket, session_id)

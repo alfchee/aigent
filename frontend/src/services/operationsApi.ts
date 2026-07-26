@@ -1,3 +1,5 @@
+import { authFetch } from '@/services/apiClient'
+
 type SandboxMetricsBucket = {
   total_runs: number
   success_runs: number
@@ -57,8 +59,6 @@ function getApiBaseUrl() {
 function buildUrl(path: string) {
   return new URL(path, `${getApiBaseUrl()}/`).toString()
 }
-
-import { authFetch } from '@/services/apiClient'
 
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await authFetch(buildUrl(path), { method: 'GET' })

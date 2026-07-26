@@ -3,7 +3,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.middleware.auth import BearerTokenMiddleware
+from app.middleware.auth import BearerTokenMiddleware, verify_token
 
 
 def _make_app() -> FastAPI:
@@ -115,4 +115,26 @@ class TestAuthEnabled:
             },
         )
         assert resp.status_code != 401
+
+
+# ---------------------------------------------------------------------------
+# verify_token helper (shared by HTTP middleware and WebSocket handshake)
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyToken:
+    def test_disabled_when_no_key(self, monkeypatch):
+        monkeypatch.delenv("AIGENT_API_KEY", raising=False)
+        # Any (even empty) token is accepted when auth is disabled.
+        assert verify_token("") is True
+        assert verify_token("anything") is True
+
+    def test_enabled_correct_key(self, monkeypatch):
+        monkeypatch.setenv("AIGENT_API_KEY", KEY)
+        assert verify_token(KEY) is True
+
+    @pytest.mark.parametrize("bad", ["", "wrong", KEY[:-1], KEY + "x"])
+    def test_enabled_wrong_or_empty_token(self, monkeypatch, bad):
+        monkeypatch.setenv("AIGENT_API_KEY", KEY)
+        assert verify_token(bad) is False
 
